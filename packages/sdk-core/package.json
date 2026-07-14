@@ -1,0 +1,43 @@
+{
+  "name": "@pbvex/sdk-core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser-neutral PBVex client with typed calls and realtime subscriptions",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathabonfim59/pbvex.git",
+    "directory": "packages/sdk-core"
+  },
+  "homepage": "https://github.com/nathabonfim59/pbvex#readme",
+  "bugs": "https://github.com/nathabonfim59/pbvex/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @pbvex/protocol build && tsc",
+    "dev": "tsc --watch",
+    "test": "pnpm --filter @pbvex/protocol build && pnpm --filter pbvex build && tsc --noEmit -p tsconfig.test.json && vitest run",
+    "lint": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@pbvex/protocol": "workspace:0.1.0"
+  },
+  "devDependencies": {
+    "pbvex": "workspace:^",
+    "typescript": "^5.0.0",
+    "vitest": "^1.5.0"
+  }
+}

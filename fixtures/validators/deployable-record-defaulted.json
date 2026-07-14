@@ -1,0 +1,56 @@
+{
+  "descriptor": {
+    "type": "object",
+    "shape": {
+      "labels": {
+        "type": "record",
+        "key": {
+          "type": "union",
+          "validators": [
+            { "type": "string" },
+            { "type": "literal", "value": "fixed" }
+          ]
+        },
+        "value": {
+          "type": "defaulted",
+          "validator": { "type": "number" },
+          "defaultValue": 2
+        }
+      }
+    }
+  },
+  "manifest": {
+    "protocolVersion": "v1",
+    "deploymentId": "validator_artifact",
+    "functions": [
+      {
+        "name": "roundtrip",
+        "type": "query",
+        "visibility": "public",
+        "modulePath": "roundtrip",
+        "exportName": "default",
+        "args": {
+          "type": "object",
+          "shape": {
+            "labels": {
+              "type": "record",
+              "key": {
+                "type": "union",
+                "validators": [
+                  { "type": "string" },
+                  { "type": "literal", "value": "fixed" }
+                ]
+              },
+              "value": {
+                "type": "defaulted",
+                "validator": { "type": "number" },
+                "defaultValue": 2
+              }
+            }
+          }
+        },
+        "returns": { "type": "null" }
+      }
+    ]
+  }
+}

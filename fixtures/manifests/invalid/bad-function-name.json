@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "bad_function_name",
+  "functions": [
+    {
+      "name": "1invalid",
+      "type": "query",
+      "visibility": "public",
+      "modulePath": "convex/users.ts",
+      "exportName": "default"
+    }
+  ]
+}

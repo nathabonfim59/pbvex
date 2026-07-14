@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "v2",
+  "deploymentId": "bad_version",
+  "functions": [
+    {
+      "name": "listUsers",
+      "type": "query",
+      "visibility": "public",
+      "modulePath": "convex/users.ts",
+      "exportName": "default"
+    }
+  ]
+}

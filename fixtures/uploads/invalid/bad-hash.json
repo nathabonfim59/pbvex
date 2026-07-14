@@ -1,0 +1,10 @@
+{
+  "manifest": {
+    "protocolVersion": "v1",
+    "deploymentId": "upload_002",
+    "functions": []
+  },
+  "bundle": "Y29uc29sZS5sb2coImhlbGxvIik7",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "size": 21
+}

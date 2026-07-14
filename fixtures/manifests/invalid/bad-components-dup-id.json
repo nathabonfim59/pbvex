@@ -1,0 +1,46 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "bad_components_dup_id",
+  "functions": [],
+  "components": {
+    "definitions": [
+      {
+        "componentId": "def_7a5e94aa1ef9bb9ebc101b61dadbf3b4ccca2bdcfd9c91d19d4119be5ec6d42e",
+        "modulePaths": [
+          "messages.ts"
+        ],
+        "moduleHashes": {
+          "messages.ts": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "dependencies": [],
+        "schema": {
+          "tables": [
+            {
+              "tableName": "messages",
+              "fields": {}
+            }
+          ]
+        }
+      },
+      {
+        "componentId": "def_7a5e94aa1ef9bb9ebc101b61dadbf3b4ccca2bdcfd9c91d19d4119be5ec6d42e",
+        "modulePaths": [
+          "messages.ts"
+        ],
+        "moduleHashes": {
+          "messages.ts": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "dependencies": [],
+        "schema": {
+          "tables": [
+            {
+              "tableName": "messages",
+              "fields": {}
+            }
+          ]
+        }
+      }
+    ],
+    "mounts": []
+  }
+}

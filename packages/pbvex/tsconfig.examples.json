@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "rootDir": "../..",
+    "paths": {
+      "pbvex/server": ["./src/runtime/server.ts"],
+      "pbvex/values": ["./src/runtime/values.ts"],
+      "@pbvex/protocol": ["../protocol/src/index.ts"]
+    }
+  },
+  "include": ["examples/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

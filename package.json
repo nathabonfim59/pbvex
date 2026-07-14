@@ -1,0 +1,38 @@
+{
+  "name": "pbvex",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Convex-like experience on top of PocketBase",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "rm -rf packages/*/dist",
+    "backend:build": "cd backend && go build ./cmd/pbvex",
+    "backend:serve": "cd backend && go run ./cmd/pbvex serve",
+    "protocol:build": "pnpm --filter @pbvex/protocol build",
+    "protocol:test": "pnpm --filter @pbvex/protocol test",
+    "protocol:examples": "pnpm --filter @pbvex/protocol test:examples",
+    "pack:smoke": "./scripts/pack-smoke.sh",
+    "docs:api": "pnpm run build && node scripts/docs-api.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:links": "node docs/scripts/validate-links.mjs",
+    "docs:check": "pnpm run build && node scripts/docs-check.mjs",
+    "docs:verify": "pnpm docs:check && pnpm docs:links && pnpm docs:build"
+  },
+  "devDependencies": {
+    "turbo": "^2.7.5",
+    "typedoc": "0.28.20",
+    "typedoc-plugin-markdown": "4.12.0",
+    "typedoc-vitepress-theme": "1.1.3",
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0",
+    "vitepress": "1.6.4"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}

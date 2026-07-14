@@ -1,0 +1,56 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "components",
+  "functions": [
+    {
+      "name": "call",
+      "type": "action",
+      "visibility": "public",
+      "modulePath": "pbvex/call.ts",
+      "exportName": "default"
+    },
+    {
+      "name": "counter_messages_add",
+      "type": "mutation",
+      "visibility": "public",
+      "modulePath": "pbvex/components/counter/messages.ts",
+      "exportName": "add"
+    },
+    {
+      "name": "counter_messages_count",
+      "type": "query",
+      "visibility": "public",
+      "modulePath": "pbvex/components/counter/messages.ts",
+      "exportName": "count"
+    }
+  ],
+  "components": {
+    "definitions": [
+      {
+        "componentId": "def_7a5e94aa1ef9bb9ebc101b61dadbf3b4ccca2bdcfd9c91d19d4119be5ec6d42e",
+        "modulePaths": ["messages.ts"],
+        "moduleHashes": {
+          "messages.ts": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "dependencies": [],
+        "schema": {
+          "tables": [
+            {
+              "tableName": "messages",
+              "fields": {}
+            }
+          ]
+        }
+      }
+    ],
+    "mounts": [
+      {
+        "name": "counter",
+        "componentId": "def_7a5e94aa1ef9bb9ebc101b61dadbf3b4ccca2bdcfd9c91d19d4119be5ec6d42e"
+      }
+    ]
+  },
+  "schema": {
+    "tables": []
+  }
+}

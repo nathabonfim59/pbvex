@@ -1,0 +1,7 @@
+# Release automation changes require explicit maintainer review.
+/.github/workflows/ @nathabonfim59
+/.goreleaser.yaml @nathabonfim59
+/scripts/release-validate.sh @nathabonfim59
+/scripts/validate-npm-release.mjs @nathabonfim59
+/scripts/validate-tag.sh @nathabonfim59
+/packages/*/package.json @nathabonfim59

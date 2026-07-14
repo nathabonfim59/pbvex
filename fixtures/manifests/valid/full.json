@@ -1,0 +1,82 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "full_app",
+  "functions": [
+    {
+      "name": "getTask",
+      "type": "query",
+      "visibility": "public",
+      "modulePath": "convex/tasks.ts",
+      "exportName": "default",
+      "args": {
+        "type": "object",
+        "fields": {
+          "id": { "type": "id", "tableName": "tasks" }
+        }
+      },
+      "returns": {
+        "type": "object",
+        "fields": {
+          "id": { "type": "id", "tableName": "tasks" },
+          "title": { "type": "string" },
+          "done": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "name": "updateTask",
+      "type": "mutation",
+      "visibility": "public",
+      "modulePath": "convex/tasks.ts",
+      "exportName": "updateTask",
+      "args": {
+        "type": "object",
+        "fields": {
+          "id": { "type": "id", "tableName": "tasks" },
+          "title": { "type": "string" },
+          "done": { "type": "boolean" }
+        }
+      },
+      "returns": { "type": "id", "tableName": "tasks" }
+    },
+    {
+      "name": "sendEmail",
+      "type": "action",
+      "visibility": "internal",
+      "modulePath": "convex/actions.ts",
+      "exportName": "sendEmail",
+      "args": { "type": "object" },
+      "returns": { "type": "boolean" }
+    },
+    {
+      "name": "healthCheck",
+      "type": "httpAction",
+      "visibility": "public",
+      "modulePath": "convex/http.ts",
+      "exportName": "healthCheck",
+      "route": {
+        "method": "GET",
+        "path": "health"
+      }
+    }
+  ],
+  "schema": {
+    "tables": [
+      {
+        "tableName": "tasks",
+        "fields": {
+          "title": { "type": "string" },
+          "done": { "type": "boolean" }
+        }
+      }
+    ]
+  },
+  "config": {
+    "httpPathPrefix": "/api/pbvex",
+    "realtimePath": "/api/pbvex/realtime",
+    "maxUploadBytes": 67108864,
+    "maxFunctionArgsBytes": 1048576,
+    "maxReturnValueBytes": 1048576,
+    "defaultRequestTimeoutMs": 30000
+  }
+}

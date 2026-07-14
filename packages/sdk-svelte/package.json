@@ -1,0 +1,46 @@
+{
+  "name": "@pbvex/sdk-svelte",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Svelte SDK for PBVex - reactive stores for queries, mutations, and actions backed by @pbvex/sdk-core.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathabonfim59/pbvex.git",
+    "directory": "packages/sdk-svelte"
+  },
+  "homepage": "https://github.com/nathabonfim59/pbvex#readme",
+  "bugs": "https://github.com/nathabonfim59/pbvex/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "pnpm --filter @pbvex/sdk-core build && tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "test": "pnpm --filter @pbvex/sdk-core build && tsc --noEmit && vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pbvex/protocol": "workspace:0.1.0"
+  },
+  "devDependencies": {
+    "@pbvex/sdk-core": "workspace:*",
+    "svelte": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.5.0"
+  },
+  "peerDependencies": {
+    "@pbvex/sdk-core": "workspace:*",
+    "svelte": "^4.0.0 || ^5.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@pbvex/protocol",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared PBVex deployment protocol, wire value codec, and canonical hashing",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathabonfim59/pbvex.git",
+    "directory": "packages/protocol"
+  },
+  "homepage": "https://github.com/nathabonfim59/pbvex#readme",
+  "bugs": "https://github.com/nathabonfim59/pbvex/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && tsc --noEmit -p tsconfig.examples.json && node --test \"dist/**/*.test.js\"",
+    "test:examples": "tsc --noEmit -p tsconfig.examples.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}

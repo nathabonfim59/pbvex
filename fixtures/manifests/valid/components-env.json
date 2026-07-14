@@ -1,0 +1,65 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "components_env",
+  "functions": [
+    {
+      "name": "counter_env_greet",
+      "type": "query",
+      "visibility": "public",
+      "modulePath": "pbvex/components/counter/messages.ts",
+      "exportName": "greet"
+    }
+  ],
+  "components": {
+    "definitions": [
+      {
+        "componentId": "def_80f2de6eb5655ff8059d3ba3bc626509f8f84700e70d05a47f609105954b7506",
+        "modulePaths": [
+          "messages.ts"
+        ],
+        "moduleHashes": {
+          "messages.ts": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "dependencies": [],
+        "schema": {
+          "tables": [
+            {
+              "tableName": "messages",
+              "fields": {
+                "value": {
+                  "type": "number"
+                }
+              }
+            }
+          ]
+        },
+        "args": {
+          "type": "object",
+          "shape": {
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        "env": {
+          "GREETING": {
+            "type": "value",
+            "value": "hi"
+          }
+        }
+      }
+    ],
+    "mounts": [
+      {
+        "name": "counter",
+        "componentId": "def_80f2de6eb5655ff8059d3ba3bc626509f8f84700e70d05a47f609105954b7506",
+        "args": {
+          "label": "world"
+        }
+      }
+    ]
+  },
+  "schema": {
+    "tables": []
+  }
+}
