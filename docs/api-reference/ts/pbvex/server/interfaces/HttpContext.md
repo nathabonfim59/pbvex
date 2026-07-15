@@ -2,14 +2,18 @@
 
 # Interface: HttpContext
 
-## Properties
+## Methods
 
-### headers
+### send()
 
-> **headers**: `Record`\<`string`, `string` \| `string`[] \| `undefined`\>
+> **send**(`options`): `Promise`\<[`HttpSendResponse`](HttpSendResponse.md)\>
 
-***
+#### Parameters
 
-### request
+##### options
 
-> **request**: [`Request`](Request.md)
+[`HttpSendOptions`](HttpSendOptions.md)
+
+#### Returns
+
+`Promise`\<[`HttpSendResponse`](HttpSendResponse.md)\>

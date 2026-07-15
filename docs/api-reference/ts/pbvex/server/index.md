@@ -28,6 +28,8 @@
 - [HttpActionCtx](interfaces/HttpActionCtx.md)
 - [HttpActionDef](interfaces/HttpActionDef.md)
 - [HttpContext](interfaces/HttpContext.md)
+- [HttpSendOptions](interfaces/HttpSendOptions.md)
+- [HttpSendResponse](interfaces/HttpSendResponse.md)
 - [IndexInfo](interfaces/IndexInfo.md)
 - [IndexRangeBuilder](interfaces/IndexRangeBuilder.md)
 - [LowerBoundIndexRangeBuilder](interfaces/LowerBoundIndexRangeBuilder.md)

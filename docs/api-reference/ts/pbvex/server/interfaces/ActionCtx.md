@@ -48,11 +48,11 @@
 
 ***
 
-### http?
+### http
 
-> `optional` **http?**: [`HttpContext`](HttpContext.md)
+> **http**: [`HttpContext`](HttpContext.md)
 
-#### Inherited from
+#### Overrides
 
 [`FunctionContext`](FunctionContext.md).[`http`](FunctionContext.md#http)
 

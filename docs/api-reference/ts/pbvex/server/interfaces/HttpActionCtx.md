@@ -48,9 +48,9 @@
 
 ***
 
-### http?
+### http
 
-> `optional` **http?**: [`HttpContext`](HttpContext.md)
+> **http**: [`HttpContext`](HttpContext.md)
 
 #### Inherited from
 

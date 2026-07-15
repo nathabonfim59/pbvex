@@ -263,6 +263,18 @@ Re-exports [HttpContext](../server/interfaces/HttpContext.md)
 
 ***
 
+### HttpSendOptions
+
+Re-exports [HttpSendOptions](../server/interfaces/HttpSendOptions.md)
+
+***
+
+### HttpSendResponse
+
+Re-exports [HttpSendResponse](../server/interfaces/HttpSendResponse.md)
+
+***
+
 ### Id
 
 Re-exports [Id](../server/type-aliases/Id.md)
