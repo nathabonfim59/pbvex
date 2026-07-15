@@ -1,6 +1,6 @@
 {
   "name": "@pbvex/svelte",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "Svelte 5 rune utilities for reactive PBVex queries, mutations, and actions backed by @pbvex/client.",
   "license": "MIT",
@@ -32,7 +32,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@pbvex/protocol": "workspace:0.1.1"
+    "@pbvex/protocol": "workspace:0.2.0"
   },
   "devDependencies": {
     "@pbvex/client": "workspace:*",
