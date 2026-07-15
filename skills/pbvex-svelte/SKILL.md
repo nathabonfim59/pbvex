@@ -7,7 +7,7 @@ description: Build, review, or test Svelte 5 PBVex integrations using @pbvex/sve
 
 Use `@pbvex/svelte` as a Svelte 5, runes-first layer over an independently installed `@pbvex/client`. Set a client in Svelte context during component initialization, then use the current package exports from child components. Prefer rune state and markup reads over Svelte stores.
 
-The Svelte package is actively migrating. Inspect the installed/versioned exports and types before coding or documenting an exact signature; do not hardcode unstable signatures from memory.
+The current package is Svelte 5 runes-first and intentionally breaks from the legacy store API. Inspect the installed/versioned exports and types before coding because an application may have a different package version.
 
 ```bash
 sed -n '1,240p' packages/svelte/src/index.ts
@@ -26,4 +26,4 @@ When arguments depend on `$state()` or `$props()`, supply the supported reactive
 
 Mount a small Svelte harness so rune APIs run during component initialization. Inject a mock client where the installed API supports it, drive state with Svelte test utilities, then assert reactive state and unsubscribe cleanup after unmount. Do not test current rune query state as a legacy readable store.
 
-Do not edit `packages/svelte` or Svelte documentation as part of application integration work unless explicitly asked; this skill is intentionally resilient to in-progress package changes.
+Do not edit `packages/svelte` or Svelte documentation as part of application integration work unless explicitly asked; verify the installed version instead.

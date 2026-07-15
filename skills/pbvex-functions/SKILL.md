@@ -1,6 +1,6 @@
 ---
 name: pbvex-functions
-description: Author or review PBVex TypeScript schema and functions, including queries, mutations, actions, HTTP actions, email templates, validators, generated references, nested calls, and scheduling. Use for application code under pbvex/ and generated-contract workflows.
+description: Author or review PBVex TypeScript schema and functions, including indexed queries and pagination, mutations, actions, authorization, relationships, outbound HTTP, HTTP actions, email templates, validators, generated references, nested calls, and scheduling. Use for application code under pbvex/ and generated-contract workflows.
 ---
 
 # PBVex TypeScript functions
@@ -29,6 +29,14 @@ Choose the narrowest function kind:
 
 Do not treat nested calls from an action as one transaction. Keep handlers within wire, timeout, nesting, and runtime limits; deployed code is Goja, not Node.js.
 
+## Query and authorize bounded data
+
+Design indexes from access patterns: equality fields first, then the range/order field. Use `withIndex` to reduce candidates, reserve `filter` for residual predicates, and use `fullTableScan` only when the bounded scan is deliberate. Finish every growing query with `first`, `unique`, `take`, or `paginate`; reserve `collect` for provably small sets.
+
+Pagination is keyset-based. Pass `{ numItems, cursor: cursor ?? null }`, return `page`, `isDone`, and `continueCursor`, and treat the cursor as opaque. Do not reuse it after changing query arguments, index bounds, ordering, or page size. Paginate before hydrating typed-ID relationships, and bound related reads to avoid N+1 client calls.
+
+Authentication is not authorization. Resolve `ctx.auth.getUserIdentity()`, derive ownership from `tokenIdentifier`, and check stored ownership, membership, tenant, or role state at every sensitive public function. A valid `v.id(...)` proves table/namespace identity, not access. Put the same authorization inside subscribed queries and re-read durable permission state in delayed jobs.
+
 Root functions cannot read `process.env` and do not receive `ctx.env`. When backend code needs server-provisioned configuration, isolate it in a component with an explicit `envVar` declaration. Do not substitute target metadata, deployment token variables, mount arguments, or committed literals for a secret store. Consult `docs/guides/environment-variables.md` for the supported boundary.
 
 ## Application email templates
@@ -48,6 +56,8 @@ Run `pbvex codegen` after adding or renaming a template. Generated `ActionCtx` a
 PBVex sends through PocketBase's configured mailer and sender settings. Configure and test production SMTP separately; never put SMTP credentials in templates or function arguments. HTML substitutions are escaped, while subject and text substitutions are plain text; do not pre-render untrusted HTML into a variable. These application templates do not replace PocketBase's dashboard-managed verification, password-reset, OTP, or other authentication templates. Consult `docs/guides/email-templates.md` for format, limits, and deployment behavior.
 
 ## HTTP and scheduled work
+
+Actions and HTTP actions may call external services with bounded `ctx.http.send`; queries and mutations may not. Allowlist destinations, keep credentials in component environment bindings, set explicit timeouts, validate response status and shape, and make external writes plus local follow-up mutations idempotent. Redirects are not followed automatically. Never accept an arbitrary client-provided URL.
 
 For `httpAction`, use an allowed method and a relative exact `path` or trailing-slash `pathPrefix`; do not claim reserved first segments. Authenticate/authorize before side effects. Verify webhooks over the raw body before parsing, and let server CORS policy govern CORS headers.
 

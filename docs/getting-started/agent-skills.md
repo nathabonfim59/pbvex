@@ -22,6 +22,7 @@ Install focused skills when the task stays in one layer:
 npx skills add nathabonfim59/pbvex --skill pbvex-functions
 npx skills add nathabonfim59/pbvex --skill pbvex-client
 npx skills add nathabonfim59/pbvex --skill pbvex-react
+npx skills add nathabonfim59/pbvex --skill pbvex-deployment
 ```
 
 Install the complete suite when one agent will work across project layers:
@@ -49,13 +50,14 @@ Use `--agent '*'` to target every supported agent. Add `--yes` where non-interac
 
 - `pbvex`: start here for a full-stack change or to route a task.
 - `pbvex-backend`: Go/PocketBase binary, runtime routes, migrations, and realtime internals.
-- `pbvex-functions`: `pbvex/` schema/functions, validators, HTTP actions, and scheduler.
-- `pbvex-client`: framework-neutral typed calls, app auth, realtime, and storage.
+- `pbvex-functions`: `pbvex/` schema/functions, indexed queries and pagination, authorization, outbound HTTP, HTTP actions, and scheduling.
+- `pbvex-client`: framework-neutral typed calls, built-in PocketBase app auth, errors, realtime, and storage.
 - `pbvex-react` or `pbvex-svelte`: framework-layer patterns and tests.
 - `pbvex-components`: component definitions, mounts, namespaces, and compatibility.
-- `pbvex-operations`: deployment, release, limits, security, backup, and testing workflow.
+- `pbvex-deployment`: interactive first-time provisioning, configuration, deployment, smoke testing, and handoff.
+- `pbvex-operations`: deployment, release, limits, security, backup, testing, and documentation verification.
 
-Suggested combinations: use `pbvex` + `pbvex-functions` + `pbvex-client` for a new feature; add one UI skill for React or Svelte; add `pbvex-components` for mounted modules; add `pbvex-operations` for release work. Backend contributors normally pair `pbvex` with `pbvex-backend` and `pbvex-operations`.
+Suggested combinations: use `pbvex` + `pbvex-functions` + `pbvex-client` for a new feature; add one UI skill for React or Svelte; add `pbvex-components` for mounted modules; add `pbvex-deployment` for the first environment setup; add `pbvex-operations` for ongoing release work. Backend contributors normally pair `pbvex` with `pbvex-backend` and `pbvex-operations`.
 
 ## Update and inspect
 

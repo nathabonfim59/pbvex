@@ -1,6 +1,6 @@
 ---
 name: pbvex-operations
-description: Plan or execute safe PBVex deployment, testing, release, security, limit, backup, and single-binary operations. Use for CI/CD, production configuration, incident recovery, capacity boundaries, credentials, or release verification.
+description: Plan or execute safe PBVex deployment, testing, documentation verification, release, security, limit, backup, and single-binary operations. Use for CI/CD, production configuration, incident recovery, capacity boundaries, credentials, documentation maintenance, or release verification.
 ---
 
 # PBVex operations
@@ -39,7 +39,11 @@ Use proportional checks:
 pnpm build && pnpm test
 pbvex build --check
 (cd backend && go test ./... && go vet ./...)
-pnpm docs:check
+pnpm docs:verify
 ```
 
 Never manually edit generated `pbvex/_generated/` or `docs/api-reference/`; run their owning generators. Consult `docs/self-hosting.md`, `docs/guides/deployment.md`, `docs/guides/limits.md`, and `docs/releasing.md` before changing operational behavior.
+
+## Maintain repository documentation
+
+Update authored guides, examples/tutorials, and the owning package README whenever public behavior changes. Regenerate API pages with `pnpm docs:api`; do not patch generated Markdown. Run `pnpm docs:verify` to check source/API staleness, internal links, and the VitePress production build. Keep `docs/self-hosting.md` as the operator reference and `docs/guides/going-to-production.md` as the concrete production walkthrough.

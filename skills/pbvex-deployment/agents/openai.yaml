@@ -1,0 +1,4 @@
+interface:
+  display_name: "PBVex Deployment"
+  short_description: "Guide a safe first PBVex deployment"
+  default_prompt: "Use $pbvex-deployment to walk me through provisioning, configuring, deploying, and verifying a new PBVex environment."
