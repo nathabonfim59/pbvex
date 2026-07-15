@@ -55,7 +55,8 @@ for its health endpoint, performs the first atomic deployment with an
 in-memory loopback-only development credential, and watches
 `pbvex/**/*.ts`. It does not create a permanent PocketBase superuser. Open
 `http://127.0.0.1:8090/_/` and use PocketBase's first-superuser flow only if
-you need the dashboard.
+you need the dashboard. Managed development enables that loopback dashboard by
+default; pass `pbvex dev --no-admin-ui` to disable it.
 
 ## Define a schema and functions
 

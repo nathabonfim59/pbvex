@@ -13,6 +13,20 @@ export interface ManagedBackend {
 
 export interface ManagedBackendOptions {
   debug?: boolean;
+  adminUI?: boolean;
+}
+
+export function managedBackendArgs(
+  dataDir: string,
+  address: string,
+  options: ManagedBackendOptions = {},
+): string[] {
+  const args = ['--dir', dataDir, '--hooksWatch=false'];
+  if (options.debug) args.push('--dev=true');
+  args.push('serve');
+  if (options.adminUI !== false) args.push('--admin-ui');
+  args.push('--http', address);
+  return args;
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -97,9 +111,7 @@ export async function startManagedBackend(config: ResolvedConfig, options: Manag
   await mkdir(dataDir, { recursive: true });
   const token = randomBytes(32).toString('base64url');
   const env = { ...process.env, PBVEX_DEV_DEPLOY_TOKEN: token };
-  const serverArgs = ['--dir', dataDir, '--hooksWatch=false'];
-  if (options.debug) serverArgs.push('--dev=true');
-  serverArgs.push('serve', '--http', address);
+  const serverArgs = managedBackendArgs(dataDir, address, options);
   const child = spawnServer(serverArgs, {
     cwd: config.rootDir,
     env,
@@ -116,6 +128,6 @@ export async function startManagedBackend(config: ResolvedConfig, options: Manag
 
   console.log(`PBVex backend ready at ${origin}`);
   console.log(`PBVex data: ${dataDir}`);
-  console.log(`PocketBase dashboard: ${origin}/_/`);
+  if (options.adminUI !== false) console.log(`PocketBase dashboard: ${origin}/_/`);
   return { token, dataDir, close: () => stopChild(child) };
 }

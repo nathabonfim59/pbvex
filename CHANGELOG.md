@@ -17,6 +17,9 @@ entries are intentionally not duplicated in this changelog.
 - `pbvex init` adds namespaced development, serving, deployment, and typecheck
   scripts by default, with an interactive default-yes prompt and
   `--no-scripts` opt-out.
+- The server now gates the bundled PocketBase dashboard behind
+  `serve --admin-ui`. Managed `pbvex dev` enables it by default and supports
+  `--no-admin-ui`.
 
 ### Fixed
 

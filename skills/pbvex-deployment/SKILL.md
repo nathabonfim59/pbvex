@@ -29,16 +29,19 @@ installs `@pbvex/server`; for a loopback `local` target the command selects and
 starts the bundled backend, persists data in `.pbvex/dev/<target>/pb_data`,
 health-checks `/api/health`, performs the first deployment with a random
 loopback-only deployment credential, and watches `pbvex/**/*.ts`. It does not
-create a permanent superuser. Use the dashboard's first-superuser flow only
-when dashboard access is needed.
+create a permanent superuser. Managed development enables the loopback admin
+UI by default; use `pbvex dev --no-admin-ui` to omit it.
 
 Use `pbvex serve` for a backend-only npm workflow and `pbvex dev --no-backend`
 when another process owns the listener. Use `pbvex dev --debug` only when
-verbose PocketBase request and SQL output is useful. A standalone GoReleaser archive is an
-alternative for Node-free hosting; do not tell npm users to download it as a
-prerequisite. If `@pbvex/server` or the detected platform binary is missing,
-have the user reinstall `pbvex` or explicitly install the exact matching
-`@pbvex/server` version.
+verbose PocketBase request and SQL output is useful. `pbvex serve` and the
+standalone server disable the dashboard by default; pass `serve --admin-ui`
+only when explicitly needed and restrict it to loopback, a tunnel, or a
+protected HTTPS route. A standalone GoReleaser archive is an alternative for
+Node-free hosting; do not tell npm users to download it as a prerequisite. If
+`@pbvex/server` or the detected platform binary is missing, have the user
+reinstall `pbvex` or explicitly install the exact matching `@pbvex/server`
+version.
 
 For staging or production:
 

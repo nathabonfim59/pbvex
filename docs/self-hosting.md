@@ -70,8 +70,15 @@ grant access to the running deployment.
 
 ## PocketBase admin dashboard
 
-The executable embeds the PocketBase admin dashboard. With the example server
-running, open:
+The executable embeds the PocketBase admin dashboard but does not register its
+routes by default. Restart the server with the explicit opt-in flag:
+
+```bash
+pbvex-server serve --admin-ui --http 127.0.0.1:8090
+```
+
+When using the main npm CLI, the equivalent command is
+`pbvex serve --admin-ui --http 127.0.0.1:8090`. Then open:
 
 ```text
 http://127.0.0.1:8090/_/
@@ -244,6 +251,8 @@ the PBVex release pipeline.
 - `--dir <path>`: data directory, default `./pb_data`.
 - `serve --http <addr>`: HTTP listener, default `127.0.0.1:8090`.
 - `serve --https <domain>`: PocketBase-managed HTTPS.
+- `serve --admin-ui`: register the bundled PocketBase dashboard at `/_/`;
+  disabled by default.
 - `--publicDir <path>` and `--indexFallback`: static application files.
 - `--hooksDir`, `--hooksWatch`, `--hooksPool`: PocketBase JS hooks.
 - `--migrationsDir`, `--automigrate`: user migrations.

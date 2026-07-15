@@ -28,12 +28,14 @@ explicitly replaces only those managed scaffold files.
 - `pbvex typecheck`: regenerate types and run `tsc --noEmit`.
 - `pbvex build`: write `.pbvex/dist/artifact.json` and build metadata.
 - `pbvex build --check`: validate without writing deployment output.
-- `pbvex serve`: run the backend bundled by `@pbvex/server`.
+- `pbvex serve`: run the backend bundled by `@pbvex/server`; the admin UI is
+  disabled unless `--admin-ui` is passed.
 - `pbvex deploy`: build, upload, and atomically activate a deployment.
 - `pbvex dev`: for a loopback local target, start a persistent managed
   backend, perform the first deployment, then watch `pbvex/**/*.ts`,
   regenerate, and redeploy. Use `--no-backend` for an externally managed
-  server or `--debug` to include verbose PocketBase and SQL logs.
+  server, `--no-admin-ui` to omit the development dashboard, or `--debug` to
+  include verbose PocketBase and SQL logs.
 
 `pbvex init` adds `pbvex:dev`, `pbvex:serve`, `pbvex:deploy`, and
 `pbvex:typecheck` package scripts by default. Interactive runs prompt with yes

@@ -22,10 +22,11 @@ PocketBase superuser and cannot administer jobs or the dashboard.
 
 Use `pbvex dev --no-backend` when another process owns the local server. Use
 `pbvex dev --debug` when verbose PocketBase request and SQL logging is needed.
-Use
-`pbvex serve` to run the bundled server without the TypeScript build/deploy
-watcher. Remote targets never cause `pbvex dev` to start a local server and
-continue to require a superuser deployment token.
+Managed development enables the loopback dashboard by default; use
+`pbvex dev --no-admin-ui` to omit it. `pbvex serve` runs the bundled server
+without the TypeScript watcher and disables the dashboard unless
+`serve --admin-ui` is passed. Remote targets never cause `pbvex dev` to start
+a local server and continue to require a superuser deployment token.
 
 ## Targets and credentials
 

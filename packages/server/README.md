@@ -12,4 +12,11 @@ npm install --global @pbvex/server
 pbvex-server serve --http 127.0.0.1:8090
 ```
 
+The PocketBase admin UI is disabled by default. Add `--admin-ui` after
+`serve` only when dashboard access is deliberately required:
+
+```bash
+pbvex-server serve --admin-ui --http 127.0.0.1:8090
+```
+
 Standalone release archives remain available for hosts that do not use npm.

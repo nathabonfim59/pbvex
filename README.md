@@ -37,13 +37,17 @@ npm run pbvex:dev
 `.pbvex/dev/local/pb_data`, performs the first deployment without creating a
 permanent superuser, and watches `pbvex/**/*.ts` for rebuilds. The dashboard is
 available at `http://127.0.0.1:8090/_/`; create a superuser there only when you
-need dashboard access.
+need dashboard access. Pass `--no-admin-ui` to omit the dashboard even during
+managed development.
 
 Run only the bundled backend when needed:
 
 ```bash
 npx pbvex serve --http 127.0.0.1:8090
 ```
+
+The backend-only command disables the admin UI by default. Add `--admin-ui`
+when you deliberately need the PocketBase dashboard.
 
 See [the self-hosting guide](docs/self-hosting.md) for token creation, persistence,
 standalone release binaries, reverse proxy, storage, upgrades, and recovery.

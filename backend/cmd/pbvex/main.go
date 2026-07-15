@@ -9,8 +9,13 @@ import (
 
 	"github.com/nathabonfim59/pbvex/backend/internal/pbvex"
 	"github.com/pocketbase/pocketbase"
+	pbcmd "github.com/pocketbase/pocketbase/cmd"
 	"github.com/pocketbase/pocketbase/tools/osutils"
+	"github.com/pocketbase/pocketbase/ui"
+	"github.com/spf13/cobra"
 )
+
+var bundledAdminUI = ui.DistDirFS
 
 func main() {
 	app := pocketbase.NewWithConfig(pocketbase.Config{
@@ -155,7 +160,26 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := app.Start(); err != nil {
+	serveCommand := pbcmd.NewServeCommand(app, true)
+	var adminUI bool
+	serveCommand.Flags().BoolVar(
+		&adminUI,
+		"admin-ui",
+		false,
+		"enable the bundled PocketBase admin dashboard at /_/",
+	)
+	originalServe := serveCommand.RunE
+	serveCommand.RunE = func(command *cobra.Command, args []string) error {
+		if adminUI {
+			ui.DistDirFS = bundledAdminUI
+		} else {
+			ui.DistDirFS = nil
+		}
+		return originalServe(command, args)
+	}
+	app.RootCmd.AddCommand(pbcmd.NewSuperuserCommand(app), serveCommand)
+
+	if err := app.Execute(); err != nil {
 		log.Fatal(err)
 	}
 }

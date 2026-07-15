@@ -1,7 +1,7 @@
 # Going to production
 
-PBVex embeds PocketBase, the PocketBase dashboard, and the PBVex runtime in one
-executable. A production PBVex backend serves **one application**: its successive
+PBVex embeds PocketBase, the optionally enabled PocketBase dashboard, and the
+PBVex runtime in one executable. A production PBVex backend serves **one application**: its successive
 PBVex deployments are releases of that application, not independent tenants.
 Run exactly one PBVex process for a data directory. Do not point multiple
 processes, containers, or replicas at the same `pb_data` directory.
@@ -94,6 +94,8 @@ curl -f http://127.0.0.1:8090/api/health
 
 `LimitNOFILE=4096` is a starting point. Raise it when measured concurrent
 connections, especially realtime subscriptions, require more descriptors.
+The service command deliberately omits `serve --admin-ui`, so `/_/` is not
+registered during normal production operation.
 
 ## Put Nginx and TLS in front
 
@@ -143,7 +145,8 @@ balancer sits before Nginx, configure its trusted-address/real-IP handling and
 sanitize forwarded headers there too; never accept a client-supplied IP header
 unchanged.
 
-In the PocketBase dashboard, set **Settings > Application > Application URL**
+During an explicit admin session, enable the PocketBase dashboard as described
+below and set **Settings > Application > Application URL**
 to the single canonical external origin, for example
 `https://app.example.com`. PBVex uses this trusted value for HTTP-action request
 URLs and, unless `--storageBaseUrl` or `PBVEX_STORAGE_BASE_URL` overrides it,
@@ -156,14 +159,18 @@ superuser IP restrictions behind a proxy.
 
 ## Secure the dashboard and superusers
 
-After creating the first superuser, open the embedded PocketBase dashboard at:
+The dashboard is disabled by default. To perform administration, temporarily
+add `--admin-ui` after `serve` in `ExecStart`, restart PBVex, and access it over
+a loopback SSH tunnel or a separately protected HTTPS route. With the example
+proxy it would be available at:
 
 ```text
 https://app.example.com/_/
 ```
 
 There is no separate PBVex admin service to deploy. Treat dashboard and
-superuser access as production credentials:
+superuser access as production credentials, and remove `--admin-ui` and
+restart the service when the session is complete:
 
 - Use unique superuser accounts and strong passwords; do not share deployment
   tokens or commit them to configuration.
@@ -174,7 +181,8 @@ superuser access as production credentials:
 - Enable MFA and OTP on the `_superusers` collection after SMTP is working. If
   email delivery is unavailable, generate a code locally with
   `pbvex --dir /var/lib/pbvex/pb_data superuser otp admin@example.com`.
-- Consider an additional Nginx/VPN IP restriction on `/_/`. Remember that CI
+- Require an additional Nginx/VPN IP restriction on `/_/` if the dashboard is
+  enabled through the public proxy. Remember that CI
   deployment uses authenticated `/api/pbvex/*` endpoints, so dashboard-only
   proxy restrictions do not replace the PocketBase superuser allowlist.
 

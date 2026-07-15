@@ -327,11 +327,12 @@ program
   .option('--url <url>', 'Override target URL')
   .option('--token <token>', 'API token')
   .option('--no-backend', 'Do not start a managed backend for a loopback local target')
+  .option('--no-admin-ui', 'Disable the PocketBase admin dashboard for the managed backend')
   .option('--debug', 'Enable verbose PocketBase and SQL logging for the managed backend')
-  .action(async (options: { target?: string; url?: string; token?: string; backend?: boolean; debug?: boolean }) => {
+  .action(async (options: { target?: string; url?: string; token?: string; backend?: boolean; adminUi?: boolean; debug?: boolean }) => {
     let config = await loadCliConfig(options);
     const managedBackend = options.backend !== false && shouldManageBackend(config)
-      ? await startManagedBackend(config, { debug: options.debug })
+      ? await startManagedBackend(config, { debug: options.debug, adminUI: options.adminUi })
       : undefined;
     if (managedBackend) config = { ...config, token: managedBackend.token };
     const build = () => bundle({ rootDir: config.rootDir, project: config.project, target: config.target });

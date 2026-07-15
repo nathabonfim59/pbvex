@@ -81,12 +81,17 @@ belong in CI.
 
 ### First publication of `@pbvex/server` in an existing PBVex release line
 
-If the other PBVex packages already exist on npm, do not try to republish their
-immutable versions. Publish only the new server package once from a maintainer
-workstation:
+If the other PBVex packages already exist on npm, claim only the new server
+package from a maintainer workstation. Use a disposable bootstrap prerelease;
+do not consume the next coordinated release version before trusted publishing
+is configured:
 
 ```bash
 npm login
+BOOTSTRAP_VERSION=0.0.0-bootstrap.0
+npm view "@pbvex/server@$BOOTSTRAP_VERSION"
+# Continue only when npm reports that this bootstrap version does not exist.
+
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm test
@@ -95,14 +100,28 @@ pnpm pack:smoke
 goreleaser build --snapshot --clean --parallelism 1
 node scripts/stage-server-binaries.mjs
 pnpm --filter @pbvex/server build
-NPM_CONFIG_PROVENANCE=false pnpm --dir packages/server publish --access public --no-git-checks
+
+BOOTSTRAP_DIR=$(mktemp -d)
+cp -R packages/server/. "$BOOTSTRAP_DIR/"
+npm --prefix "$BOOTSTRAP_DIR" version "$BOOTSTRAP_VERSION" --no-git-tag-version
+NPM_CONFIG_PROVENANCE=false npm publish "$BOOTSTRAP_DIR" --access public --tag bootstrap
 ```
 
-This initial `@pbvex/server` version must match the version declared by the
-`pbvex` dependency. After it exists, configure its trusted publisher using the
-settings above. Then bump all six package manifests to the next coordinated
-version and use the normal signed-tag release flow. Do not attempt to republish
-an existing `pbvex` version merely to add the dependency.
+Verify the public package from a clean temporary installation:
+
+```bash
+VERIFY_DIR=$(mktemp -d)
+npm install --prefix "$VERIFY_DIR" "@pbvex/server@$BOOTSTRAP_VERSION"
+"$VERIFY_DIR/node_modules/.bin/pbvex-server" serve --help
+npm view "@pbvex/server@$BOOTSTRAP_VERSION" dist.integrity
+```
+
+After the bootstrap package exists, configure its trusted publisher using the
+settings above. The normal signed-tag release can then publish the next real
+version of all six packages together, including the exact `@pbvex/server`
+version required by `pbvex`. Do not publish that coordinated version manually
+and do not attempt to republish an existing `pbvex` version merely to add the
+dependency.
 
 ## One-time GitHub hardening
 
