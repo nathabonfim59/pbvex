@@ -743,10 +743,17 @@ func requireProtocolAuth(devDeployToken string) func(*core.RequestEvent) error {
 			return e.Next()
 		}
 		if validDevDeploymentRequest(e, devDeployToken) {
+			e.Request = e.Request.WithContext(context.WithValue(e.Request.Context(), devDeploymentRequestKey{}, true))
 			return e.Next()
 		}
 		return protocolError(e, http.StatusUnauthorized, deploy.ErrorCodeUnauthorized, "Unauthorized.", nil)
 	}
+}
+
+type devDeploymentRequestKey struct{}
+
+func isDevDeploymentRequest(e *core.RequestEvent) bool {
+	return e != nil && e.Request != nil && e.Request.Context().Value(devDeploymentRequestKey{}) == true
 }
 
 func validDevDeploymentRequest(e *core.RequestEvent, expected string) bool {
@@ -809,8 +816,11 @@ func protocolServiceError(err error, e *core.RequestEvent) error {
 	default:
 		status, code, message = http.StatusInternalServerError, deploy.ErrorCodeInternal, "Internal server error."
 	}
-	if e.App.IsDev() {
+	if e.App.IsDev() || isDevDeploymentRequest(e) {
 		e.App.Logger().Error("PBVex protocol request failed", "requestId", requestIDFor(e), "code", code, "error", err)
+	}
+	if err != nil && isDevDeploymentRequest(e) {
+		message = fmt.Sprintf("%s Cause: %v", message, err)
 	}
 	return protocolError(e, status, code, message, err)
 }

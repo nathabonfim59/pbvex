@@ -94,31 +94,40 @@ func backingCollection(name string) *core.Collection {
 // required or maximum-size options can make documents observable or make an
 // activation silently truncate data.
 func validateBackingCollection(c *core.Collection, name string) error {
-	if c == nil || c.Name != name || c.Type != core.CollectionTypeBase || c.System {
-		return fmt.Errorf("schema drift")
+	if c == nil {
+		return fmt.Errorf("schema drift: collection is missing")
+	}
+	if c.Name != name {
+		return fmt.Errorf("schema drift: collection name is %q", c.Name)
+	}
+	if c.Type != core.CollectionTypeBase {
+		return fmt.Errorf("schema drift: collection type %q is incompatible with PBVex table storage", c.Type)
+	}
+	if c.System {
+		return fmt.Errorf("schema drift: collection is system-owned")
 	}
 	// A nil PocketBase API rule means no client-side access. Empty/non-nil
 	// rules are public and any filter rule could expose a mutable raw backing
 	// document, so all five must remain locked.
 	if c.ListRule != nil || c.ViewRule != nil || c.CreateRule != nil || c.UpdateRule != nil || c.DeleteRule != nil {
-		return fmt.Errorf("schema drift")
+		return fmt.Errorf("schema drift: collection API rules are not locked")
 	}
 	want := backingCollection(name)
 	if len(c.Fields) != len(want.Fields) {
-		return fmt.Errorf("schema drift")
+		return fmt.Errorf("schema drift: collection fields do not match PBVex table storage")
 	}
 	for _, desired := range want.Fields {
 		actual := c.Fields.GetByName(desired.GetName())
 		if actual == nil || actual.Type() != desired.Type() {
-			return fmt.Errorf("schema drift")
+			return fmt.Errorf("schema drift: backing field %q is missing or incompatible", desired.GetName())
 		}
 		actualFingerprint, err := backingFieldFingerprint(actual)
 		if err != nil {
-			return fmt.Errorf("schema drift")
+			return fmt.Errorf("schema drift: backing field %q is unreadable", desired.GetName())
 		}
 		desiredFingerprint, err := backingFieldFingerprint(desired)
 		if err != nil || actualFingerprint != desiredFingerprint {
-			return fmt.Errorf("schema drift")
+			return fmt.Errorf("schema drift: backing field %q options are incompatible", desired.GetName())
 		}
 	}
 	// Field names are part of the physical ABI too. The cardinality check
@@ -126,7 +135,7 @@ func validateBackingCollection(c *core.Collection, name string) error {
 	// if all PBVex-owned fields happen to match.
 	for _, actual := range c.Fields {
 		if want.Fields.GetByName(actual.GetName()) == nil {
-			return fmt.Errorf("schema drift")
+			return fmt.Errorf("schema drift: unexpected backing field %q", actual.GetName())
 		}
 	}
 	return nil
@@ -272,8 +281,23 @@ func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUpload
 		return nil, fmt.Errorf("%w: %v", ErrInvalidBundle, err)
 	}
 
+	existing, err := s.repo.GetDeployment(s.internalCtxFrom(ctx), s.app, manifest.DeploymentID)
+	if err == nil {
+		return s.resumeUpload(existing, manifest, bundleJS, req.Sha256, req.Size)
+	}
+	if !errors.Is(err, ErrDeploymentNotFound) {
+		return nil, err
+	}
+
 	record, err := s.repo.CreateDeployment(s.internalCtxFrom(ctx), s.app, manifest, bundleJS, req.Sha256, req.Size)
 	if err != nil {
+		// A concurrent upload of the same deterministic artifact may have won the
+		// unique deploymentId race after the lookup above. Treat that record like
+		// any other retry, while preserving unrelated persistence errors.
+		existing, lookupErr := s.repo.GetDeployment(s.internalCtxFrom(ctx), s.app, manifest.DeploymentID)
+		if lookupErr == nil {
+			return s.resumeUpload(existing, manifest, bundleJS, req.Sha256, req.Size)
+		}
 		return nil, err
 	}
 
@@ -289,7 +313,31 @@ func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUpload
 	return &DeploymentUploadResponse{
 		DeploymentID: deploymentID,
 		BundleHash:   req.Sha256,
-		AcceptedAt:   record.GetDateTime("created").Time().Format(time.RFC3339Nano),
+		AcceptedAt:   responseTimestamp(record.GetDateTime("created")),
+	}, nil
+}
+
+func (s *Service) resumeUpload(record *core.Record, manifest DeploymentManifest, bundleJS, bundleHash string, bundleSize int64) (*DeploymentUploadResponse, error) {
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize manifest: %w", err)
+	}
+	if record.GetString(schema.FieldManifest) != string(manifestJSON) ||
+		record.GetString(schema.FieldBundleHash) != bundleHash ||
+		int64(record.GetInt(schema.FieldBundleSize)) != bundleSize ||
+		record.GetString(schema.FieldBundle) != bundleJS {
+		return nil, fmt.Errorf("%w: deployment id already exists with different content", ErrInvalidBundle)
+	}
+
+	deploymentID := record.GetString(schema.FieldDeploymentID)
+	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, NormalizeConfig(manifest.Config)); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidBundle, err)
+	}
+
+	return &DeploymentUploadResponse{
+		DeploymentID: deploymentID,
+		BundleHash:   bundleHash,
+		AcceptedAt:   responseTimestamp(record.GetDateTime("created")),
 	}, nil
 }
 
@@ -364,7 +412,7 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 		return nil, err
 	}
 	if record.GetBool(schema.FieldActive) {
-		return nil, ErrAlreadyActive
+		return s.activeDeploymentResponse(ctx, record)
 	}
 
 	manifest, bundleJS, err := s.recordManifestAndBundle(record)
@@ -421,12 +469,18 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 		state.Set(schema.FieldActiveID, id)
 		return s.repo.SaveState(internalCtx, txApp, state)
 	}); err != nil {
+		if errors.Is(err, ErrAlreadyActive) {
+			active, lookupErr := s.repo.GetDeployment(ctx, s.app, id)
+			if lookupErr == nil && active.GetBool(schema.FieldActive) {
+				return s.activeDeploymentResponse(ctx, active)
+			}
+		}
 		return nil, err
 	}
 
 	resp := &DeploymentActivateResponse{
 		DeploymentID: id,
-		ActivatedAt:  now.Time().Format(time.RFC3339Nano),
+		ActivatedAt:  responseTimestamp(now),
 	}
 	if previousID != "" {
 		resp.PreviousDeploymentID = &previousID
@@ -440,6 +494,29 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 	}
 
 	return resp, nil
+}
+
+func (s *Service) activeDeploymentResponse(ctx context.Context, record *core.Record) (*DeploymentActivateResponse, error) {
+	activatedAt := record.GetDateTime(schema.FieldActivatedAt)
+	if activatedAt.IsZero() {
+		return nil, fmt.Errorf("active deployment %q has no activation timestamp", record.GetString(schema.FieldDeploymentID))
+	}
+	state, err := s.repo.GetState(s.internalCtxFrom(ctx), s.app)
+	if err != nil {
+		return nil, err
+	}
+	resp := &DeploymentActivateResponse{
+		DeploymentID: record.GetString(schema.FieldDeploymentID),
+		ActivatedAt:  responseTimestamp(activatedAt),
+	}
+	if previousID := state.GetString(schema.FieldPreviousID); previousID != "" {
+		resp.PreviousDeploymentID = &previousID
+	}
+	return resp, nil
+}
+
+func responseTimestamp(value types.DateTime) string {
+	return value.Time().UTC().Truncate(time.Millisecond).Format(time.RFC3339Nano)
 }
 
 // authenticateComponentMountArgs authenticates every declared v.id against
@@ -664,7 +741,7 @@ func materializeNamespaceSchema(ctx context.Context, app core.App, rawSchema any
 		} else if err != nil {
 			return fmt.Errorf("schema lookup failed")
 		} else if err := validateBackingCollection(c, physical); err != nil {
-			return fmt.Errorf("schema drift")
+			return fmt.Errorf("table %q (collection %q): %w", name, physical, err)
 		}
 		fields, ok := t["fields"].(map[string]any)
 		if !ok {
@@ -750,7 +827,7 @@ func preflightNamespaceSchema(ctx context.Context, app core.App, rawSchema any, 
 				}
 			}
 			if err := validateBackingCollection(existing, physical); err != nil {
-				return err
+				return fmt.Errorf("table %q (collection %q): %w", name, physical, err)
 			}
 			count, err := backingRecordCount(ctx, app, physical)
 			if err != nil || count > maxSchemaMigrationRows {

@@ -147,6 +147,16 @@ func TestDevelopmentDeployTokenIsLoopbackAndDeploymentOnly(t *testing.T) {
 	if rr := request("/api/pbvex/deployments", "127.0.0.1:43210", "wrong"); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong development token status=%d body=%s", rr.Code, rr.Body.String())
 	}
+
+	badUpload := httptest.NewRequest(http.MethodPost, "/api/pbvex/deployments", strings.NewReader(`{}`))
+	badUpload.RemoteAddr = "127.0.0.1:43210"
+	badUpload.Header.Set("Authorization", "Bearer "+cfg.DevDeployToken)
+	badUpload.Header.Set("Content-Type", "application/json")
+	badUploadResult := httptest.NewRecorder()
+	mux.ServeHTTP(badUploadResult, badUpload)
+	if badUploadResult.Code != http.StatusBadRequest || !strings.Contains(badUploadResult.Body.String(), "Cause:") {
+		t.Fatalf("development deployment error omitted cause: status=%d body=%s", badUploadResult.Code, badUploadResult.Body.String())
+	}
 }
 
 func TestPlatformRouteMatrixKeepsStorageRealtimeCallAndAdminDistinct(t *testing.T) {

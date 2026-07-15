@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -11,6 +12,19 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
+
+func testServiceUploadRequest(deploymentID, bundle string) map[string]any {
+	return map[string]any{
+		"manifest": map[string]any{
+			"protocolVersion": "v1",
+			"deploymentId":    deploymentID,
+			"functions":       []any{},
+		},
+		"bundle": base64.StdEncoding.EncodeToString([]byte(bundle)),
+		"sha256": HashSha256Bytes([]byte(bundle)),
+		"size":   int64(len(bundle)),
+	}
+}
 
 type noopInvoker struct{}
 
@@ -71,6 +85,60 @@ func setupTestService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	return service
+}
+
+func TestUploadAndActivationAreIdempotent(t *testing.T) {
+	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Bootstrap(app); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(app, NewRepo(), &noopInvoker{}, Config{HistoryLimit: 5})
+	raw := testServiceUploadRequest("dep_idempotent", "globalThis.idempotent = true")
+
+	firstUpload, err := service.Upload(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondUpload, err := service.Upload(raw)
+	if err != nil {
+		t.Fatalf("retrying identical upload: %v", err)
+	}
+	if secondUpload.DeploymentID != firstUpload.DeploymentID || secondUpload.BundleHash != firstUpload.BundleHash || secondUpload.AcceptedAt != firstUpload.AcceptedAt {
+		t.Fatalf("retry response changed: first=%#v second=%#v", firstUpload, secondUpload)
+	}
+	if count, err := service.repo.CountDeployments(context.Background(), app); err != nil || count != 1 {
+		t.Fatalf("deployment count = %d, err = %v; want 1", count, err)
+	}
+
+	firstActivation, err := service.Activate(firstUpload.DeploymentID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondActivation, err := service.Activate(firstUpload.DeploymentID, true)
+	if err != nil {
+		t.Fatalf("retrying activation: %v", err)
+	}
+	if secondActivation.DeploymentID != firstActivation.DeploymentID || secondActivation.ActivatedAt != firstActivation.ActivatedAt {
+		t.Fatalf("retry activation response changed: first=%#v second=%#v", firstActivation, secondActivation)
+	}
+}
+
+func TestUploadRejectsReusedDeploymentIDWithDifferentContent(t *testing.T) {
+	service := setupTestService(t)
+	if _, err := service.Upload(testServiceUploadRequest("dep_retry_collision", "first")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := service.Upload(testServiceUploadRequest("dep_retry_collision", "second"))
+	if !errors.Is(err, ErrInvalidBundle) {
+		t.Fatalf("collision error = %v, want ErrInvalidBundle", err)
+	}
 }
 
 func TestServiceCallRejectsHTTPActionViaGenericCall(t *testing.T) {
