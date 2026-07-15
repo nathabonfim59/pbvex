@@ -29,6 +29,11 @@ jobs:
           node-version: 24.17.0
           package-manager-cache: false
 
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.6'
+
       - name: Set up pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
@@ -43,6 +48,18 @@ jobs:
       - name: Test packed packages
         run: ./scripts/pack-smoke.sh
 
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          install-only: true
+
+      - name: Stage bundled backend binaries
+        run: |
+          goreleaser build --clean
+          node scripts/stage-server-binaries.mjs
+
       - name: Build packages
         run: pnpm build
 
@@ -51,6 +68,7 @@ jobs:
           rm -rf dist/npm
           mkdir -p dist/npm
           pnpm --dir packages/protocol pack --pack-destination ../../dist/npm
+          pnpm --dir packages/server pack --pack-destination ../../dist/npm
           pnpm --dir packages/pbvex pack --pack-destination ../../dist/npm
           pnpm --dir packages/client pack --pack-destination ../../dist/npm
           pnpm --dir packages/react pack --pack-destination ../../dist/npm
@@ -101,6 +119,9 @@ jobs:
 
       - name: Publish protocol
         run: npm publish "dist/npm/pbvex-protocol-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"
+
+      - name: Publish bundled backend server
+        run: npm publish "dist/npm/pbvex-server-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"
 
       - name: Publish authoring SDK and CLI
         run: npm publish "dist/npm/pbvex-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"

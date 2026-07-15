@@ -12,10 +12,11 @@ export interface WatchOptions {
   debounceMs?: number;
 }
 
-export function watchPbvex(options: WatchOptions): { close: () => Promise<void> } {
+export function watchPbvex(options: WatchOptions): { ready: Promise<void>; close: () => Promise<void> } {
   const watcher = chokidarWatch('pbvex/**/*.ts', {
     cwd: options.config.rootDir,
     ignored: ['**/pbvex/_generated/**', '**/node_modules/**'],
+    ignoreInitial: true,
     persistent: true,
   });
 
@@ -34,6 +35,8 @@ export function watchPbvex(options: WatchOptions): { close: () => Promise<void> 
     }
   }, options.debounceMs ?? 300);
 
+  const ready = new Promise<void>((resolve) => watcher.once('ready', () => resolve()));
+
   watcher
     .on('add', debouncedRebuild)
     .on('change', debouncedRebuild)
@@ -41,6 +44,7 @@ export function watchPbvex(options: WatchOptions): { close: () => Promise<void> 
     .on('error', (err) => options.onChange({ ok: false, diagnostics: [], error: err.message }));
 
   return {
+    ready,
     close: async () => {
       await watcher.close();
     },

@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -133,7 +135,7 @@ func resolveAppURL(cors CORSConfig, app core.App) (CORSConfig, error) {
 }
 
 // Register mounts the PBVex admin API and public endpoints.
-func Register(app core.App, service *deploy.Service, bcast *realtime.Broadcaster, schedulerService *scheduler.Service, storageService *storage.Service, storageBasePath string, cors CORSConfig) {
+func Register(app core.App, service *deploy.Service, bcast *realtime.Broadcaster, schedulerService *scheduler.Service, storageService *storage.Service, storageBasePath string, cors CORSConfig, devDeployToken string) {
 	storageBasePath = normalizeBasePath(storageBasePath)
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Id:       "pbvexApi",
@@ -152,7 +154,7 @@ func Register(app core.App, service *deploy.Service, bcast *realtime.Broadcaster
 				requestIDFor(e)
 				return e.Next()
 			}})
-			sub.Bind(&hook.Handler[*core.RequestEvent]{Id: "pbvexProtocolAuth", Func: requireProtocolAuth})
+			sub.Bind(&hook.Handler[*core.RequestEvent]{Id: "pbvexProtocolAuth", Func: requireProtocolAuth(devDeployToken)})
 
 			sub.POST("/deployments", handleUpload(service)).Bind(apis.BodyLimit(deploy.MaxUploadEnvelopeBytes))
 			sub.GET("/deployments", handleList(service))
@@ -735,11 +737,44 @@ func containsKey(m map[string]any, key string) bool {
 	return ok
 }
 
-func requireProtocolAuth(e *core.RequestEvent) error {
-	if e.Auth == nil || !e.Auth.IsSuperuser() {
+func requireProtocolAuth(devDeployToken string) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		if e.Auth != nil && e.Auth.IsSuperuser() {
+			return e.Next()
+		}
+		if validDevDeploymentRequest(e, devDeployToken) {
+			return e.Next()
+		}
 		return protocolError(e, http.StatusUnauthorized, deploy.ErrorCodeUnauthorized, "Unauthorized.", nil)
 	}
-	return e.Next()
+}
+
+func validDevDeploymentRequest(e *core.RequestEvent, expected string) bool {
+	if expected == "" || e == nil || e.Request == nil {
+		return false
+	}
+	path := e.Request.URL.Path
+	if path != "/api/pbvex/deployments" && !strings.HasPrefix(path, "/api/pbvex/deployments/") {
+		return false
+	}
+	host, _, err := net.SplitHostPort(e.Request.RemoteAddr)
+	if err != nil {
+		host = e.Request.RemoteAddr
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	const prefix = "Bearer "
+	authorization := e.Request.Header.Get("Authorization")
+	if !strings.HasPrefix(authorization, prefix) {
+		return false
+	}
+	actual := strings.TrimPrefix(authorization, prefix)
+	if len(actual) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
 }
 
 func protocolServiceError(err error, e *core.RequestEvent) error {
@@ -773,6 +808,9 @@ func protocolServiceError(err error, e *core.RequestEvent) error {
 		status, code, message = http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Request canceled."
 	default:
 		status, code, message = http.StatusInternalServerError, deploy.ErrorCodeInternal, "Internal server error."
+	}
+	if e.App.IsDev() {
+		e.App.Logger().Error("PBVex protocol request failed", "requestId", requestIDFor(e), "code", code, "error", err)
 	}
 	return protocolError(e, status, code, message, err)
 }

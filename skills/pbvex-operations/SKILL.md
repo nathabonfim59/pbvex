@@ -5,9 +5,18 @@ description: Plan or execute safe PBVex deployment, testing, documentation verif
 
 # PBVex operations
 
-Application release automation should install the `pbvex` CLI globally with npm, keep its version aligned with the application's local `pbvex` dependency, and invoke `pbvex` directly. The PBVex source monorepo itself continues to use pnpm workspaces for contributor checks.
+Application release automation should install the `pbvex` CLI with npm and
+keep its version aligned with the application's local dependency. The package
+has an exact dependency on `@pbvex/server`; `pbvex serve` and managed local
+`pbvex dev` select its bundled platform binary. The PBVex source monorepo
+itself continues to use pnpm workspaces for contributor checks.
 
 Separate application deployment from binary operation. The PBVex binary embeds PocketBase and needs no Node.js or checkout at runtime; run one process for one data directory. Do not turn it into a multi-node/shared-data-directory deployment or add a Node sidecar requirement.
+
+The release workflow must run GoReleaser, stage every supported binary into
+`packages/server/bin`, publish `@pbvex/server` before `pbvex`, and keep their
+versions identical. Standalone GitHub archives remain the Node-free server
+distribution.
 
 ```bash
 pbvex codegen -t <target>

@@ -20,8 +20,23 @@ multi-application control plane.
 
 ## Install and start
 
-Choose the release archive for the server platform, verify it against
-`checksums.txt`, and extract `pbvex` (`pbvex.exe` on Windows).
+For an npm-managed server installation, install the server-only package and
+use its unambiguous executable name:
+
+```bash
+npm install --global @pbvex/server
+pbvex-server serve --http 127.0.0.1:8090
+```
+
+Installing the main `pbvex` package also installs `@pbvex/server`; in an
+application project, `pbvex serve` delegates to the same bundled binary.
+Every supported GoReleaser binary is included in the package and the launcher
+selects the current operating system and architecture without a runtime
+download.
+
+For a Node-free host, choose the release archive for the server platform,
+verify it against `checksums.txt`, and extract `pbvex` (`pbvex.exe` on
+Windows).
 
 ```bash
 tar -xzf pbvex_0.1.0_linux_amd64.tar.gz

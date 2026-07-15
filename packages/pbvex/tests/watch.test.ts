@@ -61,7 +61,7 @@ describe('watch', () => {
     };
 
     let lastResult: { ok: boolean; diagnostics: string[]; error?: string } | undefined;
-    const { close } = watchPbvex({
+    const { ready, close } = watchPbvex({
       config,
       build,
       generateCodegen,
@@ -71,6 +71,9 @@ describe('watch', () => {
       },
       debounceMs: 50,
     });
+
+    await ready;
+    await writeFile(path.join(tempDir, 'pbvex', 'messages.ts'), `import { query } from 'pbvex/server';\nimport { v } from 'pbvex/values';\nexport const get = query({ args: { channel: v.string() }, returns: v.array(v.string()), handler: async () => ['first'] });\n`, 'utf-8');
 
     await new Promise<void>((resolve) => {
       const interval = setInterval(() => {

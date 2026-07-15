@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 
 const fileDependency = (archive) => `file:${archive}`;
 
-export function createConsumerManifest({ protocol, pbvex, client, react, svelte }) {
+export function createConsumerManifest({ protocol, server, pbvex, client, react, svelte }) {
   return {
     name: 'pbvex-packed-consumer',
     private: true,
@@ -15,6 +15,7 @@ export function createConsumerManifest({ protocol, pbvex, client, react, svelte 
     },
     dependencies: {
       '@pbvex/protocol': fileDependency(protocol),
+      '@pbvex/server': fileDependency(server),
       pbvex: fileDependency(pbvex),
       '@pbvex/client': fileDependency(client),
       '@pbvex/react': fileDependency(react),
@@ -29,17 +30,18 @@ export function createConsumerManifest({ protocol, pbvex, client, react, svelte 
     pnpm: {
       overrides: {
         '@pbvex/protocol': fileDependency(protocol),
+        '@pbvex/server': fileDependency(server),
       },
     },
   };
 }
 
 async function main() {
-  const [output, protocol, pbvex, client, react, svelte] = process.argv.slice(2);
-  if (![output, protocol, pbvex, client, react, svelte].every(Boolean)) {
-    throw new Error('Usage: pack-smoke-config.mjs <output> <protocol> <pbvex> <client> <react> <svelte>');
+  const [output, protocol, server, pbvex, client, react, svelte] = process.argv.slice(2);
+  if (![output, protocol, server, pbvex, client, react, svelte].every(Boolean)) {
+    throw new Error('Usage: pack-smoke-config.mjs <output> <protocol> <server> <pbvex> <client> <react> <svelte>');
   }
-  const manifest = createConsumerManifest({ protocol, pbvex, client, react, svelte });
+  const manifest = createConsumerManifest({ protocol, server, pbvex, client, react, svelte });
   await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 

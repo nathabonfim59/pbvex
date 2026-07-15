@@ -39,11 +39,18 @@ describe('pbvex init', () => {
     const artifact = JSON.parse(await readFile(path.join(projectDir, '.pbvex', 'dist', 'artifact.json'), 'utf8'));
     expect(artifact.manifest.functions).toHaveLength(2);
     expect(artifact.manifest.functions.map((fn: { exportName: string }) => fn.exportName).sort()).toEqual(['get', 'send']);
-    expect(artifact.manifest.schema.tables.map((table: { tableName: string }) => table.tableName).sort()).toEqual(['messages', 'users']);
+    expect(artifact.manifest.schema.tables.map((table: { tableName: string }) => table.tableName).sort()).toEqual(['messages']);
 
     const packageManifest = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'));
     const pbvexManifest = JSON.parse(await readFile(path.resolve(fileURLToPath(import.meta.url), '../../package.json'), 'utf8'));
     expect(packageManifest.devDependencies.pbvex).toBe(`^${pbvexManifest.version}`);
+    expect(packageManifest.devDependencies.typescript).toBeUndefined();
+    expect(packageManifest.scripts).toMatchObject({
+      'pbvex:dev': 'pbvex dev',
+      'pbvex:serve': 'pbvex serve',
+      'pbvex:deploy': 'pbvex deploy',
+      'pbvex:typecheck': 'pbvex typecheck',
+    });
     expect(runCli(projectDir, '--version').trim()).toBe(pbvexManifest.version);
   });
 
@@ -68,14 +75,29 @@ describe('pbvex init', () => {
 
     const updatedPackage = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'));
     expect(updatedPackage.name).toBe('existing-app');
-    expect(updatedPackage.scripts).toMatchObject({ dev: 'vite', test: 'vitest', build: 'pbvex build', typecheck: 'pbvex typecheck' });
+    expect(updatedPackage.scripts).toMatchObject({
+      dev: 'vite',
+      test: 'vitest',
+      build: 'pbvex build',
+      typecheck: 'pbvex typecheck',
+      'pbvex:dev': 'pbvex dev',
+      'pbvex:serve': 'pbvex serve',
+    });
     expect(updatedPackage.dependencies).toEqual({ react: '^19.0.0' });
     expect(updatedPackage.devDependencies).toEqual(originalPackage.devDependencies);
     expect(await readFile(path.join(projectDir, 'tsconfig.json'), 'utf8')).toBe(tsconfig);
     expect(await readFile(path.join(projectDir, '.gitignore'), 'utf8')).toBe(
-      'dist\nnode_modules\n.pbvex/credentials.json\n.pbvex/dist\n',
+      'dist\nnode_modules\n.pbvex/credentials.json\n.pbvex/dist\n.pbvex/dev\n',
     );
     expect(existsSync(path.join(projectDir, 'pbvex', 'messages.ts'))).toBe(true);
+  });
+
+  it('allows package scripts to be declined explicitly', async () => {
+    projectDir = await mkdtemp(path.join(tmpdir(), 'pbvex-init-no-scripts-'));
+    runCli(projectDir, 'init', '--no-scripts');
+    const manifest = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'));
+    expect(manifest.scripts).toEqual({});
+    expect(manifest.devDependencies.pbvex).toBeDefined();
   });
 
   it('preflights conflicts and leaves no partial scaffold', async () => {

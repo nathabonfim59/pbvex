@@ -10,6 +10,8 @@ single-node backend built with PocketBase as a Go framework.
   durable and recurring cron scheduling, storage, authentication, application email templates, inbound HTTP actions, bounded outbound HTTP,
   and components.
 - `pbvex`: the project CLI and server-side authoring package.
+- `@pbvex/server`: the complete set of bundled backend binaries used by the
+  CLI, also installable directly for server-only npm usage.
 - `@pbvex/client`: typed calls, authentication, and realtime subscriptions.
 - `@pbvex/react`: React provider and hooks.
 - `@pbvex/svelte`: Svelte 5 context helpers and rune-backed query state.
@@ -22,47 +24,37 @@ mount helpers used by build tooling and advanced authoring integrations.
 PBVex v1 is designed for one backend process. It does not provide multi-node
 consensus or distributed scheduler coordination.
 
-## Run the backend
+## Create and run an application
 
 ```bash
-cd backend
-go build -o pbvex ./cmd/pbvex
-./pbvex serve --http 127.0.0.1:8090
+npm install --save-dev pbvex
+npm install @pbvex/client
+npx pbvex init
+npm run pbvex:dev
 ```
 
-The executable defaults to `./pb_data` in its working directory and does not
-need Node.js, pnpm, a repository checkout, or a sidecar at runtime. Release
-archives and checksums are produced by GoReleaser.
+`pbvex dev` starts the backend bundled by `@pbvex/server`, keeps local data in
+`.pbvex/dev/local/pb_data`, performs the first deployment without creating a
+permanent superuser, and watches `pbvex/**/*.ts` for rebuilds. The dashboard is
+available at `http://127.0.0.1:8090/_/`; create a superuser there only when you
+need dashboard access.
 
-Create the first PocketBase superuser before deploying application code:
+Run only the bundled backend when needed:
 
 ```bash
-./pbvex superuser create admin@example.com 'replace-this-password'
+npx pbvex serve --http 127.0.0.1:8090
 ```
 
 See [the self-hosting guide](docs/self-hosting.md) for token creation, persistence,
-reverse proxy, storage, upgrades, and recovery.
+standalone release binaries, reverse proxy, storage, upgrades, and recovery.
 
 Actions can send deployment-owned templates from `pbvex/emails/` through the
 PocketBase mailer; see [Application email templates](docs/guides/email-templates.md).
 They can also call external providers through `ctx.http.send`; see
 [Outbound HTTP requests](docs/guides/outbound-http.md).
 
-## Create an application
-
-```bash
-npm install --global pbvex
-npm install --save-dev pbvex typescript
-npm install @pbvex/client
-pbvex init
-pbvex codegen
-pbvex build
-PBVEX_TOKEN='<superuser-token>' pbvex deploy
-```
-
-The global CLI and local `pbvex` authoring dependency should use the same
-version. The local package is required so imports such as `pbvex/server` and
-`pbvex/values` resolve during type checking and builds.
+The local package provides both the CLI and imports such as `pbvex/server` and
+`pbvex/values`. A global installation remains optional.
 
 `pbvex init` refuses to replace existing scaffold paths. Use `--force` only
 when intentionally replacing them.

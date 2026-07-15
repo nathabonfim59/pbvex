@@ -19,6 +19,7 @@ func main() {
 	})
 
 	cfg := pbvex.DefaultConfig()
+	cfg.DevDeployToken = envString("PBVEX_DEV_DEPLOY_TOKEN", "")
 
 	app.RootCmd.PersistentFlags().StringVar(
 		&cfg.HooksDir,

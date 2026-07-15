@@ -16,14 +16,17 @@ mkdir -p "$PACK_DIR" "$CONSUMER_DIR"
 cd "$REPO_ROOT"
 
 node --test "$SCRIPT_DIR/pack-smoke-config.test.mjs"
+node "$SCRIPT_DIR/stage-local-server-binary.mjs"
 pnpm build
 pnpm --dir packages/protocol pack --pack-destination "$PACK_DIR"
+pnpm --dir packages/server pack --pack-destination "$PACK_DIR"
 pnpm --dir packages/pbvex pack --pack-destination "$PACK_DIR"
 pnpm --dir packages/client pack --pack-destination "$PACK_DIR"
 pnpm --dir packages/react pack --pack-destination "$PACK_DIR"
 pnpm --dir packages/svelte pack --pack-destination "$PACK_DIR"
 
 protocol_tgz=("$PACK_DIR"/pbvex-protocol-*.tgz)
+server_tgz=("$PACK_DIR"/pbvex-server-*.tgz)
 pbvex_tgz=("$PACK_DIR"/pbvex-*.tgz)
 client_tgz=("$PACK_DIR"/pbvex-client-*.tgz)
 react_tgz=("$PACK_DIR"/pbvex-react-*.tgz)
@@ -38,7 +41,7 @@ for candidate in "${pbvex_tgz[@]}"; do
   fi
 done
 
-for archive in "${protocol_tgz[0]}" "$pbvex_package" "${client_tgz[0]}" "${react_tgz[0]}" "${svelte_tgz[0]}"; do
+for archive in "${protocol_tgz[0]}" "${server_tgz[0]}" "$pbvex_package" "${client_tgz[0]}" "${react_tgz[0]}" "${svelte_tgz[0]}"; do
   if [[ -z "$archive" || ! -f "$archive" ]]; then
     echo "Missing expected package archive: $archive" >&2
     exit 1
@@ -48,6 +51,7 @@ done
 node "$SCRIPT_DIR/pack-smoke-config.mjs" \
   "$CONSUMER_DIR/package.json" \
   "${protocol_tgz[0]}" \
+  "${server_tgz[0]}" \
   "$pbvex_package" \
   "${client_tgz[0]}" \
   "${react_tgz[0]}" \
@@ -168,5 +172,6 @@ pnpm install --no-frozen-lockfile
 pnpm typecheck
 pnpm smoke
 ./node_modules/.bin/pbvex --help >/dev/null
+./node_modules/.bin/pbvex-server --help >/dev/null
 
 echo "Packed package consumer smoke test passed."

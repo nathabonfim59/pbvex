@@ -97,6 +97,58 @@ func TestFullRegisterMuxKeepsHTTPActionsAndStaticFallbackDistinct(t *testing.T) 
 	}
 }
 
+func TestDevelopmentDeployTokenIsLoopbackAndDeploymentOnly(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
+	t.Cleanup(func() { _ = app.ResetBootstrapState() })
+	cfg := DefaultConfig()
+	cfg.PublicDir = ""
+	cfg.HooksWatch = false
+	cfg.MigrationsDir = t.TempDir()
+	cfg.DevDeployToken = "local-development-token"
+	if err := Register(app, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RunAllMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	router, err := apis.NewRouter(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app, Router: router}); err != nil {
+		t.Fatal(err)
+	}
+	mux, err := router.BuildMux()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(path, remoteAddr, token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = remoteAddr
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := request("/api/pbvex/deployments", "127.0.0.1:43210", cfg.DevDeployToken); rr.Code != http.StatusOK {
+		t.Fatalf("loopback deployment status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := request("/api/pbvex/jobs", "127.0.0.1:43210", cfg.DevDeployToken); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("development token must not authorize jobs: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := request("/api/pbvex/deployments", "192.0.2.1:43210", cfg.DevDeployToken); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("non-loopback development token status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := request("/api/pbvex/deployments", "127.0.0.1:43210", "wrong"); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong development token status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestPlatformRouteMatrixKeepsStorageRealtimeCallAndAdminDistinct(t *testing.T) {
 	app, _ := newTestApp(t)
 	router, err := apis.NewRouter(app)

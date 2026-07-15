@@ -1,0 +1,44 @@
+{
+  "name": "@pbvex/server",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "Bundled PBVex backend server binaries",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathabonfim59/pbvex.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/nathabonfim59/pbvex#readme",
+  "bugs": "https://github.com/nathabonfim59/pbvex/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "bin": {
+    "pbvex-server": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["bin", "dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

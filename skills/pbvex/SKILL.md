@@ -5,7 +5,9 @@ description: Route PBVex application and repository work across TypeScript autho
 
 # PBVex workflow router
 
-In application repositories, install the CLI globally with `npm install --global pbvex` and keep a matching local `pbvex` dependency so authoring imports resolve. Invoke the global CLI directly as `pbvex`.
+In application repositories, install `pbvex` locally so authoring imports,
+the CLI, and its bundled `@pbvex/server` backend resolve together. Invoke it
+through package scripts or `npx pbvex`; a matching global CLI is optional.
 
 ## Research PBVex from authoritative sources
 
@@ -39,7 +41,10 @@ Follow this path for an application change:
 2. Run `pbvex codegen` after schema or exported-function changes.
 3. Type-check and bundle with `pbvex typecheck` and `pbvex build` (or `build --check` when no artifact is needed).
 4. Use generated `api`/`internal` references from `pbvex/_generated/` in server and client code.
-5. Deploy with a superuser token only from trusted deployment automation; verify calls, realtime, scheduled work, and storage relevant to the release.
+5. Use `pbvex dev` for a managed loopback backend and first deployment. Deploy
+   to independently managed targets with a superuser token only from trusted
+   deployment automation; verify calls, realtime, scheduled work, and storage
+   relevant to the release.
 
 Design database reads as bounded access patterns. Prefer a matching index plus `first`, `unique`, `take`, or `paginate`; use `collect` only for provably small result sets. Pagination uses HMAC-authenticated keyset cursors: keep `continueCursor` opaque and restart from `null` when bounds, order, or page size change.
 

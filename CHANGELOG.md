@@ -6,6 +6,23 @@ entries are intentionally not duplicated in this changelog.
 
 ## Unreleased
 
+### Added
+
+- `@pbvex/server` now publishes the complete GoReleaser backend binary matrix
+  for npm installations. The `pbvex` CLI depends on it and exposes
+  `pbvex serve`.
+- `pbvex dev` now starts a persistent project-local backend for loopback local
+  targets, authorizes deployment with a scoped development token, performs the
+  initial deployment, and watches for TypeScript application changes.
+- `pbvex init` adds namespaced development, serving, deployment, and typecheck
+  scripts by default, with an interactive default-yes prompt and
+  `--no-scripts` opt-out.
+
+### Fixed
+
+- Development watch deployments no longer report success after a deployment
+  request fails.
+
 ## 0.1.1 - 2026-07-15
 
 ### Fixed

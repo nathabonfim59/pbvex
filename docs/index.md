@@ -20,7 +20,7 @@ description: Convex-shaped TypeScript authoring and clients, deployed to one Poc
     </div>
     <div class="pbvex-terminal" aria-label="PBVex installation and client example">
       <div class="pbvex-terminal-bar"><span></span><span></span><span></span><code>terminal</code></div>
-      <div class="pbvex-terminal-code">$ npm install --global pbvex<br>$ npm install --save-dev pbvex typescript<br>$ npm install @pbvex/client<br>$ pbvex init<br>$ pbvex codegen<br><br>// app.ts — generated references keep calls typed<br>import { Client } from '@pbvex/client';<br>import { api } from './pbvex/_generated/api.js';<br><br>const client = new Client('http://127.0.0.1:8090');<br>const messages = await client.query(api.messages.list, { channel: 'general' });<br>await client.mutation(api.messages.send, { channel: 'general', body: 'Hello' });</div>
+      <div class="pbvex-terminal-code">$ npm install --save-dev pbvex<br>$ npm install @pbvex/client<br>$ npx pbvex init<br>$ npm run pbvex:dev<br><br>// app.ts — generated references keep calls typed<br>import { Client } from '@pbvex/client';<br>import { api } from './pbvex/_generated/api.js';<br><br>const client = new Client('http://127.0.0.1:8090');<br>const messages = await client.query(api.messages.list, { channel: 'general' });<br>await client.mutation(api.messages.send, { channel: 'general', body: 'Hello' });</div>
     </div>
   </section>
 

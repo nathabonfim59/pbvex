@@ -37,6 +37,9 @@ type Config struct {
 	Scheduler     scheduler.Config
 	Storage       storage.Config
 	CORS          api.CORSConfig
+	// DevDeployToken grants deployment-only access from loopback requests while
+	// it is configured. It must never be configured for a production server.
+	DevDeployToken string
 }
 
 // DefaultConfig returns sane defaults for PBVex.
@@ -230,7 +233,7 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 	app.OnRecordUpdateRequest().Bind(&hook.Handler[*core.RecordRequestEvent]{Id: "pbvexProtectBackingUpdate", Priority: 0, Func: forbidBackingRecord})
 	app.OnRecordDeleteRequest().Bind(&hook.Handler[*core.RecordRequestEvent]{Id: "pbvexProtectBackingDelete", Priority: 0, Func: forbidBackingRecord})
 
-	api.Register(app, service, broadcaster, schedulerService, storageService, cfg.Storage.BasePath, cfg.CORS)
+	api.Register(app, service, broadcaster, schedulerService, storageService, cfg.Storage.BasePath, cfg.CORS, cfg.DevDeployToken)
 
 	return service, broadcaster, nil
 }

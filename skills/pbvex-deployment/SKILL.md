@@ -24,7 +24,21 @@ Treat one server deployment as one application. Use exactly one PBVex process fo
 
 ## Provision the backend
 
-For a disposable local environment, use a project-owned or temporary data directory, start the listener on loopback, create a local superuser, and health-check `/api/health`.
+For normal local development, prefer `pbvex dev`. The npm `pbvex` package
+installs `@pbvex/server`; for a loopback `local` target the command selects and
+starts the bundled backend, persists data in `.pbvex/dev/<target>/pb_data`,
+health-checks `/api/health`, performs the first deployment with a random
+loopback-only deployment credential, and watches `pbvex/**/*.ts`. It does not
+create a permanent superuser. Use the dashboard's first-superuser flow only
+when dashboard access is needed.
+
+Use `pbvex serve` for a backend-only npm workflow and `pbvex dev --no-backend`
+when another process owns the listener. Use `pbvex dev --debug` only when
+verbose PocketBase request and SQL output is useful. A standalone GoReleaser archive is an
+alternative for Node-free hosting; do not tell npm users to download it as a
+prerequisite. If `@pbvex/server` or the detected platform binary is missing,
+have the user reinstall `pbvex` or explicitly install the exact matching
+`@pbvex/server` version.
 
 For staging or production:
 

@@ -6,7 +6,7 @@ The client SDK is published as `@pbvex/client`. It is browser-neutral and only r
 
 ```bash
 npm install --global pbvex
-npm install --save-dev pbvex typescript
+npm install --save-dev pbvex
 npm install @pbvex/client
 ```
 

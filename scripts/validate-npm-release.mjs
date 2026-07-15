@@ -7,6 +7,7 @@ if (!expected || expected.startsWith('v')) {
 
 const manifests = new Map([
   ['packages/protocol/package.json', '@pbvex/protocol'],
+  ['packages/server/package.json', '@pbvex/server'],
   ['packages/pbvex/package.json', 'pbvex'],
   ['packages/client/package.json', '@pbvex/client'],
   ['packages/react/package.json', '@pbvex/react'],

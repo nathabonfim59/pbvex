@@ -4,8 +4,7 @@ This walkthrough creates a local PBVex backend, a TypeScript application, and a 
 
 ## Prerequisites
 
-- Node.js 18 or later with npm for the global CLI, authoring packages, and client code.
-- A PBVex server binary for your operating system. Download the matching archive and `checksums.txt` from the project release, verify the archive, and extract `pbvex` (`pbvex.exe` on Windows).
+- Node.js 18 or later with npm for the CLI, bundled local backend, authoring packages, and client code.
 
 ## Install the agent skill (optional)
 
@@ -15,32 +14,7 @@ PBVex ships project-specific instructions for Codex, Claude Code, Cursor, and ot
 npx skills add nathabonfim59/pbvex --skill pbvex
 ```
 
-List or install the focused backend, functions, client, React, Svelte, components, and operations skills from the [Agent Skills guide](./getting-started/agent-skills.md). Skills guide your coding agent; they do not install the PBVex binary or npm packages used below.
-
-Start the binary from the directory that should hold the data directory:
-
-```bash
-mkdir -p ~/pbvex-local
-cd ~/pbvex-local
-/path/to/pbvex serve --http 127.0.0.1:8090
-```
-
-The default data directory is `./pb_data`. In a second terminal, create the first PocketBase superuser:
-
-```bash
-cd ~/pbvex-local
-/path/to/pbvex superuser create admin@example.com 'replace-this-password'
-```
-
-Get a deployment token from the running server. Keep it out of source control.
-
-```bash
-curl -sS http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
-  -H 'Content-Type: application/json' \
-  -d '{"identity":"admin@example.com","password":"replace-this-password"}'
-```
-
-Copy the response's `token` value. A superuser token authorizes deployment; it is not an application-user token.
+List or install the focused backend, functions, client, React, Svelte, components, and operations skills from the [Agent Skills guide](./getting-started/agent-skills.md). Skills guide your coding agent; they do not install the npm packages used below.
 
 ## Initialize the TypeScript application
 
@@ -48,15 +22,14 @@ Copy the response's `token` value. A superuser token authorizes deployment; it i
 mkdir my-pbvex-app
 cd my-pbvex-app
 npm init --yes
-npm install --global pbvex
-npm install --save-dev pbvex typescript
+npm install --save-dev pbvex
 npm install @pbvex/client
-pbvex init
+npx pbvex init
 ```
 
-Keep the global CLI and local `pbvex` dependency on the same version. The global installation provides the direct `pbvex` command; the local dependency provides the `pbvex/server` and `pbvex/values` modules imported by application code.
+The local `pbvex` package supplies the CLI, the `pbvex/server` and `pbvex/values` authoring modules, and the bundled `@pbvex/server` backend dependency. A matching global CLI remains optional.
 
-`init` creates `pbvex/pbvex.config.ts`, schema and function examples, generated-file placeholders, and scripts. It refuses to overwrite existing PBVex paths unless you pass `--force`.
+`init` creates `pbvex/pbvex.config.ts`, schema and function examples, generated-file placeholders, and scripts. In an interactive terminal it asks whether to add scripts and defaults to yes; use `--no-scripts` to opt out. It refuses to overwrite existing PBVex paths unless you pass `--force`.
 
 Set the local target in `pbvex/pbvex.config.ts` if needed:
 
@@ -69,6 +42,20 @@ export default {
   },
 };
 ```
+
+Start the managed local backend and deploy the scaffold:
+
+```bash
+npm run pbvex:dev
+```
+
+For a loopback `local` target, this command starts the bundled Go backend,
+stores persistent development state under `.pbvex/dev/local/pb_data`, waits
+for its health endpoint, performs the first atomic deployment with an
+in-memory loopback-only development credential, and watches
+`pbvex/**/*.ts`. It does not create a permanent PocketBase superuser. Open
+`http://127.0.0.1:8090/_/` and use PocketBase's first-superuser flow only if
+you need the dashboard.
 
 ## Define a schema and functions
 
@@ -115,7 +102,9 @@ export const send = mutation({
 
 ## Generate, build, and deploy
 
-Generate references whenever schema or function exports change, then type-check and build the deployable artifact:
+`pbvex dev` generates references, builds, and deploys whenever schema or
+function exports change. The individual commands remain available for CI and
+manual deployment:
 
 ```bash
 pbvex codegen
@@ -123,7 +112,8 @@ pbvex typecheck
 pbvex build
 ```
 
-The build writes `.pbvex/dist/artifact.json` and build metadata. Deploy it with the token obtained above:
+The build writes `.pbvex/dist/artifact.json` and build metadata. Deploying to
+an independently managed backend requires a PocketBase superuser token:
 
 ```bash
 PBVEX_TOKEN='<superuser-token>' pbvex deploy --url http://127.0.0.1:8090

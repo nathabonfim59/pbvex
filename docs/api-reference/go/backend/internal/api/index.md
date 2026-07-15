@@ -9,13 +9,13 @@ import "github.com/nathabonfim59/pbvex/backend/internal/api"
 ## Index
 
 - [func IsReservedPlatformPath\(path, storageBasePath string\) bool](<#IsReservedPlatformPath>)
-- [func Register\(app core.App, service \*deploy.Service, bcast \*realtime.Broadcaster, schedulerService \*scheduler.Service, storageService \*storage.Service, storageBasePath string, cors CORSConfig\)](<#Register>)
+- [func Register\(app core.App, service \*deploy.Service, bcast \*realtime.Broadcaster, schedulerService \*scheduler.Service, storageService \*storage.Service, storageBasePath string, cors CORSConfig, devDeployToken string\)](<#Register>)
 - [type CORSConfig](<#CORSConfig>)
   - [func DefaultCORSConfig\(\) CORSConfig](<#DefaultCORSConfig>)
 
 
 <a name="IsReservedPlatformPath"></a>
-## func [IsReservedPlatformPath](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L685>)
+## func [IsReservedPlatformPath](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L687>)
 
 ```go
 func IsReservedPlatformPath(path, storageBasePath string) bool
@@ -24,16 +24,16 @@ func IsReservedPlatformPath(path, storageBasePath string) bool
 
 
 <a name="Register"></a>
-## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L136>)
+## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L138>)
 
 ```go
-func Register(app core.App, service *deploy.Service, bcast *realtime.Broadcaster, schedulerService *scheduler.Service, storageService *storage.Service, storageBasePath string, cors CORSConfig)
+func Register(app core.App, service *deploy.Service, bcast *realtime.Broadcaster, schedulerService *scheduler.Service, storageService *storage.Service, storageBasePath string, cors CORSConfig, devDeployToken string)
 ```
 
 Register mounts the PBVex admin API and public endpoints.
 
 <a name="CORSConfig"></a>
-## type [CORSConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L28-L38>)
+## type [CORSConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L30-L40>)
 
 CORSConfig is the per\-service CORS policy.
 
@@ -52,7 +52,7 @@ type CORSConfig struct {
 ```
 
 <a name="DefaultCORSConfig"></a>
-### func [DefaultCORSConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L41>)
+### func [DefaultCORSConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L43>)
 
 ```go
 func DefaultCORSConfig() CORSConfig

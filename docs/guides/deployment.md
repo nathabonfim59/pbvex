@@ -2,6 +2,31 @@
 
 PBVex deployment uploads a TypeScript-derived artifact to an already running PBVex binary. It is distinct from installing or upgrading that binary.
 
+## Managed local development
+
+The npm `pbvex` package depends on `@pbvex/server`, which contains the
+supported backend binaries. For a loopback `local` target, one command owns
+the local server and deployment loop:
+
+```bash
+pbvex dev
+```
+
+It starts the matching bundled backend, persists data under
+`.pbvex/dev/local/pb_data`, waits for `/api/health`, performs the initial
+atomic deployment with a random process-local credential, and watches
+`pbvex/**/*.ts`. That credential is accepted only for deployment routes, only
+when the backend process explicitly receives the development token, and only
+from a loopback request. It is not a
+PocketBase superuser and cannot administer jobs or the dashboard.
+
+Use `pbvex dev --no-backend` when another process owns the local server. Use
+`pbvex dev --debug` when verbose PocketBase request and SQL logging is needed.
+Use
+`pbvex serve` to run the bundled server without the TypeScript build/deploy
+watcher. Remote targets never cause `pbvex dev` to start a local server and
+continue to require a superuser deployment token.
+
 ## Targets and credentials
 
 Define named server targets in `pbvex/pbvex.config.ts`:
@@ -26,7 +51,11 @@ For `pbvex deploy -t production`, the token resolution order is:
 3. `PBVEX_TOKEN`.
 4. `.pbvex/credentials.json`, first at `production.token`, then its top-level `token`.
 
-The token must be a PocketBase superuser token. It authorizes deployment upload, list, activation, rollback, and scheduler administration; application requests use their own optional auth-record tokens. Keep credentials out of `pbvex.config.ts` and source control.
+Except for the scoped credential created internally by managed local
+`pbvex dev`, the token must be a PocketBase superuser token. It authorizes
+deployment upload, list, activation, rollback, and scheduler administration;
+application requests use their own optional auth-record tokens. Keep
+credentials out of `pbvex.config.ts` and source control.
 
 ## Build and activate
 

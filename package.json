@@ -10,6 +10,8 @@
     "clean": "rm -rf packages/*/dist",
     "backend:build": "cd backend && go build ./cmd/pbvex",
     "backend:serve": "cd backend && go run ./cmd/pbvex serve",
+    "server:stage:local": "node scripts/stage-local-server-binary.mjs",
+    "server:stage:release": "node scripts/stage-server-binaries.mjs",
     "protocol:build": "pnpm --filter @pbvex/protocol build",
     "protocol:test": "pnpm --filter @pbvex/protocol test",
     "protocol:examples": "pnpm --filter @pbvex/protocol test:examples",

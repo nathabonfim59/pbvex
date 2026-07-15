@@ -15,7 +15,7 @@ import "github.com/nathabonfim59/pbvex/backend/internal/pbvex"
 
 
 <a name="Register"></a>
-## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L60>)
+## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L63>)
 
 ```go
 func Register(app *pocketbase.PocketBase, cfg Config) error
@@ -24,7 +24,7 @@ func Register(app *pocketbase.PocketBase, cfg Config) error
 Register wires PBVex behavior into the provided PocketBase application.
 
 <a name="RegisterCore"></a>
-## func [RegisterCore](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L97>)
+## func [RegisterCore](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L100>)
 
 ```go
 func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator, error)
@@ -33,7 +33,7 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 RegisterCore wires PBVex core behavior into any core.App implementation.
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L26-L40>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L26-L43>)
 
 Config configures PBVex registration.
 
@@ -52,11 +52,14 @@ type Config struct {
     Scheduler     scheduler.Config
     Storage       storage.Config
     CORS          api.CORSConfig
+    // DevDeployToken grants deployment-only access from loopback requests while
+    // it is configured. It must never be configured for a production server.
+    DevDeployToken string
 }
 ```
 
 <a name="DefaultConfig"></a>
-### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L43>)
+### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L46>)
 
 ```go
 func DefaultConfig() Config

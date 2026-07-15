@@ -2,15 +2,21 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { createInterface } from 'node:readline/promises';
+import { spawnServer } from '@pbvex/server';
 import { loadConfig } from '../config/config.js';
 import { bundle } from '../bundler/bundler.js';
 import { artifactToJson, buildMetadataToJson } from '../bundler/manifest.js';
 import { generateCodegenFiles } from '../codegen/codegen.js';
 import { DeployClient } from '../deploy/client.js';
 import { watchPbvex } from '../watch/watch.js';
+import { shouldManageBackend, startManagedBackend } from '../dev/backend.js';
 
 const program = new Command();
+const require = createRequire(import.meta.url);
+const typescriptCli = require.resolve('typescript/bin/tsc');
 
 const packageManifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
   version?: unknown;
@@ -46,25 +52,30 @@ function hasPackageDependency(manifest: JsonObject, name: string): boolean {
   });
 }
 
-function mergedPackageJson(file: string): string {
+function mergedPackageJson(file: string, addScripts = true): string {
   const manifest: JsonObject = existsSync(file)
     ? readProjectPackage(file)
     : { name: 'my-pbvex-project', private: true, version: '0.1.0', type: 'module' };
   const scripts = isJsonObject(manifest.scripts) ? { ...manifest.scripts } : {};
-  scripts.dev ??= 'pbvex dev';
-  scripts.build ??= 'pbvex build';
-  scripts.typecheck ??= 'pbvex typecheck';
+  if (addScripts) {
+    scripts.dev ??= 'pbvex dev';
+    scripts.build ??= 'pbvex build';
+    scripts.typecheck ??= 'pbvex typecheck';
+    scripts['pbvex:dev'] ??= 'pbvex dev';
+    scripts['pbvex:serve'] ??= 'pbvex serve';
+    scripts['pbvex:deploy'] ??= 'pbvex deploy';
+    scripts['pbvex:typecheck'] ??= 'pbvex typecheck';
+  }
   manifest.scripts = scripts;
 
   const devDependencies = isJsonObject(manifest.devDependencies) ? { ...manifest.devDependencies } : {};
   if (!hasPackageDependency(manifest, 'pbvex')) devDependencies.pbvex = `^${packageVersion}`;
-  if (!hasPackageDependency(manifest, 'typescript')) devDependencies.typescript = '^5.0.0';
   manifest.devDependencies = devDependencies;
   return JSON.stringify(manifest, null, 2) + '\n';
 }
 
 function mergedGitignore(file: string): string {
-  const entries = ['node_modules', '.pbvex/credentials.json', '.pbvex/dist'];
+  const entries = ['node_modules', '.pbvex/credentials.json', '.pbvex/dist', '.pbvex/dev'];
   const original = existsSync(file) ? readFileSync(file, 'utf8') : '';
   const lines = original.split(/\r?\n/);
   const missing = entries.filter((entry) => !lines.includes(entry));
@@ -88,7 +99,8 @@ program
   .command('init')
   .description('Initialize a new PBVex project in the current directory')
   .option('--force', 'Replace existing PBVex scaffold files')
-  .action(async (options: { force?: boolean }) => {
+  .option('--no-scripts', 'Do not add PBVex package scripts')
+  .action(async (options: { force?: boolean; scripts?: boolean }, command: Command) => {
     const cwd = process.cwd();
     const pbvexDir = path.join(cwd, 'pbvex');
     const generatedDir = path.join(pbvexDir, '_generated');
@@ -113,10 +125,6 @@ program
 import { v } from 'pbvex/values';
 
 export default defineSchema({
-  users: defineTable({
-    name: v.string(),
-    email: v.string(),
-  }),
   messages: defineTable({
     body: v.string(),
     channel: v.optional(v.string()),
@@ -156,8 +164,16 @@ export const send = mutation({
 
     const tsconfigPath = path.join(cwd, 'tsconfig.json');
     const gitignorePath = path.join(cwd, '.gitignore');
+    let addScripts = options.scripts !== false;
+    if (command.getOptionValueSource('scripts') === 'default' && process.stdin.isTTY && process.stdout.isTTY) {
+      const prompt = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = (await prompt.question('Add PBVex package scripts? (Y/n) ')).trim().toLowerCase();
+      prompt.close();
+      addScripts = answer === '' || answer === 'y' || answer === 'yes';
+    }
+
     const projectFiles = new Map<string, string>([
-      [packageJsonPath, mergedPackageJson(packageJsonPath)],
+      [packageJsonPath, mergedPackageJson(packageJsonPath, addScripts)],
       [
         tsconfigPath,
         existsSync(tsconfigPath)
@@ -239,7 +255,7 @@ program
     }
     await generateCodegen(config, result);
     try {
-      execSync('tsc --noEmit', { cwd: config.rootDir, stdio: 'inherit' });
+      execFileSync(process.execPath, [typescriptCli, '--noEmit'], { cwd: config.rootDir, stdio: 'inherit' });
     } catch {
       process.exit(1);
     }
@@ -284,13 +300,40 @@ program
   });
 
 program
+  .command('serve')
+  .description('Run the bundled PBVex backend server')
+  .helpOption(false)
+  .allowUnknownOption(true)
+  .argument('[serverArgs...]')
+  .action(async (serverArgs: string[]) => {
+    const child = spawnServer(['serve', ...serverArgs], { stdio: 'inherit' });
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', (code, signal) => {
+        if (signal) {
+          resolve(1);
+          return;
+        }
+        resolve(code ?? 1);
+      });
+    });
+    if (exitCode !== 0) process.exitCode = exitCode;
+  });
+
+program
   .command('dev')
   .description('Watch pbvex files and deploy to the selected target')
   .option('-t, --target <target>', 'Target name', 'local')
   .option('--url <url>', 'Override target URL')
   .option('--token <token>', 'API token')
-  .action(async (options) => {
-    const config = await loadCliConfig(options);
+  .option('--no-backend', 'Do not start a managed backend for a loopback local target')
+  .option('--debug', 'Enable verbose PocketBase and SQL logging for the managed backend')
+  .action(async (options: { target?: string; url?: string; token?: string; backend?: boolean; debug?: boolean }) => {
+    let config = await loadCliConfig(options);
+    const managedBackend = options.backend !== false && shouldManageBackend(config)
+      ? await startManagedBackend(config, { debug: options.debug })
+      : undefined;
+    if (managedBackend) config = { ...config, token: managedBackend.token };
     const build = () => bundle({ rootDir: config.rootDir, project: config.project, target: config.target });
 
     const runBuild = async () => {
@@ -311,7 +354,7 @@ program
 
     await runBuild();
 
-    const { close } = watchPbvex({
+    const { ready, close } = watchPbvex({
       config,
       build,
       generateCodegen: (result) => generateCodegen(config, result),
@@ -321,7 +364,7 @@ program
         if (deployResult.ok) {
           console.log(`Deployed ${deployResult.deploymentId} to ${config.url}`);
         } else {
-          console.error(`Deploy failed: ${deployResult.error}`);
+          throw new Error(`Deploy failed: ${deployResult.error}`);
         }
       },
       onChange: ({ ok, diagnostics, error }) => {
@@ -331,11 +374,15 @@ program
       },
       debounceMs: 300,
     });
+    await ready;
 
-    process.on('SIGINT', async () => {
+    const shutdown = async () => {
       await close();
+      await managedBackend?.close();
       process.exit(0);
-    });
+    };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
   });
 
 program

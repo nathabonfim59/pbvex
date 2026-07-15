@@ -51,6 +51,9 @@ importers:
       '@pbvex/protocol':
         specifier: workspace:0.1.1
         version: link:../protocol
+      '@pbvex/server':
+        specifier: workspace:0.1.1
+        version: link:../server
       chokidar:
         specifier: ^3.6.0
         version: 3.6.0
@@ -116,6 +119,15 @@ importers:
       vitest:
         specifier: ^1.5.0
         version: 1.6.1(jsdom@24.1.3)
+
+  packages/server:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
 
   packages/svelte:
     dependencies:
@@ -3041,7 +3053,6 @@ packages:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
-    dev: true
 
   /uc.micro@2.1.0:
     resolution: {integrity: sha512-ARDJmphmdvUk6Glw7y9DQ2bFkKBHwQHLi2lsaH6PPmz/Ka9sFOBsBluozhDltWmnv9u/cF6Rt87znRTPV+yp/A==}

@@ -31,6 +31,8 @@ backend/*.out
 # Node
 node_modules/
 packages/*/node_modules/
+packages/server/bin/*/
+packages/server/bin/manifest.json
 
 # TypeScript
 packages/*/dist/
