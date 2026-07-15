@@ -1,0 +1,25 @@
+{
+  "roundtrip": [
+    { "label": "null", "value": null },
+    { "label": "true", "value": true },
+    { "label": "false", "value": false },
+    { "label": "string", "value": "hello" },
+    { "label": "integer", "value": 42 },
+    { "label": "float", "value": -1.5 },
+    { "label": "zero", "value": 0 },
+    { "label": "array", "value": [1, "two", null] },
+    { "label": "object", "value": { "b": 2, "a": 1 } },
+    { "label": "int64", "value": { "$integer": "AQAAAAAAAAA=" } },
+    { "label": "bytes", "value": { "$bytes": "AP9C" } },
+    { "label": "nested", "value": { "items": [{ "$integer": "AQAAAAAAAAA=" }, { "$bytes": "AP9C" }] } }
+  ],
+  "invalidDecode": [
+    { "label": "taggedKey", "value": { "$tag": 1 }, "reason": "field name starts with $" },
+    { "label": "reservedKey", "value": { "__proto__": 1 }, "reason": "reserved field name" },
+    { "label": "malformedBytes", "value": { "$bytes": 123 }, "reason": "$bytes must be a string" },
+    { "label": "malformedInteger", "value": { "$integer": 123 }, "reason": "$integer must be a string" },
+    { "label": "unknownSpecial", "value": { "$unknown": 1 }, "reason": "unknown $-prefixed special key" },
+    { "label": "badInt64Length", "value": { "$integer": "AQA=" }, "reason": "$integer must decode to 8 bytes" },
+    { "label": "badBase64", "value": { "$bytes": "!!!" }, "reason": "invalid base64" }
+  ]
+}

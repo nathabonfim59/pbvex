@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "bad_components",
+  "functions": [],
+  "components": {
+    "definitions": [
+      {
+        "componentId": "def_7a5e94aa1ef9bb9ebc101b61dadbf3b4ccca2bdcfd9c91d19d4119be5ec6d42e",
+        "modulePaths": ["messages.ts"],
+        "schema": {
+          "tables": [
+            {
+              "tableName": "messages",
+              "fields": {}
+            }
+          ]
+        }
+      }
+    ],
+    "mounts": [
+      {
+        "name": "counter",
+        "componentId": "def_7a5e94aa1ef9bb9ebc101b61dadbf3b4ccca2bdcfd9c91d19d4119be5ec6d42e"
+      }
+    ]
+  }
+}

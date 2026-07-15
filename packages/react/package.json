@@ -1,0 +1,55 @@
+{
+  "name": "@pbvex/react",
+  "version": "0.1.0",
+  "description": "React adapter for the PBVex SDK",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathabonfim59/pbvex.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/nathabonfim59/pbvex#readme",
+  "bugs": "https://github.com/nathabonfim59/pbvex/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "pnpm --filter @pbvex/client build && tsc",
+    "dev": "tsc --watch",
+    "test": "pnpm --filter @pbvex/client build && tsc --noEmit -p tsconfig.test.json && vitest run",
+    "lint": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@pbvex/protocol": "workspace:0.1.0"
+  },
+  "peerDependencies": {
+    "@pbvex/client": "workspace:*",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "jsdom": "^24.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.0.0",
+    "vitest": "^1.5.0"
+  },
+  "keywords": ["pbvex", "react", "hooks", "convex", "pocketbase"],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

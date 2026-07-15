@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "baseUrl": ".",
+    "paths": {
+      "@pbvex/protocol": ["./src/index.ts"],
+      "@pbvex/client": ["./examples/_stubs/client.d.ts"],
+      "@pbvex/svelte": ["./examples/_stubs/svelte.d.ts"],
+      "@pbvex/react": ["./examples/_stubs/react.d.ts"]
+    }
+  },
+  "include": ["examples/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

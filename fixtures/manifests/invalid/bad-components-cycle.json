@@ -1,0 +1,34 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "bad_components_cycle",
+  "functions": [],
+  "components": {
+    "definitions": [
+      {
+        "componentId": "def_a687aeea0ff7f7e4a5dc82df9210fd18c54c4fc3729a8ef12ea61c80e8bed334",
+        "modulePaths": [
+          "messages.ts"
+        ],
+        "moduleHashes": {
+          "messages.ts": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "dependencies": [
+          "beta"
+        ]
+      },
+      {
+        "componentId": "def_b23aa067e1972bf80881ddd68a07bfb009aedf60229c81a14258c854ca44f231",
+        "modulePaths": [
+          "messages.ts"
+        ],
+        "moduleHashes": {
+          "messages.ts": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "dependencies": [
+          "alpha"
+        ]
+      }
+    ],
+    "mounts": []
+  }
+}

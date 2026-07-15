@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "bad_schema",
+  "functions": [],
+  "schema": {
+    "tables": [
+      {
+        "tableName": "1invalid",
+        "fields": {}
+      }
+    ]
+  }
+}

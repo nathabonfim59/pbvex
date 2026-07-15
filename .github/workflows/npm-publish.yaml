@@ -1,0 +1,115 @@
+name: Publish npm Packages
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: npm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.17.0
+          package-manager-cache: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate tag and package versions
+        run: |
+          ./scripts/validate-tag.sh
+          node ./scripts/validate-npm-release.mjs "${GITHUB_REF_NAME#v}"
+
+      - name: Test packed packages
+        run: ./scripts/pack-smoke.sh
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Pack publishable tarballs
+        run: |
+          rm -rf dist/npm
+          mkdir -p dist/npm
+          pnpm --dir packages/protocol pack --pack-destination ../../dist/npm
+          pnpm --dir packages/pbvex pack --pack-destination ../../dist/npm
+          pnpm --dir packages/client pack --pack-destination ../../dist/npm
+          pnpm --dir packages/react pack --pack-destination ../../dist/npm
+          pnpm --dir packages/svelte pack --pack-destination ../../dist/npm
+          cd dist/npm
+          sha256sum ./*.tgz > SHA256SUMS
+
+      - name: Upload npm tarballs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-tarballs
+          path: dist/npm
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js for trusted publishing
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.17.0
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Download validated npm tarballs
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: npm-tarballs
+          path: dist/npm
+
+      - name: Verify tarball checksums
+        working-directory: dist/npm
+        run: sha256sum --check SHA256SUMS
+
+      - name: Select npm distribution tag
+        run: |
+          if [[ "${GITHUB_REF_NAME#v}" == *-* ]]; then
+            echo 'NPM_TAG=next' >> "$GITHUB_ENV"
+          else
+            echo 'NPM_TAG=latest' >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish protocol
+        run: npm publish "dist/npm/pbvex-protocol-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"
+
+      - name: Publish authoring SDK and CLI
+        run: npm publish "dist/npm/pbvex-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"
+
+      - name: Publish core SDK
+        run: npm publish "dist/npm/pbvex-client-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"
+
+      - name: Publish React SDK
+        run: npm publish "dist/npm/pbvex-react-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"
+
+      - name: Publish Svelte SDK
+        run: npm publish "dist/npm/pbvex-svelte-${GITHUB_REF_NAME#v}.tgz" --access public --tag "$NPM_TAG"

@@ -1,0 +1,64 @@
+---
+name: pbvex-functions
+description: Author or review PBVex TypeScript schema and functions, including queries, mutations, actions, HTTP actions, email templates, validators, generated references, nested calls, and scheduling. Use for application code under pbvex/ and generated-contract workflows.
+---
+
+# PBVex TypeScript functions
+
+Expect a global CLI installed with `npm install --global pbvex` plus a matching local `pbvex` dependency. Use the direct `pbvex` command below; do not assume pnpm is installed in an application repository.
+
+Author application code under `pbvex/`. Import schema/runtime APIs from public `pbvex/server` and validators from `pbvex/values`; import function factories and references from `./_generated/server` and `./_generated/api` after code generation. Do not import internal Go packages or manually construct function paths.
+
+```bash
+pbvex codegen
+pbvex typecheck
+pbvex build --check
+rg -n "(query|mutation|action|httpAction)\(" pbvex
+```
+
+## Define bounded contracts
+
+Use `defineSchema`, `defineTable`, indexes, and `v` validators. Declare `args` and `returns`; validators are both runtime boundaries and generated TypeScript types. Use opaque `v.id('table')` values as IDs—never parse, manufacture, or retag them. Keep public and internal functions distinct: `api` is client-callable; `internal` is backend-only. Public exposure never replaces authorization: resolve `ctx.auth.getUserIdentity()` and enforce ownership/tenant rules.
+
+Choose the narrowest function kind:
+
+- Queries have read-only `ctx.db` and can be subscribed to.
+- Mutations have transactional read/write `ctx.db`, scheduler, and mutation storage capabilities.
+- Actions have no direct database access; use generated references with `ctx.runQuery`, `ctx.runMutation`, or `ctx.runAction`.
+- HTTP actions are public `/api/pbvex/...` routes, take `Request`, return `Response`, cannot be internal/nested-called, and use action capabilities.
+
+Do not treat nested calls from an action as one transaction. Keep handlers within wire, timeout, nesting, and runtime limits; deployed code is Goja, not Node.js.
+
+Root functions cannot read `process.env` and do not receive `ctx.env`. When backend code needs server-provisioned configuration, isolate it in a component with an explicit `envVar` declaration. Do not substitute target metadata, deployment token variables, mount arguments, or committed literals for a secret store. Consult `docs/guides/environment-variables.md` for the supported boundary.
+
+## Application email templates
+
+Put application-owned templates in flat `pbvex/emails/<name>.json` files with a non-empty `subject` and at least one non-empty `text` or `html` body. Use bounded `{{ variable }}` placeholders and call the generated action context:
+
+```ts
+await ctx.email.send({
+  template: 'welcome',
+  to: args.email,
+  variables: { name: args.name },
+});
+```
+
+Run `pbvex codegen` after adding or renaming a template. Generated `ActionCtx` and `HttpActionCtx` types expose the discovered template names as a literal union, so preserve autocomplete and never widen or cast an unknown template name to bypass it. `ctx.email` exists only on actions, internal actions, component actions, and HTTP actions; queries and mutations must not send irreversible external mail. Make scheduled/retried delivery idempotent.
+
+PBVex sends through PocketBase's configured mailer and sender settings. Configure and test production SMTP separately; never put SMTP credentials in templates or function arguments. HTML substitutions are escaped, while subject and text substitutions are plain text; do not pre-render untrusted HTML into a variable. These application templates do not replace PocketBase's dashboard-managed verification, password-reset, OTP, or other authentication templates. Consult `docs/guides/email-templates.md` for format, limits, and deployment behavior.
+
+## HTTP and scheduled work
+
+For `httpAction`, use an allowed method and a relative exact `path` or trailing-slash `pathPrefix`; do not claim reserved first segments. Authenticate/authorize before side effects. Verify webhooks over the raw body before parsing, and let server CORS policy govern CORS headers.
+
+Mutations, actions, and HTTP actions can use `ctx.scheduler.runAfter`/`runAt`; only public/internal mutations and actions can be targets. Retain/cancel the opaque job ID as needed, and make handlers idempotent because jobs may resume/retry. A scheduled job is not a live authenticated request.
+
+Import `SECOND_MS`, `MINUTE_MS`, `HOUR_MS`, `DAY_MS`, or `WEEK_MS` from `pbvex/server` instead of embedding unexplained millisecond values. Multiply the smallest useful constant, such as `5 * MINUTE_MS` or `3 * DAY_MS`. A `runAfter` delay of `0` means eligible immediately/asynchronously.
+
+For fixed recurring work, define one default `cronJobs()` export in `pbvex/crons.ts` and call `crons.cron(name, expression, generatedRef, args?)`. Expressions use PocketBase's five-field UTC format or supported macros. Cron ticks enqueue durable PBVex jobs; missed ticks during downtime are not backfilled, and overlapping occurrences are possible.
+
+## Generated contract rule
+
+Never edit `pbvex/_generated/` by hand. Run `pbvex codegen` after changing schema, function exports, components, mounts, or email-template names, then fix types at call sites. Do not bypass generated references, template-name unions, or validators to silence a type error.
+
+For the complete supported value set and runtime-validation boundaries, consult `docs/guides/data-types-and-validation.md` rather than assuming Convex, PocketBase, JSON, or JavaScript values are interchangeable.

@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "bad_function_type",
+  "functions": [
+    {
+      "name": "listUsers",
+      "type": "rpc",
+      "visibility": "public",
+      "modulePath": "convex/users.ts",
+      "exportName": "default"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "v1",
+  "deploymentId": "schema_app",
+  "functions": [],
+  "schema": {
+    "tables": [
+      {
+        "tableName": "users",
+        "fields": {
+          "name": { "type": "string" },
+          "email": { "type": "string" }
+        },
+        "indexes": [
+          { "name": "by_email", "fields": ["email"] }
+        ]
+      },
+      {
+        "tableName": "messages",
+        "fields": {
+          "body": { "type": "string" },
+          "author": { "type": "id", "tableName": "users" },
+          "channel": { "type": "optional", "validator": { "type": "string" } }
+        }
+      }
+    ]
+  }
+}

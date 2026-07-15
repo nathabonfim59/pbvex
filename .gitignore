@@ -1,0 +1,49 @@
+/.vscode/
+.idea
+
+.DS_Store
+
+# goreleaser builds folder
+/.builds/
+
+# tests coverage
+coverage.out
+
+# plaintask todo files
+*.todo
+
+# generated markdown previews
+README.html
+CHANGELOG.html
+CHANGELOG_16_22.html
+CHANGELOG_8_15.html
+LICENSE.html
+
+# Go
+backend/pbvex
+backend/pbvex.exe
+backend/pb_data
+backend/test
+backend/vendor
+backend/*.test
+backend/*.out
+
+# Node
+node_modules/
+packages/*/node_modules/
+
+# TypeScript
+packages/*/dist/
+*.tsbuildinfo
+
+# Build
+dist/
+build/
+
+# VitePress dev/build cache and output
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/.vitepress/.temp/
+docs/.vitepress/.api-check/
+
+.turbo/
