@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createConsumerManifest } from './pack-smoke-config.mjs';
+
+test('the CLI declares TypeScript as a runtime dependency', async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL('../packages/pbvex/package.json', import.meta.url), 'utf8'),
+  );
+
+  assert.equal(packageJson.dependencies.typescript, '^5.0.0');
+  assert.equal(packageJson.devDependencies.typescript, undefined);
+});
 
 test('the candidate protocol tarball override survives package version bumps', () => {
   const protocol = '/tmp/pbvex-protocol-9.8.7.tgz';

@@ -6,6 +6,15 @@ entries are intentionally not duplicated in this changelog.
 
 ## Unreleased
 
+## 0.1.1 - 2026-07-15
+
+### Fixed
+
+- Global `pbvex` installations now include TypeScript, which the CLI uses at
+  runtime to load configuration and bundle projects.
+
+## 0.1.0
+
 ### Added
 
 - Convex-shaped TypeScript authoring, schemas, validators, deterministic code
