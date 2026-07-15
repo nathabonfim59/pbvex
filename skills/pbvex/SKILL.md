@@ -7,6 +7,16 @@ description: Route PBVex application and repository work across TypeScript autho
 
 In application repositories, install the CLI globally with `npm install --global pbvex` and keep a matching local `pbvex` dependency so authoring imports resolve. Invoke the global CLI directly as `pbvex`.
 
+## Research PBVex from authoritative sources
+
+Use this research order for PBVex information:
+
+1. Search this skill and the relevant specialized PBVex skill first.
+2. If the skills do not answer the question or current information is needed, fetch the official [PBVex guides](https://nathabonfim59.github.io/pbvex/guides/) and follow the relevant page from that index.
+3. Use general web search only if the skills and official PBVex guides do not provide the answer.
+
+Do not skip directly to general web search. PBVex is new, so broader results are likely to be sparse, stale, or unrelated. For version-specific implementation work, verify the resulting guidance against the installed package version, generated types, CLI help, and repository source.
+
 Use this skill to orient a PBVex change, then load only the specialized skill(s) it needs:
 
 - Backend binary, PocketBase embedding, runtime route, migrations, or Go tests: `pbvex-backend`.
