@@ -364,6 +364,8 @@ start_server() {
   local run_dir="$1"
   local log_file="$2"
   local data_dir="${3:-}"
+  local admin_ui="${4:-false}"
+  local -a command=("$BIN_DIR/pbvex")
   mkdir -p "$run_dir"
   assert_isolated "$run_dir"
   PORT="$(free_port)"
@@ -373,12 +375,14 @@ start_server() {
   # the repository checkout, node/pnpm, or a sibling public directory. The test
   # harness still uses curl/python from the caller's environment.
   if [[ -n "$data_dir" ]]; then
-    env -i HOME="$HOME" PATH="$ENV_BIN_DIR" \
-      "$BIN_DIR/pbvex" --dir "$data_dir" serve --http "127.0.0.1:$PORT" > "$LOG_FILE" 2>&1 &
-  else
-    env -i HOME="$HOME" PATH="$ENV_BIN_DIR" \
-      "$BIN_DIR/pbvex" serve --http "127.0.0.1:$PORT" > "$LOG_FILE" 2>&1 &
+    command+=(--dir "$data_dir")
   fi
+  command+=(serve --http "127.0.0.1:$PORT")
+  if [[ "$admin_ui" == "true" ]]; then
+    command+=(--admin-ui)
+  fi
+  env -i HOME="$HOME" PATH="$ENV_BIN_DIR" \
+    "${command[@]}" > "$LOG_FILE" 2>&1 &
   PID=$!
 }
 
@@ -416,7 +420,13 @@ root_returns_404() {
   [[ "$status" == "404" ]]
 }
 
-admin_ui_ok() {
+admin_ui_disabled() {
+  local status
+  status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/_/")"
+  [[ "$status" == "404" ]]
+}
+
+admin_ui_enabled() {
   local status
   status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/_/")"
   [[ "$status" == "200" ]]
@@ -466,7 +476,7 @@ default_data_dir_works() {
 
   api_health_ok
   root_returns_404
-  admin_ui_ok
+  admin_ui_disabled
   pbvex_call_returns_validation_error
   pbvex_deployments_requires_auth
 
@@ -494,7 +504,7 @@ explicit_data_dir_works() {
 
   api_health_ok
   root_returns_404
-  admin_ui_ok
+  admin_ui_disabled
   pbvex_call_returns_validation_error
   pbvex_deployments_requires_auth
   authenticate_superuser
@@ -532,6 +542,21 @@ explicit_data_dir_works() {
   echo "Explicit data directory scenario passed."
 }
 
+admin_ui_opt_in_works() {
+  local run_dir="$TMP_DIR/run_admin_ui"
+  echo "=== Scenario: opt-in admin UI ==="
+  start_server "$run_dir" "$TMP_DIR/pbvex_admin_ui.log" "" true
+  wait_for_health
+
+  api_health_ok
+  root_returns_404
+  admin_ui_enabled
+
+  stop_server
+  assert_isolated "$run_dir"
+  echo "Opt-in admin UI scenario passed."
+}
+
 # Verify the binary advertises a cwd-relative default data directory.
 if ! "$BIN_DIR/pbvex" --help | grep -F 'default "./pb_data"' >/dev/null; then
   echo "Default data directory is not working-directory-relative" >&2
@@ -551,5 +576,6 @@ prepare_artifact
 version_ok
 default_data_dir_works
 explicit_data_dir_works
+admin_ui_opt_in_works
 
 echo "Smoke test passed."
