@@ -1,6 +1,6 @@
 {
   "name": "pbvex",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "PBVex CLI and runtime authoring SDK",
   "license": "MIT",
@@ -48,8 +48,8 @@
     "lint": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@pbvex/protocol": "workspace:0.2.1",
-    "@pbvex/server": "workspace:0.2.1",
+    "@pbvex/protocol": "workspace:0.2.2",
+    "@pbvex/server": "workspace:0.2.2",
     "commander": "^12.0.0",
     "chokidar": "^3.6.0",
     "zod": "^3.22.0",
