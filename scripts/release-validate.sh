@@ -76,8 +76,18 @@ required_files = {
     'LICENSE.md': os.path.join(repo_root, 'LICENSE.md'),
     'README.md': os.path.join(repo_root, 'README.md'),
     'CHANGELOG.md': os.path.join(repo_root, 'CHANGELOG.md'),
-    'docs/self-hosting.md': os.path.join(repo_root, 'docs/self-hosting.md'),
 }
+
+docs_root = os.path.join(repo_root, 'docs')
+for root, dirnames, filenames in os.walk(docs_root):
+    dirnames.sort()
+    for filename in sorted(filenames):
+        if not filename.endswith('.md'):
+            continue
+        path = os.path.join(root, filename)
+        archive_name = os.path.relpath(path, repo_root).replace(os.sep, '/')
+        required_files[archive_name] = path
+
 required_sources = {name: open(path, 'rb').read() for name, path in required_files.items()}
 windows_reserved = re.compile(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CLOCK\$)(\..*)?$', re.IGNORECASE)
 
