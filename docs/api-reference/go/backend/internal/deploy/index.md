@@ -370,7 +370,7 @@ type ActivationObserver interface {
 ```
 
 <a name="CallSnapshot"></a>
-## type [CallSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1229-L1236>)
+## type [CallSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1306-L1313>)
 
 CallSnapshot captures the resolved active deployment and function for a call. It is safe to use without invoking user code.
 
@@ -1074,7 +1074,7 @@ type Service struct {
 ```
 
 <a name="NewService"></a>
-### func [NewService](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L150>)
+### func [NewService](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L159>)
 
 ```go
 func NewService(app core.App, repo *Repo, invoker RuntimeInvoker, config Config) *Service
@@ -1083,7 +1083,7 @@ func NewService(app core.App, repo *Repo, invoker RuntimeInvoker, config Config)
 NewService creates a new deployment service.
 
 <a name="Service.Activate"></a>
-### func \(\*Service\) [Activate](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L350>)
+### func \(\*Service\) [Activate](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L398>)
 
 ```go
 func (s *Service) Activate(id string, atomic bool) (*DeploymentActivateResponse, error)
@@ -1092,7 +1092,7 @@ func (s *Service) Activate(id string, atomic bool) (*DeploymentActivateResponse,
 Activate atomically switches the active deployment to id.
 
 <a name="Service.ActivateContext"></a>
-### func \(\*Service\) [ActivateContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L354>)
+### func \(\*Service\) [ActivateContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L402>)
 
 ```go
 func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (*DeploymentActivateResponse, error)
@@ -1101,7 +1101,7 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 
 
 <a name="Service.Active"></a>
-### func \(\*Service\) [Active](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L337>)
+### func \(\*Service\) [Active](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L385>)
 
 ```go
 func (s *Service) Active() (*Deployment, error)
@@ -1110,7 +1110,7 @@ func (s *Service) Active() (*Deployment, error)
 Active returns the currently active deployment.
 
 <a name="Service.ActiveContext"></a>
-### func \(\*Service\) [ActiveContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L341>)
+### func \(\*Service\) [ActiveContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L389>)
 
 ```go
 func (s *Service) ActiveContext(ctx context.Context) (*Deployment, error)
@@ -1119,7 +1119,7 @@ func (s *Service) ActiveContext(ctx context.Context) (*Deployment, error)
 
 
 <a name="Service.ActiveUploadEnvelopeBytes"></a>
-### func \(\*Service\) [ActiveUploadEnvelopeBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1452>)
+### func \(\*Service\) [ActiveUploadEnvelopeBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1529>)
 
 ```go
 func (s *Service) ActiveUploadEnvelopeBytes() int64
@@ -1128,7 +1128,7 @@ func (s *Service) ActiveUploadEnvelopeBytes() int64
 
 
 <a name="Service.Call"></a>
-### func \(\*Service\) [Call](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1288>)
+### func \(\*Service\) [Call](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1365>)
 
 ```go
 func (s *Service) Call(ctx context.Context, functionName string, args any, authArgs ...any) (any, error)
@@ -1137,7 +1137,7 @@ func (s *Service) Call(ctx context.Context, functionName string, args any, authA
 Call invokes a public function on the currently active deployment.
 
 <a name="Service.CallQuery"></a>
-### func \(\*Service\) [CallQuery](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1301>)
+### func \(\*Service\) [CallQuery](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1378>)
 
 ```go
 func (s *Service) CallQuery(ctx context.Context, functionName string, args any) (any, error)
@@ -1146,7 +1146,7 @@ func (s *Service) CallQuery(ctx context.Context, functionName string, args any) 
 CallQuery invokes a public query function on the currently active deployment.
 
 <a name="Service.Get"></a>
-### func \(\*Service\) [Get](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L320>)
+### func \(\*Service\) [Get](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L368>)
 
 ```go
 func (s *Service) Get(id string) (*Deployment, error)
@@ -1155,7 +1155,7 @@ func (s *Service) Get(id string) (*Deployment, error)
 Get returns a single deployment by deploymentId.
 
 <a name="Service.GetContext"></a>
-### func \(\*Service\) [GetContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L324>)
+### func \(\*Service\) [GetContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L372>)
 
 ```go
 func (s *Service) GetContext(ctx context.Context, id string) (*Deployment, error)
@@ -1164,7 +1164,7 @@ func (s *Service) GetContext(ctx context.Context, id string) (*Deployment, error
 
 
 <a name="Service.HTTPAction"></a>
-### func \(\*Service\) [HTTPAction](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1324>)
+### func \(\*Service\) [HTTPAction](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1401>)
 
 ```go
 func (s *Service) HTTPAction(ctx context.Context, method, path string, envelope *HTTPRequestEnvelope, authArgs ...any) (*HTTPResponseEnvelope, error)
@@ -1173,7 +1173,7 @@ func (s *Service) HTTPAction(ctx context.Context, method, path string, envelope 
 HTTPAction resolves and invokes a public HTTP action on the active snapshot.
 
 <a name="Service.Invoke"></a>
-### func \(\*Service\) [Invoke](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1206>)
+### func \(\*Service\) [Invoke](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1283>)
 
 ```go
 func (s *Service) Invoke(ctx context.Context, deploymentID, functionName string, args any, authArgs ...any) (any, error)
@@ -1182,7 +1182,7 @@ func (s *Service) Invoke(ctx context.Context, deploymentID, functionName string,
 Invoke loads a deployment bundle and calls a registered function.
 
 <a name="Service.InvokeDeploymentSnapshot"></a>
-### func \(\*Service\) [InvokeDeploymentSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1480>)
+### func \(\*Service\) [InvokeDeploymentSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1557>)
 
 ```go
 func (s *Service) InvokeDeploymentSnapshot(ctx context.Context, deploymentID, bundleHash, functionName string, args any) (any, error)
@@ -1191,7 +1191,7 @@ func (s *Service) InvokeDeploymentSnapshot(ctx context.Context, deploymentID, bu
 InvokeDeploymentSnapshot invokes a scheduled function against the exact deployment and bundle hash captured when the job was created.
 
 <a name="Service.InvokeSnapshot"></a>
-### func \(\*Service\) [InvokeSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1316>)
+### func \(\*Service\) [InvokeSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1393>)
 
 ```go
 func (s *Service) InvokeSnapshot(ctx context.Context, snap *CallSnapshot, args any) (any, error)
@@ -1200,7 +1200,7 @@ func (s *Service) InvokeSnapshot(ctx context.Context, snap *CallSnapshot, args a
 InvokeSnapshot invokes a function against a pre\-resolved CallSnapshot without re\-resolving the active deployment. This guarantees the invocation runs against the exact deployment that was active at admission time, even if a new deployment is activated mid\-connection.
 
 <a name="Service.List"></a>
-### func \(\*Service\) [List](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L297>)
+### func \(\*Service\) [List](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L345>)
 
 ```go
 func (s *Service) List() (*DeploymentListResponse, error)
@@ -1209,7 +1209,7 @@ func (s *Service) List() (*DeploymentListResponse, error)
 List returns all stored deployments with the active flag.
 
 <a name="Service.ListContext"></a>
-### func \(\*Service\) [ListContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L301>)
+### func \(\*Service\) [ListContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L349>)
 
 ```go
 func (s *Service) ListContext(ctx context.Context) (*DeploymentListResponse, error)
@@ -1218,7 +1218,7 @@ func (s *Service) ListContext(ctx context.Context) (*DeploymentListResponse, err
 
 
 <a name="Service.MatchHTTPRoute"></a>
-### func \(\*Service\) [MatchHTTPRoute](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1389>)
+### func \(\*Service\) [MatchHTTPRoute](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1466>)
 
 ```go
 func (s *Service) MatchHTTPRoute(method, path string) (string, string, bool)
@@ -1227,7 +1227,7 @@ func (s *Service) MatchHTTPRoute(method, path string) (string, string, bool)
 
 
 <a name="Service.MatchHTTPRouteContext"></a>
-### func \(\*Service\) [MatchHTTPRouteContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1372>)
+### func \(\*Service\) [MatchHTTPRouteContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1449>)
 
 ```go
 func (s *Service) MatchHTTPRouteContext(ctx context.Context, method, path string) (string, string, bool)
@@ -1236,7 +1236,7 @@ func (s *Service) MatchHTTPRouteContext(ctx context.Context, method, path string
 
 
 <a name="Service.MaxFunctionArgsBytes"></a>
-### func \(\*Service\) [MaxFunctionArgsBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1436>)
+### func \(\*Service\) [MaxFunctionArgsBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1513>)
 
 ```go
 func (s *Service) MaxFunctionArgsBytes() int64
@@ -1245,7 +1245,7 @@ func (s *Service) MaxFunctionArgsBytes() int64
 
 
 <a name="Service.MaxUploadBytes"></a>
-### func \(\*Service\) [MaxUploadBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1444>)
+### func \(\*Service\) [MaxUploadBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1521>)
 
 ```go
 func (s *Service) MaxUploadBytes() int64
@@ -1254,7 +1254,7 @@ func (s *Service) MaxUploadBytes() int64
 
 
 <a name="Service.Pin"></a>
-### func \(\*Service\) [Pin](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1504>)
+### func \(\*Service\) [Pin](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1581>)
 
 ```go
 func (s *Service) Pin(ctx context.Context, deploymentID string, delta int) error
@@ -1263,7 +1263,7 @@ func (s *Service) Pin(ctx context.Context, deploymentID string, delta int) error
 Pin atomically adjusts the deployment's durable scheduler reference count.
 
 <a name="Service.Resolve"></a>
-### func \(\*Service\) [Resolve](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1462>)
+### func \(\*Service\) [Resolve](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1539>)
 
 ```go
 func (s *Service) Resolve(ctx context.Context, deploymentID string) (DeploymentManifest, string, string, error)
@@ -1272,7 +1272,7 @@ func (s *Service) Resolve(ctx context.Context, deploymentID string) (DeploymentM
 Resolve returns the immutable bundle metadata for a deployment. Scheduler jobs persist this snapshot and pin the deployment until the job is terminal.
 
 <a name="Service.ResolvePublic"></a>
-### func \(\*Service\) [ResolvePublic](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1239>)
+### func \(\*Service\) [ResolvePublic](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1316>)
 
 ```go
 func (s *Service) ResolvePublic(ctx context.Context, functionName string) (*CallSnapshot, error)
@@ -1281,7 +1281,7 @@ func (s *Service) ResolvePublic(ctx context.Context, functionName string) (*Call
 ResolvePublic returns a snapshot for a public function on the active deployment.
 
 <a name="Service.ResolvePublicQuery"></a>
-### func \(\*Service\) [ResolvePublicQuery](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1244>)
+### func \(\*Service\) [ResolvePublicQuery](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1321>)
 
 ```go
 func (s *Service) ResolvePublicQuery(ctx context.Context, functionName string) (*CallSnapshot, error)
@@ -1290,7 +1290,7 @@ func (s *Service) ResolvePublicQuery(ctx context.Context, functionName string) (
 ResolvePublicQuery returns a snapshot for a public query function on the active deployment.
 
 <a name="Service.Rollback"></a>
-### func \(\*Service\) [Rollback](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1165>)
+### func \(\*Service\) [Rollback](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1242>)
 
 ```go
 func (s *Service) Rollback(id string) (*DeploymentRollbackResponse, error)
@@ -1299,7 +1299,7 @@ func (s *Service) Rollback(id string) (*DeploymentRollbackResponse, error)
 Rollback restores the previous active deployment.
 
 <a name="Service.RollbackContext"></a>
-### func \(\*Service\) [RollbackContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1169>)
+### func \(\*Service\) [RollbackContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1246>)
 
 ```go
 func (s *Service) RollbackContext(ctx context.Context, id string) (*DeploymentRollbackResponse, error)
@@ -1308,7 +1308,7 @@ func (s *Service) RollbackContext(ctx context.Context, id string) (*DeploymentRo
 
 
 <a name="Service.SetActivationObserver"></a>
-### func \(\*Service\) [SetActivationObserver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L243>)
+### func \(\*Service\) [SetActivationObserver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L252>)
 
 ```go
 func (s *Service) SetActivationObserver(observer ActivationObserver)
@@ -1317,7 +1317,7 @@ func (s *Service) SetActivationObserver(observer ActivationObserver)
 SetActivationObserver installs the active\-deployment lifecycle observer.
 
 <a name="Service.SetInvalidator"></a>
-### func \(\*Service\) [SetInvalidator](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L238>)
+### func \(\*Service\) [SetInvalidator](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L247>)
 
 ```go
 func (s *Service) SetInvalidator(inv Invalidator)
@@ -1326,7 +1326,7 @@ func (s *Service) SetInvalidator(inv Invalidator)
 SetInvalidator sets the invalidator that is notified on activation/rollback.
 
 <a name="Service.Upload"></a>
-### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L248>)
+### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L257>)
 
 ```go
 func (s *Service) Upload(raw any) (*DeploymentUploadResponse, error)
@@ -1335,7 +1335,7 @@ func (s *Service) Upload(raw any) (*DeploymentUploadResponse, error)
 Upload validates, stores, and prepares a new deployment.
 
 <a name="Service.UploadContext"></a>
-### func \(\*Service\) [UploadContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L256>)
+### func \(\*Service\) [UploadContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L265>)
 
 ```go
 func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUploadResponse, error)
@@ -1344,7 +1344,7 @@ func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUpload
 UploadContext is the request\-aware form used by the HTTP API. The legacy Upload method remains for embedders, but lifecycle work must otherwise keep the caller's cancellation/deadline all the way through verification and DB writes.
 
 <a name="Service.WarmActive"></a>
-### func \(\*Service\) [WarmActive](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1594>)
+### func \(\*Service\) [WarmActive](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1671>)
 
 ```go
 func (s *Service) WarmActive() error
