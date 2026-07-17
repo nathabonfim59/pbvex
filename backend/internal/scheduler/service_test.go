@@ -521,6 +521,9 @@ func TestSchedulerRetryAPI(t *testing.T) {
 		t.Fatalf("expected failed, got %s", status.Status)
 	}
 
+	// Retry wakes the worker after committing. Stop this worker so the reset
+	// state can be observed deterministically before a new attempt claims it.
+	svc.Stop()
 	if err := svc.Retry(ctx, id); err != nil {
 		t.Fatalf("Retry failed: %v", err)
 	}
@@ -536,7 +539,13 @@ func TestSchedulerRetryAPI(t *testing.T) {
 		t.Fatalf("expected attempts reset to 0, got %d", retried.Attempts)
 	}
 
-	status = waitForStatus(t, ctx, svc, id, JobStatusFailed, 3*time.Second)
+	restarted := NewService(app, exec, svc.config)
+	if err := restarted.Start(context.Background()); err != nil {
+		t.Fatalf("restart scheduler: %v", err)
+	}
+	defer restarted.Stop()
+
+	status = waitForStatus(t, ctx, restarted, id, JobStatusFailed, 3*time.Second)
 	if status.Attempts != 2 {
 		t.Fatalf("expected 2 attempts after retry, got %d", status.Attempts)
 	}
@@ -1104,19 +1113,22 @@ func TestSchedulerHeartbeatExitsBeforeCompletion(t *testing.T) {
 	clock := NewFakeClock(time.Now())
 	cfg := DefaultConfig()
 	cfg.Clock = clock
-	cfg.PollInterval = 10 * time.Millisecond
+	// RunAfter wakes the worker for the initial claim. Keep periodic polling out
+	// of this heartbeat-only test so advancing the fake clock cannot also reclaim
+	// an intentionally blocked job whose lease appears to expire.
+	cfg.PollInterval = time.Hour
 	cfg.LeaseDuration = 100 * time.Millisecond
 	cfg.RenewInterval = 30 * time.Millisecond
 	cfg.MaxExecutionDuration = 10 * time.Second
 	cfg.Jitter = func(time.Duration) time.Duration { return 0 }
 
 	blockCh := make(chan struct{})
-	var started sync.WaitGroup
-	started.Add(1)
+	started := make(chan struct{})
+	var startedOnce sync.Once
 
 	exec := &testExecutor{resp: map[string]any{"done": true}}
 	exec.invokeFn = func(ctx context.Context, deploymentID, bundleHash, functionName string, args any) (any, error) {
-		started.Done()
+		startedOnce.Do(func() { close(started) })
 		select {
 		case <-blockCh:
 		case <-ctx.Done():
@@ -1137,7 +1149,11 @@ func TestSchedulerHeartbeatExitsBeforeCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitGroupWait(t, &started, 2*time.Second)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for invocation to start")
+	}
 
 	// Drive several renew ticks while the invocation is blocked. This
 	// exercises concurrent heartbeat + invocation. Under -race any
