@@ -6,6 +6,8 @@ entries are intentionally not duplicated in this changelog.
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-18
+
 ### Added
 
 - `@pbvex/server` now publishes the complete GoReleaser backend binary matrix
@@ -20,6 +22,10 @@ entries are intentionally not duplicated in this changelog.
 - The server now gates the bundled PocketBase dashboard behind
   `serve --admin-ui`. Managed `pbvex dev` enables it by default and supports
   `--no-admin-ui`.
+- Storage metadata now exposes the authenticated upload-URL issuer as
+  `createdBy` for explicit application ownership checks.
+- The repository now ships focused agent skills for application backends,
+  PBVex internals, protocol work, authentication, realtime, and storage.
 
 ### Fixed
 

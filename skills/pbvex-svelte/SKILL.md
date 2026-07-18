@@ -22,8 +22,10 @@ Use `setClient` in a layout/root during initialization and `getClient` only wher
 
 When arguments depend on `$state()` or `$props()`, supply the supported reactive getter so a changed argument replaces the watch. Use the exported `skip` sentinel for a disabled conditional query. Use the mutation/action utilities for typed async calls. Let component destruction clean up query subscriptions, and explicitly close a client only at its true application/test owner.
 
+Under SvelteKit SSR, create browser-backed auth storage and live subscriptions only in the browser lifecycle; do not read `localStorage` during server initialization or share an authenticated client/store across server requests. Use `pbvex-auth` for token stores and `pbvex-realtime` for transport semantics.
+
 ## Testing
 
-Mount a small Svelte harness so rune APIs run during component initialization. Inject a mock client where the installed API supports it, drive state with Svelte test utilities, then assert reactive state and unsubscribe cleanup after unmount. Do not test current rune query state as a legacy readable store.
+Mount a small Svelte harness so rune APIs run during component initialization. Use the supported explicit/test client form, drive state with Svelte test utilities, then assert reactive state and unsubscribe cleanup after unmount. Do not test current rune query state as a legacy readable store.
 
 Do not edit `packages/svelte` or Svelte documentation as part of application integration work unless explicitly asked; verify the installed version instead.

@@ -146,7 +146,7 @@ Use the same authorized query for the initial result and subsequent updates:
 ```ts
 const unsubscribe = client.watch(
   api.messages.list,
-  { conversationId, cursor: null },
+  { conversationId },
   {
     onUpdate(result) {
       if (result.error) {

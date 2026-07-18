@@ -20,6 +20,7 @@ interface ClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
   auth?: string | AuthProvider;
+  authStore?: AuthStore;
   realtimeTransport?: RealtimeTransport;
   realtimePath?: string;
   limits?: ClientLimits;
@@ -32,9 +33,12 @@ interface ClientOptions {
 | `baseUrl` | `url` argument | Resolved base URL for `/api/pbvex/call` and `/api/pbvex/realtime`. |
 | `timeoutMs` | `30000` | Request timeout for calls and realtime establishment. Must be a positive finite number `<= 600000`. |
 | `auth` | `undefined` | Static Bearer token or `AuthProvider` callback. |
+| `authStore` | `LocalAuthStore` | PocketBase-compatible application auth state. Use `AuthStore` for explicit memory-only state. |
 | `realtimeTransport` | `FetchRealtimeTransport` | Custom `RealtimeTransport` implementation. |
 | `realtimePath` | `/api/pbvex/realtime` | SSE endpoint path. |
 | `limits` | protocol defaults | Per-client size limits (see below). |
+
+When both are supplied, `auth` is the request token source and takes precedence over `authStore`. Native PocketBase auth methods still update `authStore`, but PBVex calls continue to use the explicit `auth` source. Omit `auth` when native auth-store sessions should authorize calls; use `setAuth` and `clearAuth` only when deliberately managing an external token source.
 
 ## Auth providers
 

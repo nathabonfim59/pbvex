@@ -1386,6 +1386,13 @@ func TestCreatedByIsAuditMetadataNotAutomaticAuthorization(t *testing.T) {
 	if got := rec.GetString(schema.FieldStorageCreatedBy); got != "creator" {
 		t.Fatalf("createdBy=%q, want creator", got)
 	}
+	metadata, err := svc.GetMetadata(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := metadata["createdBy"]; got != "creator" {
+		t.Fatalf("metadata createdBy=%q, want creator", got)
+	}
 	if got, err := svc.GetURL(context.Background(), id, AuthContext{IsAuthenticated: true, UserID: "other"}); err != nil || got == "" {
 		t.Fatalf("createdBy unexpectedly enforced as getUrl authorization: url=%q err=%v", got, err)
 	}

@@ -46,7 +46,7 @@ async function uploadFile(client: Client, messageId: Id<'messages'>, file: File)
 }
 ```
 
-The upload endpoint is the generated URL below the configured storage base path (default `/api/pbvex/storage/upload/{token}`), not an endpoint to invent or reuse. The token expires, is single-use, and has configured content-type/size limits. Its response includes `storageId` and persisted `metadata`. Size, checksum, and detected content type are server-derived; `filename` and a generic file's filename-derived `extension` remain client-supplied naming data. Upload failures include invalid/expired/consumed/pending token, unsupported content, too-large, and storage-full cases. Ask for a new URL rather than retrying a consumed token.
+The upload endpoint is the generated URL below the configured storage base path (default `/api/pbvex/storage/upload/{token}`), not an endpoint to invent or reuse. The token expires, is single-use, and has configured content-type/size limits. Its response includes `storageId` and persisted `metadata`. Size, checksum, detected content type, and `createdBy` are server-derived; `createdBy` is the token identifier that requested the upload URL, or an empty string for anonymous issuance. It is audit metadata that applications may check, not automatic storage authorization. `filename` and a generic file's filename-derived `extension` remain client-supplied naming data. Upload failures include invalid/expired/consumed/pending token, unsupported content, too-large, and storage-full cases. Ask for a new URL rather than retrying a consumed token.
 
 ## Schema-declared images
 

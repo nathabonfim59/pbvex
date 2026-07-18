@@ -17,9 +17,11 @@ export function Root({ children }: { children: React.ReactNode }) {
 }
 ```
 
-Use generated public `api` references with `useQuery`, `useQueryResult`, `useMutation`, and `useAction`. `useQuery` returns data or throws query errors to an error boundary; use `useQueryResult` for explicit `{ data, error, isLoading }` rendering. Pass `'skip'` to disable a conditional query. `useSubscription` is a compatibility alias for `useQuery`.
+Use generated public `api` references with `useQuery`, `useQueryResult`, `useMutation`, and `useAction`. `useQuery` returns `undefined` while loading and throws query errors to an error boundary; use `useQueryResult` for explicit `{ data, error, isLoading }` rendering. Pass `'skip'` to disable a conditional query. Canonically equal inline arguments do not resubscribe, so do not add `useMemo` solely for PBVex. `useSubscription` is a compatibility alias for `useQuery`.
 
 `useMutation` and `useAction` return stable typed async callables. `usePBVexClient` exposes the provider client and throws outside the provider. The provider does not close a client: the owning application/test must close it.
+
+Server rendering receives the initial loading snapshot and does not open a subscription; hydrate live data on the client. PBVex has no built-in optimistic cache mutation layer, so model explicit local optimistic state only when needed. Use `pbvex-auth` for browser auth-store initialization and `pbvex-realtime` for transport behavior.
 
 ## Test lifecycle, not implementation details
 

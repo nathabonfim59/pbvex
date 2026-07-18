@@ -52,6 +52,11 @@ export default defineSchema({
     .index('by_conversation', ['conversationId'])
     .index('by_sender', ['sender']),
 
+  attachmentUploads: defineTable({
+    messageId: v.id('messages'),
+    owner: v.string(),
+  }),
+
   messageAttachments: defineTable({
     messageId: v.id('messages'),
     owner: v.string(),
@@ -61,7 +66,8 @@ export default defineSchema({
     size: v.number(),
   })
     .index('by_message', ['messageId'])
-    .index('by_owner', ['owner']),
+    .index('by_owner', ['owner'])
+    .index('by_storage', ['storageId']),
 });
 ```
 
@@ -98,9 +104,9 @@ The `role` field makes privileged membership operations explicit.
 
 ## Why attachment metadata is separate
 
-Stored bytes are opaque objects. The application needs its own record for filename, content type, display size, owner, and message association. Keeping this metadata in `messageAttachments` also makes authorization start from the owning message and conversation.
+Stored bytes are opaque objects. The application needs its own record for filename, detected content type, byte size, owner, and message association. Keeping this metadata in `messageAttachments` also makes authorization start from the owning message and conversation. `attachmentUploads` records the authorized caller and intended message between upload-URL issuance and attachment finalization; it permits one caller-owned object rather than identifying one exact upload URL.
 
-The client-provided filename, content type, and size are display metadata; do not use them to bypass the server’s actual upload limits or content checks.
+The filename is client-supplied display data. The attachment flow rereads server-derived content type, size, and upload-URL issuer from storage metadata. `createdBy` lets this application bind finalization to the authenticated identity that requested the upload URL, but PBVex does not enforce that policy automatically and the metadata does not prove that content is safe.
 
 ## Index design summary
 
@@ -114,5 +120,6 @@ The client-provided filename, content type, and size are display metadata; do no
 | List user conversations | `conversationMembers.by_user_conversation` |
 | Page conversation messages | `messages.by_conversation` |
 | Load message attachments | `messageAttachments.by_message` |
+| Prevent attaching one object twice | `messageAttachments.by_storage` |
 
 Continue with [Authentication and profiles](./authentication-and-profiles.md).

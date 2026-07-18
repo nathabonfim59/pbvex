@@ -21,9 +21,13 @@ Do not skip directly to general web search. PBVex is new, so broader results are
 
 Use this skill to orient a PBVex change, then load only the specialized skill(s) it needs:
 
-- Backend binary, PocketBase embedding, runtime routes, migration activation/rollback internals, PocketBase host migrations, or Go tests: `pbvex-backend`.
-- `pbvex/` schema/functions, first-class migration definitions, indexed queries and pagination, authorization, relationships, outbound HTTP, HTTP actions, email templates, or scheduling: `pbvex-functions`.
-- Vanilla typed calls, PocketBase application auth, errors, SSE/realtime, or storage: `pbvex-client`.
+- PBVex's own Go/PocketBase implementation, runtime routes, migration activation/rollback internals, PocketBase host migrations, or Go tests: `pbvex-internals`.
+- Manifest/wire compatibility, canonical artifacts, shared TypeScript/Go validators, fixtures, IDs, or protocol ADRs: `pbvex-protocol`.
+- Application backend work under `pbvex/`, including schema/functions, first-class migration definitions, indexed queries and pagination, authorization, relationships, outbound HTTP, HTTP actions, email templates, or scheduling: `pbvex-backend`.
+- Storage contracts, `StorageId`, metadata, URL access modes, CDN caching, resizing, object storage, or deletion: `pbvex-storage`.
+- Native PocketBase signup/sign-in, auth collections/stores, OAuth2, OTP, MFA, refresh, logout, or token lifecycle: `pbvex-auth`.
+- SSE subscriptions, `watch`, reconnects, deduplication, proxy streaming, or realtime transport tests: `pbvex-realtime`.
+- Vanilla typed calls, errors/cancellation, or browser/Node storage transfers: `pbvex-client` (add the owning auth/realtime/storage skill as needed).
 - React provider/hooks/tests: `pbvex-react`; Svelte 5 runes/tests: `pbvex-svelte`.
 - Component definitions, mounts, namespaces, or compatibility: `pbvex-components`.
 - First-time local, staging, or production provisioning and guided configuration: `pbvex-deployment`.
@@ -37,7 +41,7 @@ PBVex authoring is TypeScript under `pbvex/`; the CLI bundles it into a deployme
 
 Follow this path for an application change:
 
-1. Define schema and functions under `pbvex/`, using public `pbvex/server` and `pbvex/values` APIs plus generated factories/references. For incompatible root-table changes, run `pbvex migrations plan`, then `pbvex migrations create <name> --table <table>` and implement the required pure `up`/`down` handlers under `pbvex/migrations/`. Host-level PocketBase state such as auth collections uses the separate nested command `pbvex migrations pocketbase create <name>` under `pbvex/pocketbaseMigrations/`.
+1. Define schema and functions under `pbvex/`, using public `pbvex/server` and `pbvex/values` APIs plus generated factories/references. For incompatible root-table changes, run `pbvex migrations plan`, then scaffold a concrete migration such as `pbvex migrations create add_message_status --table messages` and implement the required pure `up`/`down` handlers under `pbvex/migrations/`. Host-level PocketBase state such as auth collections uses a separate nested command such as `pbvex migrations pocketbase create add_users_auth` under `pbvex/pocketbaseMigrations/`.
 2. Run `pbvex codegen` after schema or exported-function changes.
 3. Type-check and bundle with `pbvex typecheck` and `pbvex build` (or `build --check` when no artifact is needed).
 4. Use generated `api`/`internal` references from `pbvex/_generated/` in server and client code.
@@ -66,12 +70,12 @@ When repository behavior changes, update the owning authored guide and package R
 
 Never manually edit `pbvex/_generated/` or `docs/api-reference/`; regenerate them with project scripts. Do not bypass validators, generated references, function visibility, manifest checks, or deployment activation. Public means reachable, not authorized—check identity and ownership.
 
-Use repository source before assuming behavior:
+Use repository source before assuming behavior. For storage work, read both `docs/guides/storage.md` and `docs/guides/image-resizing.md`:
 
 ```bash
 rg --files packages backend docs | sort
-rg -n "codegen|defineSchema|httpAction|scheduler" packages docs
-pbvex --help
+rg -n "codegen|defineSchema|httpAction|scheduler|generateUploadUrl|v.image" packages docs
+npx pbvex --help
 ```
 
 PBVex v1 is one binary process for one data directory. Preserve that single-binary, single-node deployment model; do not add a Node sidecar requirement or run multiple instances against one data directory.

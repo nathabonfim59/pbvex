@@ -97,6 +97,7 @@ The successful upload response includes trusted metadata:
 type StorageImageMetadata = {
   storageId: StorageId;
   kind: 'image';
+  createdBy: string;
   filename: string;
   contentType: string;
   extension: string;
@@ -108,7 +109,7 @@ type StorageImageMetadata = {
 };
 ```
 
-`contentType`, `extension`, `width`, and `height` come from the uploaded bytes. `size` and `sha256` describe the original object. `thumbs` is the policy captured when that object was uploaded. `filename` is normalized but remains client-supplied display data; do not use it as format evidence.
+`contentType`, `extension`, `width`, and `height` come from the uploaded bytes. `size` and `sha256` describe the original object. `thumbs` is the policy captured when that object was uploaded. `createdBy` is the token identifier that requested the upload URL, or an empty string for anonymous issuance; it is trusted audit metadata for explicit application checks, not automatic storage authorization. `filename` is normalized but remains client-supplied display data; do not use it as format evidence.
 
 Read the same persisted data later with `ctx.storage.getMetadata(storageId)`. It returns `null` for an invalid, missing, or deleted ID. As with `getUrl`, your function must authorize access before returning metadata to a caller.
 

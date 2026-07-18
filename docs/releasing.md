@@ -178,6 +178,7 @@ environment.
 
    goreleaser check
    ./scripts/release-validate.sh
+   goreleaser release --snapshot --clean
    node scripts/stage-server-binaries.mjs
    VALIDATE_TAG_TEST=1 ./scripts/validate-tag.sh
    ```

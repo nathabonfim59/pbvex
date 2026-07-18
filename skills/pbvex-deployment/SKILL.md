@@ -52,13 +52,13 @@ For staging or production:
 5. Bind the backend to a private interface. Terminate TLS at a trusted proxy or use supported PocketBase HTTPS, preserving realtime streaming and forwarded request context.
 6. Set PocketBase's canonical Application URL to the external HTTP(S) origin and configure trusted client-IP proxy headers.
 7. Restrict dashboard and superuser access, then configure MFA/OTP after SMTP works. Configure rate limits and test mail delivery when the application uses auth email or templates.
-8. Choose storage limits/backend and establish off-host database and object-storage backups with a restore test.
+8. Choose storage limits/backend, public-cache TTL, and image sizing expectations; establish off-host database and object-storage backups with a restore test. If settings encryption is enabled, assign recovery ownership for the `--encryptionEnv` key outside the data backup.
 
 Use `docs/self-hosting.md` and `docs/guides/going-to-production.md` in a PBVex source checkout for current flags and service/proxy examples. Otherwise run `pbvex --help` and `pbvex serve --help` for the installed version rather than copying version-sensitive flags from memory.
 
 ## Configure the application target
 
-Keep the globally installed CLI and the application's local `pbvex` dependency on the same version. Define a side-effect-free target without secrets:
+Use package scripts or `npx pbvex`; a global CLI is optional and, if used, must match the application's local dependency. Define a side-effect-free target without secrets:
 
 ```ts
 export default {
@@ -81,10 +81,11 @@ Inspect the diff and identify schema, component mount, storage, scheduler, auth,
 Run against the selected target:
 
 ```bash
-pbvex codegen -t <target>
-pbvex typecheck -t <target>
-pbvex build -t <target>
-PBVEX_<TARGET>_TOKEN='<set-locally>' pbvex deploy -t <target>
+TARGET=production
+npx pbvex codegen -t "$TARGET"
+npx pbvex typecheck -t "$TARGET"
+npx pbvex build -t "$TARGET"
+PBVEX_PRODUCTION_TOKEN='secret-from-your-manager' npx pbvex deploy -t "$TARGET"
 ```
 
 Do not place a real token in a committed command or transcript. `deploy` rebuilds, uploads, validates, and atomically activates the artifact. If validation or activation fails, preserve the previous active deployment, inspect the structured error, correct it, and redeploy.
@@ -96,7 +97,7 @@ After activation, verify the health endpoint plus every capability the release d
 - one generated query and mutation with the intended anonymous/authenticated identities;
 - one realtime subscription through the public proxy;
 - relevant scheduled/cron work;
-- upload and signed download when storage is used;
+- generic/image upload, metadata, and the intended identity/capability/public download mode when storage is used; verify one declared thumbnail when schema-declared image storage is used;
 - HTTP actions, outbound providers, email, and component environment bindings when applicable;
 - dashboard access restrictions, logs, alerts, backup execution, and restore ownership.
 

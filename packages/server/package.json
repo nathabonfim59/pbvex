@@ -1,6 +1,6 @@
 {
   "name": "@pbvex/server",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "type": "module",
   "description": "Bundled PBVex backend server binaries",
   "license": "MIT",

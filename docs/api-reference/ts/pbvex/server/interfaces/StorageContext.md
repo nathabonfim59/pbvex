@@ -42,7 +42,7 @@
 
 ### getMetadata
 
-> **getMetadata**: (`id`) => `Promise`\<`Readonly`\<\{ `contentType`: `string`; `extension`: `string`; `filename`: `string`; `kind`: `"file"`; `sha256`: `string`; `size`: `number`; `storageId`: [`StorageId`](../../index/type-aliases/StorageId.md); \}\> \| [`StorageImageMetadata`](../../index/type-aliases/StorageImageMetadata.md) \| `null`\>
+> **getMetadata**: (`id`) => `Promise`\<`Readonly`\<\{ `contentType`: `string`; `createdBy`: `string`; `extension`: `string`; `filename`: `string`; `kind`: `"file"`; `sha256`: `string`; `size`: `number`; `storageId`: [`StorageId`](../../index/type-aliases/StorageId.md); \}\> \| [`StorageImageMetadata`](../../index/type-aliases/StorageImageMetadata.md) \| `null`\>
 
 #### Parameters
 
@@ -52,7 +52,7 @@
 
 #### Returns
 
-`Promise`\<`Readonly`\<\{ `contentType`: `string`; `extension`: `string`; `filename`: `string`; `kind`: `"file"`; `sha256`: `string`; `size`: `number`; `storageId`: [`StorageId`](../../index/type-aliases/StorageId.md); \}\> \| [`StorageImageMetadata`](../../index/type-aliases/StorageImageMetadata.md) \| `null`\>
+`Promise`\<`Readonly`\<\{ `contentType`: `string`; `createdBy`: `string`; `extension`: `string`; `filename`: `string`; `kind`: `"file"`; `sha256`: `string`; `size`: `number`; `storageId`: [`StorageId`](../../index/type-aliases/StorageId.md); \}\> \| [`StorageImageMetadata`](../../index/type-aliases/StorageImageMetadata.md) \| `null`\>
 
 #### Inherited from
 

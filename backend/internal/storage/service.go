@@ -161,6 +161,7 @@ func (s *Service) GetMetadata(ctx context.Context, storageID string) (map[string
 	result := map[string]any{
 		"storageId":   storageID,
 		"kind":        "file",
+		"createdBy":   record.GetString(schema.FieldStorageCreatedBy),
 		"filename":    record.GetString(schema.FieldStorageFilename),
 		"contentType": record.GetString(schema.FieldStorageContentType),
 		"size":        record.GetInt(schema.FieldStorageSize),

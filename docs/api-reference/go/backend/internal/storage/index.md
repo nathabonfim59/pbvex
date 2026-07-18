@@ -551,7 +551,7 @@ func NewService(app core.App, repo *Repo, config Config) (*Service, error)
 NewService creates a new storage service.
 
 <a name="Service.Delete"></a>
-### func \(\*Service\) [Delete](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L243>)
+### func \(\*Service\) [Delete](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L244>)
 
 ```go
 func (s *Service) Delete(ctx context.Context, storageID string) error
@@ -560,7 +560,7 @@ func (s *Service) Delete(ctx context.Context, storageID string) error
 Delete removes a stored file and its metadata. When called inside a transaction, it marks the file as deleting and schedules the irreversible blob deletion in TxInfo.OnComplete after successful commit.
 
 <a name="Service.Download"></a>
-### func \(\*Service\) [Download](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L747>)
+### func \(\*Service\) [Download](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L748>)
 
 ```go
 func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID string, auth AuthContext) error
@@ -569,7 +569,7 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID str
 Download serves a stored file for GET/HEAD requests.
 
 <a name="Service.DownloadPublic"></a>
-### func \(\*Service\) [DownloadPublic](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L774>)
+### func \(\*Service\) [DownloadPublic](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L775>)
 
 ```go
 func (s *Service) DownloadPublic(w http.ResponseWriter, r *http.Request, token string) error
@@ -596,7 +596,7 @@ func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (stri
 GenerateUploadURL returns a short\-lived, single\-use URL for uploading a file.
 
 <a name="Service.GetCapabilityURL"></a>
-### func \(\*Service\) [GetCapabilityURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L199>)
+### func \(\*Service\) [GetCapabilityURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L200>)
 
 ```go
 func (s *Service) GetCapabilityURL(ctx context.Context, storageID string) (string, error)
@@ -614,7 +614,7 @@ func (s *Service) GetMetadata(ctx context.Context, storageID string) (map[string
 GetMetadata returns persisted metadata for a storage object.
 
 <a name="Service.GetPublicURL"></a>
-### func \(\*Service\) [GetPublicURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L204>)
+### func \(\*Service\) [GetPublicURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L205>)
 
 ```go
 func (s *Service) GetPublicURL(ctx context.Context, storageID string) (string, error)
@@ -623,7 +623,7 @@ func (s *Service) GetPublicURL(ctx context.Context, storageID string) (string, e
 GetPublicURL returns the stable public bearer URL for a stored file.
 
 <a name="Service.GetURL"></a>
-### func \(\*Service\) [GetURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L194>)
+### func \(\*Service\) [GetURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L195>)
 
 ```go
 func (s *Service) GetURL(ctx context.Context, storageID string, auth AuthContext) (string, error)
@@ -659,7 +659,7 @@ func (s *Service) Stop() error
 Stop halts the background cleanup worker and waits for the current pass to finish.
 
 <a name="Service.Upload"></a>
-### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L323>)
+### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L324>)
 
 ```go
 func (s *Service) Upload(ctx context.Context, token string, body io.Reader, contentType, filename string, headerSize int64) (string, error)

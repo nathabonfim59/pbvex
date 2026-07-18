@@ -30,7 +30,7 @@ const rows = await client.query(api.messages.list, { channel: 'test' });
 if (!rows.includes('one')) throw new Error('message was not returned');
 ```
 
-In a test setup, start `pbvex --dir <temporary-directory> serve --http <test-address>`, create a superuser, deploy using `PBVEX_TOKEN`, and tear down the process and directory afterward. This verifies bundling, manifest validation, activation, database behavior, and the wire protocol together. It also avoids depending on undocumented handler internals.
+In a test setup, start `pbvex serve --dir <temporary-directory> --http <test-address>`, create a superuser, deploy using `PBVEX_TOKEN`, and tear down the process and directory afterward. This verifies bundling, manifest validation, activation, database behavior, and the wire protocol together. It also avoids depending on undocumented handler internals.
 
 There is no documented public helper for constructing a function `ctx`, nor a built-in in-memory emulator. Keep domain logic in ordinary modules where it can be unit-tested, and reserve context/database assertions for deployed integration tests.
 

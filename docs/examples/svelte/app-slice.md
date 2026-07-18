@@ -13,9 +13,6 @@ A Svelte 5 app slice with context, rune-backed queries, mutations, and actions.
   let { children } = $props();
   const client = new Client('http://localhost:8090');
   setClient(client);
-
-  const token = localStorage.getItem('pb_token');
-  if (token) client.setAuth(token);
 </script>
 
 {@render children()}
@@ -27,7 +24,6 @@ A Svelte 5 app slice with context, rune-backed queries, mutations, and actions.
 <!-- Login.svelte -->
 <script lang="ts">
   import { getClient } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
 
   let { onlogin }: { onlogin: (userId: string) => void } = $props();
   const client = getClient();
@@ -37,10 +33,10 @@ A Svelte 5 app slice with context, rune-backed queries, mutations, and actions.
 
   async function login() {
     try {
-      const { token, userId } = await client.mutation(api.auth.login, { email, password });
-      localStorage.setItem('pb_token', token);
-      client.setAuth(token);
-      onlogin(userId);
+      const result = await client.auth
+        .collection('users')
+        .authWithPassword(email, password);
+      onlogin(result.record.id);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Login failed';
     }
@@ -102,10 +98,26 @@ A Svelte 5 app slice with context, rune-backed queries, mutations, and actions.
 ```svelte
 <!-- App.svelte -->
 <script lang="ts">
+  import { getClient } from '@pbvex/svelte';
   import Login from './Login.svelte';
   import MessageView from './MessageView.svelte';
 
-  let userId = $state<string | null>(null);
+  const client = getClient();
+  let userId = $state<string | null>(
+    client.authStore.isValid ? client.authStore.record?.id ?? null : null,
+  );
+
+  $effect(() => {
+    const syncAuth = () => userId = client.authStore.isValid
+      ? client.authStore.record?.id ?? null
+      : null;
+    const unsubscribe = client.authStore.onChange(syncAuth);
+    const timer = window.setInterval(syncAuth, 30_000);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  });
 </script>
 
 <h1>PBVex Messages</h1>

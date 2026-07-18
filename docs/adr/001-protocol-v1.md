@@ -26,11 +26,16 @@ A valid v1 manifest is a JSON object:
       "visibility": "public" | "internal",
       "modulePath": "<bundle-path>",
       "exportName": "default" | "<identifier>",
-      "args": <optional-json-value>,
+      "args": <optional-validator-descriptor>,
       "returns": <optional-validator-descriptor>,
       "route": <optional-http-action-route>
     }
   ],
+  "schema": { "tables": [] },
+  "components": { "definitions": [], "mounts": [] },
+  "emailTemplates": { "sha256": "<lowercase-sha256>", "entries": [] },
+  "cronJobs": [],
+  "migrations": [],
   "config": {
     "httpPathPrefix": "/api/pbvex",
     "realtimePath": "/api/pbvex/realtime",
@@ -44,6 +49,7 @@ A valid v1 manifest is a JSON object:
 
 - `deploymentId` must be a valid identifier.
 - `functions` is optional and may be empty to allow schema-only deployments.
+- `schema`, `components`, `emailTemplates`, `cronJobs`, and `migrations` are optional first-class deployment definitions with strict bounded validators.
 - `functions` entries must be valid `FunctionDescriptor` objects.
 - `modulePath` is a relative POSIX-like bundle path (no leading `/`, no `..`, `[a-zA-Z0-9._/\-]+`).
 - `exportName` is `"default"` or a valid identifier.
@@ -61,7 +67,7 @@ A valid v1 manifest is a JSON object:
   - Object keys sorted lexicographically.
   - Numbers as finite JSON numbers (`-0` normalizes to `0` by `JSON.stringify`).
   - Strings escaped with `JSON.stringify()` behavior.
-- Canonical JSON rejects non-finite numbers, `undefined`, cyclic references, `bigint`, `symbol`, `function`, and objects with unsafe prototypes.
+- Canonical JSON rejects non-finite numbers, `undefined` (including object properties), cyclic references, `bigint`, `symbol`, `function`, and objects with unsafe prototypes.
 - Content hash is `SHA-256(UTF-8 bytes of canonical JSON)` returned as lowercase hex.
 - Bundle hash is `SHA-256(raw bundle bytes)` of the deterministic executable JS bundle.
 
@@ -74,7 +80,7 @@ The codec supports the following values:
 - 64-bit signed `bigint` (int64), encoded as `{ "$integer": "<base64-little-endian-8-bytes>" }`
 - `ArrayBuffer` bytes, encoded as `{ "$bytes": "<base64>" }`
 - arrays
-- plain objects (no unsafe prototypes, no cyclic data, no `$`-prefixed or reserved keys, undefined fields dropped)
+- plain objects (no unsafe prototypes, no cyclic data, no `$`-prefixed or reserved keys; properties whose values are `undefined` are omitted by the wire encoder)
 - `Id` (a branded string; encoded as a plain string for Convex wire compatibility)
 
 New document IDs use a canonical authenticated `pbv2` envelope containing the
@@ -84,7 +90,7 @@ but cannot mint IDs. The backend authenticates every `v.id` at database,
 function, component-mount, and schema-migration boundaries. Authenticated
 legacy `pbv1` IDs are accepted only for the root namespace migration path.
 
-Undefined values are not valid in the codec except for function return normalization, where `undefined` is mapped to `null`.
+Top-level and array-element `undefined` values are not valid in the codec. Plain-object properties whose values are `undefined` are omitted before encoding, and a function's top-level `undefined` return is normalized to `null`.
 
 ### 6. Deployment endpoints
 - `POST /api/pbvex/deployments` — upload a new deployment.
@@ -94,19 +100,20 @@ Undefined values are not valid in the codec except for function return normaliza
       "manifest": <DeploymentManifest>,
       "bundle": "<base64-encoded deterministic executable JS bundle>",
       "sha256": "<lowercase-hex SHA-256 of decoded bundle bytes>",
-      "size": <non-negative-integer>
+      "size": <non-negative-integer>,
+      "modules": <optional-array-of-authenticated-module-sources>
     }
     ```
-  - The backend decodes the base64 bundle, verifies byte length and SHA-256, stores the manifest and bundle as a single deployment, and returns `DeploymentUploadResponse`.
+  - The backend decodes the base64 bundle, verifies byte length and SHA-256, and stores the manifest and bundle as a single deployment. When the manifest declares components, `modules` is required and contains bounded `{ path, bytes }` entries whose base64 source bytes authenticate every declared component module hash.
   - Response: `{ deploymentId, bundleHash, acceptedAt }`.
 - `GET /api/pbvex/deployments` — list stored deployments.
   - Response: `DeploymentListResponse`.
 - `POST /api/pbvex/deployments/:id/activate` — activate a previously uploaded deployment.
   - Body: `{ atomic: true }`.
-  - Atomic activation: all functions are loaded as a single transaction; if any function fails validation, activation aborts and the previous deployment remains active.
-  - Response: `DeploymentActivateResponse` with `deploymentId`, `activatedAt`, `previousDeploymentId`.
+  - The backend verifies and compiles the candidate runtime before opening the database transaction. It then applies migrations and schema/component changes and swaps the active deployment in one transaction. Any failure leaves the previous deployment active.
+  - Response: `DeploymentActivateResponse` with `deploymentId`, `activatedAt`, optional `previousDeploymentId`, and optional migration-utilization `warnings`.
 - `POST /api/pbvex/deployments/:id/rollback` — rollback to the previous active deployment.
-  - Response: `DeploymentRollbackResponse` with `deploymentId`, `rolledBackAt`, `restoredDeploymentId`.
+  - Response: `DeploymentRollbackResponse` with `deploymentId`, `rolledBackAt`, and optional `restoredDeploymentId`.
 - `POST /api/pbvex/call` - HTTP envelope for public query/mutation/action calls.
 - `POST /api/pbvex/realtime` - primary SSE transport for one public query subscription per request.
   - Request JSON is `{ id, path, args }`, where `id` is derived from the protocol version, function path, and canonical encoded arguments.
@@ -131,8 +138,8 @@ All structured errors are JSON objects:
 Core error codes are `bad_request`, `invalid_manifest`, `invalid_function`, `bundle_not_found`, `bundle_hash_mismatch`, `activation_failed`, `not_found`, `unauthorized`, `forbidden`, and `internal`. Service-specific protocol errors include storage admission states such as `upload_expired`, `upload_consumed`, `upload_pending`, and `storage_full`. Clients must preserve unknown string codes for forward compatibility.
 
 ### 8. Atomic activation/rollback semantics
-- Activation is all-or-nothing for a single deployment.
-- The backend must validate every function descriptor, load the bundle, and swap the active routing table in one atomic step.
+- Activation is all-or-nothing for a single deployment from the caller's perspective.
+- The backend validates descriptors and verifies/compiles the candidate bundle before the database transaction. The transaction applies migrations and schema/component materialization, records history, and swaps the active deployment pointer atomically.
 - A failed activation does not affect the currently active deployment.
 - Rollback restores the previous active deployment atomically.
 
@@ -183,11 +190,13 @@ The CLI emits a single deterministic executable JS bundle as an immediately-invo
 
 ```js
 globalThis.__pbvex.registerFunction(descriptor, handler);
+globalThis.__pbvex.registerMigration(descriptor, up, down);
 ```
 
 - `descriptor` is a valid `FunctionDescriptor` (see Decision 2).
 - `handler` is the function body that the runtime will invoke for calls matching `descriptor`.
 - The IIFE is responsible for enumerating its exported function objects and registering each one with the host bridge.
+- Bundled migration modules register their descriptor and pure `up`/`down` handlers through `registerMigration`.
 - The host bridge is the only runtime API available to the bundle; all approved globals (e.g., `console`, `Object`, `Array`) are explicitly provided by the host.
 
 ### 12. Compatibility boundaries

@@ -1,10 +1,10 @@
 # Message attachments
 
-Attachment upload is a two-step flow: an authenticated function creates a short-lived upload URL, then the browser uploads bytes directly and receives an opaque storage ID. The application stores authorized metadata that connects that object to a message.
+Attachment upload is a three-step flow: an authenticated function records permission to attach one caller-owned object to a message and creates a short-lived upload URL, the browser uploads bytes directly and receives an opaque storage ID, then the same user finalizes that intent with server-derived metadata.
 
 ## Generate an upload URL
 
-The base tutorial allows every member to upload. The separate [FakePayment tutorial](../payments/) shows how to make attachment uploads a premium extension.
+The base tutorial allows each message sender to upload for that message. The separate [FakePayment tutorial](../payments/) shows how to make attachment uploads a premium extension.
 
 ```ts
 // pbvex/attachments.ts
@@ -15,11 +15,25 @@ import { requireIdentity } from './lib/identity';
 import { requireMembership } from './lib/membership';
 
 export const createUpload = mutation({
-  args: {},
-  returns: v.string(),
-  handler: async (ctx) => {
-    await requireIdentity(ctx.auth);
-    return ctx.storage.generateUploadUrl();
+  args: { messageId: v.id('messages') },
+  returns: v.object({
+    uploadIntentId: v.id('attachmentUploads'),
+    uploadUrl: v.string(),
+  }),
+  handler: async (ctx, { messageId }) => {
+    const user = await requireIdentity(ctx.auth);
+    const message = await ctx.db.get(messageId);
+    if (!message || message.sender !== user.tokenIdentifier) {
+      throw new Error('forbidden');
+    }
+    await requireMembership(ctx, message.conversationId, user.tokenIdentifier);
+
+    const uploadIntentId = await ctx.db.insert('attachmentUploads', {
+      messageId,
+      owner: user.tokenIdentifier,
+    });
+    const uploadUrl = await ctx.storage.generateUploadUrl();
+    return { uploadIntentId, uploadUrl };
   },
 });
 ```
@@ -30,9 +44,14 @@ The URL expires and can be used only once. Request a new URL for each retry or f
 
 ```ts
 import type { StorageUploadResponse } from '@pbvex/client';
+import { api } from './pbvex/_generated/api';
+import type { Id } from './pbvex/_generated/dataModel';
 
-async function uploadAttachment(file: File) {
-  const uploadUrl = await client.mutation(api.attachments.createUpload);
+async function uploadAttachment(messageId: Id<'messages'>, file: File) {
+  const { uploadIntentId, uploadUrl } = await client.mutation(
+    api.attachments.createUpload,
+    { messageId },
+  );
 
   const response = await fetch(uploadUrl, {
     method: 'POST',
@@ -47,17 +66,13 @@ async function uploadAttachment(file: File) {
     throw new Error(`Upload failed: ${response.status}`);
   }
 
-  const { storageId } = await response.json() as StorageUploadResponse;
-  return {
-    storageId,
-    filename: file.name,
-    contentType: file.type || 'application/octet-stream',
-    size: file.size,
-  };
+  const uploaded = await response.json() as StorageUploadResponse;
+  if (!uploaded.metadata) throw new Error('Upload metadata missing');
+  return { uploadIntentId, uploaded };
 }
 ```
 
-The server enforces the actual file-size and content-type limits. Client metadata is useful for display but is not proof of the uploaded object’s contents.
+The response metadata includes server-derived size, checksum, and detected content type. Its filename remains client-supplied display data. Registration below reads metadata again on the server so a client cannot substitute authoritative values.
 
 ## Attach the upload to your message
 
@@ -66,18 +81,23 @@ Only the original sender, while still a conversation member, may attach metadata
 ```ts
 export const attach = mutation({
   args: {
+    uploadIntentId: v.id('attachmentUploads'),
     messageId: v.id('messages'),
     storageId: v.string(),
-    filename: v.string(),
-    contentType: v.string(),
-    size: v.number(),
   },
   returns: v.id('messageAttachments'),
   handler: async (ctx, args) => {
     const user = await requireIdentity(ctx.auth);
+    const intent = await ctx.db.get(args.uploadIntentId);
     const message = await ctx.db.get(args.messageId);
 
-    if (!message || message.sender !== user.tokenIdentifier) {
+    if (
+      !intent ||
+      intent.owner !== user.tokenIdentifier ||
+      intent.messageId !== args.messageId ||
+      !message ||
+      message.sender !== user.tokenIdentifier
+    ) {
       throw new Error('forbidden');
     }
 
@@ -87,6 +107,20 @@ export const attach = mutation({
       user.tokenIdentifier,
     );
 
+    const metadata = await ctx.storage.getMetadata(
+      args.storageId as StorageId,
+    );
+    if (!metadata) throw new Error('upload not found');
+    if (metadata.createdBy !== user.tokenIdentifier) {
+      throw new Error('upload owner mismatch');
+    }
+
+    const alreadyAttached = await ctx.db
+      .query('messageAttachments')
+      .withIndex('by_storage', (q) => q.eq('storageId', args.storageId))
+      .unique();
+    if (alreadyAttached) throw new Error('upload already attached');
+
     const existing = await ctx.db
       .query('messageAttachments')
       .withIndex('by_message', (q) =>
@@ -95,32 +129,35 @@ export const attach = mutation({
       .take(10);
     if (existing.length >= 10) throw new Error('too many attachments');
 
-    return ctx.db.insert('messageAttachments', {
+    const attachmentId = await ctx.db.insert('messageAttachments', {
       messageId: args.messageId,
       owner: user.tokenIdentifier,
       storageId: args.storageId,
-      filename: args.filename.slice(0, 255),
-      contentType: args.contentType.slice(0, 255),
-      size: args.size,
+      filename: metadata.filename.slice(0, 255),
+      contentType: metadata.contentType.slice(0, 255),
+      size: metadata.size,
     });
+    await ctx.db.delete(args.uploadIntentId);
+    return attachmentId;
   },
 });
 ```
 
-The storage ID is opaque; pass it through without parsing or constructing it. Register uploads promptly and do not expose raw storage IDs outside authorized view models.
+The upload intent authorizes one finalization of a caller-owned object for a specific message; deleting it in the same mutation prevents reuse. It is deliberately not an identifier for one particular upload URL: a user may choose another object whose upload URL they requested. `metadata.createdBy` is trusted audit metadata captured at upload-URL issuance, and this application explicitly compares it with the finalizing identity. PBVex does not enforce ownership automatically, so possession of a storage ID alone remains insufficient. The `by_storage` check prevents one object from being registered as multiple message attachments.
 
 Client flow:
 
 ```ts
-const uploaded = await uploadAttachment(file);
+const { uploadIntentId, uploaded } = await uploadAttachment(messageId, file);
 
 await client.mutation(api.attachments.attach, {
+  uploadIntentId,
   messageId,
-  ...uploaded,
+  storageId: uploaded.storageId,
 });
 ```
 
-For a UI that sends text and files together, upload files first, create the message, attach each uploaded object, and surface partial failure so the user can retry registration without silently duplicating the message.
+For a UI that sends text and files together, create the message first, upload and attach each file, and surface partial failure so the user can retry attachment without silently duplicating the message.
 
 ## List authorized attachment metadata
 
@@ -208,20 +245,20 @@ export const remove = mutation({
       user.tokenIdentifier,
     );
 
-    await ctx.storage.delete(attachment.storageId as StorageId);
     await ctx.db.delete(attachmentId);
     return true;
   },
 });
 ```
 
-Deleting storage metadata inside a mutation participates in its transaction; irreversible object cleanup occurs after commit with durable recovery.
+This removes the message association but deliberately does not delete the storage object: `createdBy` proves who requested its upload URL, not that no profile or other application record references it. Delete bytes only when the application maintains a dedicated-object or reference-count invariant and has verified that no references remain. `ctx.storage.delete` participates in a mutation's transaction, with irreversible object cleanup after commit and durable recovery.
 
 ## Production considerations
 
 - Enforce server upload size and MIME allowlists appropriate to messaging.
 - Limit attachments per message and metadata lengths.
-- Treat filenames and content types as untrusted display values.
+- Treat filenames as untrusted display values. Server-derived detected content type and size are trusted descriptions of accepted bytes, not authorization or malware-safety claims.
+- Define retention for abandoned upload intents and unattached objects. If cleanup must delete uploaded objects, record enough application state to identify them without exposing raw storage IDs to clients that are not authorized to finalize the upload.
 - Do not persist signed download URLs; request a fresh URL when needed.
 - Define cleanup for uploaded objects that never become attached.
 - Consider malware scanning before making uploads available to other members.

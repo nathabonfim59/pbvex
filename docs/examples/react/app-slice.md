@@ -14,9 +14,6 @@ import { App } from './App.js';
 
 const client = new Client('http://localhost:8090');
 
-const token = localStorage.getItem('pb_token');
-if (token) client.setAuth(token);
-
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <PBVexProvider client={client}>
@@ -32,10 +29,26 @@ createRoot(document.getElementById('root')!).render(
 // App.tsx
 import { Login } from './Login.js';
 import { MessageView } from './MessageView.js';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { usePBVexClient } from '@pbvex/react';
 
 export function App() {
-  const [userId, setUserId] = useState<string | null>(null);
+  const client = usePBVexClient();
+  const [userId, setUserId] = useState<string | null>(
+    client.authStore.isValid ? client.authStore.record?.id ?? null : null,
+  );
+
+  useEffect(() => {
+    const syncAuth = () => setUserId(
+      client.authStore.isValid ? client.authStore.record?.id ?? null : null,
+    );
+    const unsubscribe = client.authStore.onChange(syncAuth);
+    const timer = window.setInterval(syncAuth, 30_000);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  }, [client]);
 
   return (
     <div>
@@ -56,7 +69,6 @@ export function App() {
 // Login.tsx
 import { usePBVexClient } from '@pbvex/react';
 import { useState } from 'react';
-import { api } from './pbvex/_generated/api.js';
 
 export function Login({ onLogin }: { onLogin: (userId: string) => void }) {
   const client = usePBVexClient();
@@ -65,10 +77,10 @@ export function Login({ onLogin }: { onLogin: (userId: string) => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const { token, userId } = await client.mutation(api.auth.login, { email, password });
-    localStorage.setItem('pb_token', token);
-    client.setAuth(token);
-    onLogin(userId);
+    const result = await client.auth
+      .collection('users')
+      .authWithPassword(email, password);
+    onLogin(result.record.id);
   }
 
   return (

@@ -351,6 +351,8 @@ export type StorageId = string & { readonly [storageIdBrand]: 'StorageId' };
 export type StorageFileMetadata = Readonly<{
   storageId: StorageId;
   kind: 'file';
+  /** Token identifier that requested the upload URL, or an empty string for anonymous issuance. */
+  createdBy: string;
   filename: string;
   contentType: string;
   extension: string;
