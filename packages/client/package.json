@@ -1,6 +1,6 @@
 {
   "name": "@pbvex/client",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "description": "Browser-neutral PBVex client with typed calls and realtime subscriptions",
   "license": "MIT",
@@ -33,7 +33,7 @@
     "lint": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@pbvex/protocol": "workspace:0.3.2"
+    "@pbvex/protocol": "workspace:0.3.3"
   },
   "devDependencies": {
     "pbvex": "workspace:^",
