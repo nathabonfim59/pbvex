@@ -774,7 +774,7 @@ export class FetchRealtimeTransport implements RealtimeTransport {
     if (!fetchFn) {
       throw new Error('No fetch implementation available');
     }
-    this.fetchFn = fetchFn;
+    this.fetchFn = fetchFn.bind(globalThis);
     this.baseUrl = new URL('/', options.baseUrl).toString();
     this.getAuthToken = options.getAuthToken;
     this.realtimePath = options.realtimePath ?? '/api/pbvex/realtime';

@@ -66,6 +66,19 @@ function collectStates(): { states: ConnectionState[]; push: (state: ConnectionS
 }
 
 describe('FetchRealtimeTransport', () => {
+  it('uses the browser global as the fetch receiver', async () => {
+    const browserFetch = function (this: unknown) {
+      expect(this).toBe(globalThis);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    } as typeof globalThis.fetch;
+    const transport = new FetchRealtimeTransport({
+      baseUrl: 'http://localhost:8090',
+      fetch: browserFetch,
+    });
+
+    await expect(transport.fetchFn('http://localhost:8090/api/health')).resolves.toHaveProperty('status', 204);
+  });
+
   let fetch: ReturnType<typeof vi.fn>;
   let transports: FetchRealtimeTransport[];
 

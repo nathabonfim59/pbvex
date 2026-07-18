@@ -138,10 +138,11 @@ export class Client {
   readonly auth: AuthClient;
 
   constructor(url: string | URL, options: ClientOptions = {}) {
-    this.fetchFn = options.fetch ?? (typeof fetch !== 'undefined' ? fetch : undefined as never);
-    if (!this.fetchFn) {
+    const fetchFn = options.fetch ?? (typeof fetch !== 'undefined' ? fetch : undefined as never);
+    if (!fetchFn) {
       throw new Error('No fetch implementation available');
     }
+    this.fetchFn = fetchFn.bind(globalThis);
     this.baseUrl = resolveBaseUrl(url, options.baseUrl);
     this.callUrl = new URL('/api/pbvex/call', this.baseUrl).toString();
     this.realtimePath = options.realtimePath ?? '/api/pbvex/realtime';

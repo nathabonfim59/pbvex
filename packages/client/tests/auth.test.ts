@@ -25,6 +25,17 @@ function token(exp = Math.floor(Date.now() / 1000) + 3600): string {
 }
 
 describe('native PocketBase authentication', () => {
+  it('uses the browser global as the fetch receiver', async () => {
+    const browserFetch = function (this: unknown) {
+      expect(this).toBe(globalThis);
+      return Promise.resolve(json({ token: token(), record: { id: 'user-1' } }));
+    } as typeof fetch;
+    const client = new Client('http://localhost:8090', { fetch: browserFetch });
+
+    await expect(client.auth.collection('users').authWithPassword('person@example.com', 'secret'))
+      .resolves.toMatchObject({ record: { id: 'user-1' } });
+  });
+
   it('creates an auth record without changing the auth store', async () => {
     const fetch = makeMockFetch(async (request) => {
       expect(request.url).toBe('http://localhost:8090/api/collections/users/records');
