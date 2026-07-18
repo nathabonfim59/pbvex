@@ -33,6 +33,12 @@ describe('managed development backend arguments', () => {
     })).toContain('/workspace/pbvex/pocketbaseMigrations');
   });
 
+  it('sets the configured origin for generated storage URLs', () => {
+    expect(managedBackendArgs('/tmp/data', '127.0.0.1:8084', {
+      storageBaseUrl: 'http://127.0.0.1:8084',
+    })).toContain('http://127.0.0.1:8084');
+  });
+
   it('uses only pbvex/pocketbaseMigrations by default and resolves an explicit override', () => {
     expect(applicationPocketBaseMigrationsDir('/workspace')).toBe(path.join('/workspace', 'pbvex', 'pocketbaseMigrations'));
     expect(applicationPocketBaseMigrationsDir('/workspace', 'custom/migrations')).toBe(

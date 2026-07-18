@@ -15,6 +15,7 @@ export interface ManagedBackendOptions {
   debug?: boolean;
   adminUI?: boolean;
   pocketbaseMigrationsDir?: string;
+  storageBaseUrl?: string;
 }
 
 export function applicationPocketBaseMigrationsDir(rootDir: string, override?: string): string {
@@ -31,6 +32,7 @@ export function managedBackendArgs(
   const args = ['--dir', dataDir, '--hooksWatch=false'];
   if (options.debug) args.push('--dev=true');
   if (options.pocketbaseMigrationsDir) args.push('--migrationsDir', options.pocketbaseMigrationsDir);
+  if (options.storageBaseUrl) args.push('--storageBaseUrl', options.storageBaseUrl);
   args.push('serve');
   if (options.adminUI !== false) args.push('--admin-ui');
   args.push('--http', address);
@@ -122,6 +124,7 @@ export async function startManagedBackend(config: ResolvedConfig, options: Manag
   const serverArgs = managedBackendArgs(dataDir, address, {
     ...options,
     pocketbaseMigrationsDir: applicationPocketBaseMigrationsDir(config.rootDir, options.pocketbaseMigrationsDir),
+    storageBaseUrl: options.storageBaseUrl ?? origin,
   });
   const child = spawnServer(serverArgs, {
     cwd: config.rootDir,
