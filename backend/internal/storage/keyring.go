@@ -287,7 +287,7 @@ func (kv keyVersion) verify(payload string, sig []byte) bool {
 }
 
 // signURL signs a download URL with the current key and returns the full signed URL.
-func (s *Service) signURL(ctx context.Context, storageID string, auth AuthContext, ttl time.Duration) (string, error) {
+func (s *Service) signURL(ctx context.Context, storageID string, auth AuthContext, ttl time.Duration, capability bool) (string, error) {
 	if ttl <= 0 {
 		ttl = s.config.URLSigningTTL
 	}
@@ -326,6 +326,9 @@ func (s *Service) signURL(ctx context.Context, storageID string, auth AuthContex
 	v.Set("sub", auth.identifier())
 	v.Set("pol", "download")
 	v.Set("nonce", nonce)
+	if capability {
+		v.Set("bnd", "capability")
+	}
 
 	payload := path + "?" + v.Encode()
 	sig := base64.RawURLEncoding.EncodeToString(key.sign(payload))
@@ -338,8 +341,9 @@ func (s *Service) signURL(ctx context.Context, storageID string, auth AuthContex
 }
 
 // verifySignedURL validates the signature and constraints of a signed download URL
-// against the identity of the caller. The "sub" claim must match the caller's
-// UserID (empty for anonymous URLs) and the "pol" claim must be "download".
+// against the identity of the caller. Legacy/default URLs require the "sub"
+// claim to match the caller. URLs signed with bnd=capability are bearer URLs
+// and require an empty subject. The "pol" claim must be "download".
 func (s *Service) verifySignedURL(storageID string, u *url.URL, auth AuthContext) error {
 	q := u.Query()
 	sig := q.Get("sig")
@@ -374,8 +378,17 @@ func (s *Service) verifySignedURL(storageID string, u *url.URL, auth AuthContext
 	if q.Get("pol") != "download" {
 		return ErrURLTampered
 	}
-	if q.Get("sub") != auth.identifier() {
-		return ErrURLForbidden
+	switch q.Get("bnd") {
+	case "":
+		if q.Get("sub") != auth.identifier() {
+			return ErrURLForbidden
+		}
+	case "capability":
+		if q.Get("sub") != "" {
+			return ErrURLTampered
+		}
+	default:
+		return ErrURLTampered
 	}
 	exp, err := parseInt(q.Get("exp"))
 	if err != nil {

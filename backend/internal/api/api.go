@@ -178,6 +178,9 @@ func Register(app core.App, service *deploy.Service, bcast *realtime.Broadcaster
 
 			e.Router.POST(storageBasePath+"/upload/{token}", withPublicEndpoint(resolved, handleStorageUpload(storageService)))
 			e.Router.OPTIONS(storageBasePath+"/upload/{token}", withPublicEndpoint(resolved, handlePreflight(resolved)))
+			e.Router.GET(storageBasePath+"/public/{token}/blob.bin", withPublicEndpoint(resolved, handlePublicStorageDownload(storageService)))
+			e.Router.HEAD(storageBasePath+"/public/{token}/blob.bin", withPublicEndpoint(resolved, handlePublicStorageDownload(storageService)))
+			e.Router.OPTIONS(storageBasePath+"/public/{token}/blob.bin", withPublicEndpoint(resolved, handlePreflight(resolved)))
 			e.Router.GET(storageBasePath+"/{id}", withPublicEndpoint(resolved, handleStorageDownload(storageService)))
 			e.Router.HEAD(storageBasePath+"/{id}", withPublicEndpoint(resolved, handleStorageDownload(storageService)))
 			e.Router.OPTIONS(storageBasePath+"/{id}", withPublicEndpoint(resolved, handlePreflight(resolved)))
@@ -362,6 +365,16 @@ func handleStorageDownload(s *storage.Service) func(*core.RequestEvent) error {
 			authCtx.TokenIdentifier = identity.TokenIdentifier
 		}
 		if err := s.Download(e.Response, e.Request, e.Request.PathValue("id"), authCtx); err != nil {
+			return storageServiceError(err, e)
+		}
+		return nil
+	}
+}
+
+func handlePublicStorageDownload(s *storage.Service) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		e.Response.Header().Set("Cache-Control", "no-store")
+		if err := s.DownloadPublic(e.Response, e.Request, e.Request.PathValue("token")); err != nil {
 			return storageServiceError(err, e)
 		}
 		return nil

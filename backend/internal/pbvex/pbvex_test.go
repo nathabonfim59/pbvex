@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dop251/goja"
 	"github.com/nathabonfim59/pbvex/backend/internal/deploy"
 	"github.com/nathabonfim59/pbvex/backend/internal/realtime"
 	"github.com/nathabonfim59/pbvex/backend/internal/schema"
@@ -1729,11 +1731,15 @@ func TestStorageE2E(t *testing.T) {
 
 	storageBundle := `__pbvex.registerFunction({name:"generateUploadUrl",type:"mutation",visibility:"public",modulePath:"generateUploadUrl",exportName:"default"}, async function(ctx,args) { return await ctx.storage.generateUploadUrl(); });` +
 		`__pbvex.registerFunction({name:"getUrl",type:"query",visibility:"public",modulePath:"getUrl",exportName:"default"}, async function(ctx,args) { return await ctx.storage.getUrl(args.id); });` +
+		`__pbvex.registerFunction({name:"getCapabilityUrl",type:"query",visibility:"public",modulePath:"getCapabilityUrl",exportName:"default"}, async function(ctx,args) { return await ctx.storage.getUrl(args.id,{mode:"capability"}); });` +
+		`__pbvex.registerFunction({name:"getPublicUrl",type:"query",visibility:"public",modulePath:"getPublicUrl",exportName:"default"}, async function(ctx,args) { return await ctx.storage.getUrl(args.id,{mode:"public"}); });` +
 		`__pbvex.registerFunction({name:"deleteFile",type:"mutation",visibility:"public",modulePath:"deleteFile",exportName:"default"}, async function(ctx,args) { return await ctx.storage.delete(args.id); });`
 
 	resp, err := service.Upload(storageManifestRequest("storage_e2e", storageBundle, []deploy.FunctionDescriptor{
 		{Name: "generateUploadUrl", Type: deploy.FunctionTypeMutation, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "generateUploadUrl", ExportName: "default"},
 		{Name: "getUrl", Type: deploy.FunctionTypeQuery, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "getUrl", ExportName: "default"},
+		{Name: "getCapabilityUrl", Type: deploy.FunctionTypeQuery, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "getCapabilityUrl", ExportName: "default"},
+		{Name: "getPublicUrl", Type: deploy.FunctionTypeQuery, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "getPublicUrl", ExportName: "default"},
 		{Name: "deleteFile", Type: deploy.FunctionTypeMutation, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "deleteFile", ExportName: "default"},
 	}))
 	if err != nil {
@@ -1820,6 +1826,33 @@ func TestStorageE2E(t *testing.T) {
 		t.Fatal("expected Digest header")
 	}
 
+	capabilityResult := call("getCapabilityUrl", map[string]any{"id": uploadResp.StorageID})
+	capabilityURL, ok := capabilityResult["result"].(string)
+	if !ok || capabilityURL == "" {
+		t.Fatalf("expected capability URL, got %v", capabilityResult["result"])
+	}
+	parsedCapabilityURL, err := url.Parse(capabilityURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsedCapabilityURL.Query().Get("bnd"); got != "capability" {
+		t.Fatalf("capability URL bnd=%q", got)
+	}
+
+	publicResult := call("getPublicUrl", map[string]any{"id": uploadResp.StorageID})
+	publicURL, ok := publicResult["result"].(string)
+	if !ok || publicURL == "" {
+		t.Fatalf("expected public URL, got %v", publicResult["result"])
+	}
+	publicRR := httptest.NewRecorder()
+	mux.ServeHTTP(publicRR, httptest.NewRequest(http.MethodGet, publicURL, nil))
+	if publicRR.Code != http.StatusOK || !bytes.Equal(publicRR.Body.Bytes(), fileContent) {
+		t.Fatalf("public download failed: %d %s", publicRR.Code, publicRR.Body.String())
+	}
+	if cc := publicRR.Header().Get("Cache-Control"); !strings.Contains(cc, "s-maxage=") {
+		t.Fatalf("public cache control=%q", cc)
+	}
+
 	// HEAD request
 	headReq := httptest.NewRequest(http.MethodHead, downloadURL, nil)
 	headRR := httptest.NewRecorder()
@@ -1858,6 +1891,11 @@ func TestStorageE2E(t *testing.T) {
 	mux.ServeHTTP(missingRR, missingReq)
 	if missingRR.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for deleted file, got %d", missingRR.Code)
+	}
+	deletedPublicRR := httptest.NewRecorder()
+	mux.ServeHTTP(deletedPublicRR, httptest.NewRequest(http.MethodGet, publicURL, nil))
+	if deletedPublicRR.Code != http.StatusNotFound || deletedPublicRR.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("deleted public response status=%d cache-control=%q", deletedPublicRR.Code, deletedPublicRR.Header().Get("Cache-Control"))
 	}
 
 	// Replay upload
@@ -1922,6 +1960,37 @@ func TestStorageE2E(t *testing.T) {
 	missingGetResult := call("getUrl", map[string]any{"id": "missing-id"})
 	if missingGetResult["result"] != nil {
 		t.Fatalf("expected null for missing id, got %v", missingGetResult["result"])
+	}
+}
+
+func TestExtractStorageURLMode(t *testing.T) {
+	vm := goja.New()
+	tests := []struct {
+		name    string
+		value   goja.Value
+		want    string
+		wantErr bool
+	}{
+		{name: "omitted", value: goja.Undefined(), want: "identity"},
+		{name: "empty", value: vm.ToValue(map[string]any{}), wantErr: true},
+		{name: "identity", value: vm.ToValue(map[string]any{"mode": "identity"}), want: "identity"},
+		{name: "capability", value: vm.ToValue(map[string]any{"mode": "capability"}), want: "capability"},
+		{name: "public", value: vm.ToValue(map[string]any{"mode": "public"}), want: "public"},
+		{name: "null", value: goja.Null(), wantErr: true},
+		{name: "primitive", value: vm.ToValue("capability"), wantErr: true},
+		{name: "invalid mode", value: vm.ToValue(map[string]any{"mode": "shareable"}), wantErr: true},
+		{name: "unknown option", value: vm.ToValue(map[string]any{"mode": "capability", "ttl": 60}), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractStorageURLMode(vm, goja.FunctionCall{Arguments: []goja.Value{vm.ToValue("id"), tt.value}})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("mode=%q err=%v", got, err)
+			}
+			if err == nil && got != tt.want {
+				t.Fatalf("mode=%q want %q", got, tt.want)
+			}
+		})
 	}
 }
 

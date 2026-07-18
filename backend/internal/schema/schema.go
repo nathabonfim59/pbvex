@@ -96,6 +96,7 @@ const (
 	FieldStorageCreatedBy   = "createdBy"
 	FieldStorageOwner       = "leaseOwner"
 	FieldStorageLeaseUntil  = "leaseUntil"
+	FieldStoragePublicToken = "publicToken"
 
 	FieldToken               = "token"
 	FieldTokenStorageID      = "storageId"

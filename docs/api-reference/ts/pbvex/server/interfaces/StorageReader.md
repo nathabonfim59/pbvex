@@ -10,13 +10,17 @@
 
 ### getUrl
 
-> **getUrl**: (`id`) => `Promise`\<`string` \| `null`\>
+> **getUrl**: (`id`, `options?`) => `Promise`\<`string` \| `null`\>
 
 #### Parameters
 
 ##### id
 
 [`StorageId`](../../index/type-aliases/StorageId.md)
+
+##### options?
+
+[`StorageGetUrlOptions`](StorageGetUrlOptions.md)
 
 #### Returns
 

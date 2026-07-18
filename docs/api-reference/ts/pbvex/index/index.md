@@ -563,6 +563,12 @@ Re-exports [StorageContext](../server/interfaces/StorageContext.md)
 
 ***
 
+### StorageGetUrlOptions
+
+Re-exports [StorageGetUrlOptions](../server/interfaces/StorageGetUrlOptions.md)
+
+***
+
 ### StorageReader
 
 Re-exports [StorageReader](../server/interfaces/StorageReader.md)

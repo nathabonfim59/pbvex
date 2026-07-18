@@ -33,6 +33,8 @@ type Config struct {
 	URLSigningTTL time.Duration
 	// URLSigningMaxTTL is the absolute maximum lifetime a signed URL may request.
 	URLSigningMaxTTL time.Duration
+	// PublicCacheTTL controls browser and shared-cache freshness for stable public URLs.
+	PublicCacheTTL time.Duration
 	// KeyRotationInterval controls how often signing keys are rotated.
 	KeyRotationInterval time.Duration
 	// KeyGracePeriod is how long rotated-out keys stay available for verification.
@@ -59,6 +61,7 @@ func DefaultConfig() Config {
 		CleanupInterval:     5 * time.Minute,
 		URLSigningTTL:       15 * time.Minute,
 		URLSigningMaxTTL:    24 * time.Hour,
+		PublicCacheTTL:      5 * time.Minute,
 		KeyRotationInterval: 24 * time.Hour,
 		KeyGracePeriod:      25 * time.Hour,
 		MaxFiles:            0,
@@ -107,6 +110,9 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	if cfg.URLSigningMaxTTL > 0 {
 		out.URLSigningMaxTTL = cfg.URLSigningMaxTTL
 	}
+	if cfg.PublicCacheTTL > 0 {
+		out.PublicCacheTTL = cfg.PublicCacheTTL
+	}
 	if cfg.KeyRotationInterval > 0 {
 		out.KeyRotationInterval = cfg.KeyRotationInterval
 	}
@@ -131,6 +137,9 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	}
 	if out.URLSigningMaxTTL < out.URLSigningTTL {
 		out.URLSigningMaxTTL = out.URLSigningTTL
+	}
+	if out.PublicCacheTTL < time.Second {
+		out.PublicCacheTTL = time.Second
 	}
 	if out.KeyRotationInterval < time.Minute {
 		out.KeyRotationInterval = time.Minute
@@ -183,7 +192,7 @@ func validateConfigInput(cfg Config) error {
 		return fmt.Errorf("tokenMaxSize must be non-negative")
 	}
 	if cfg.DefaultUploadTTL < 0 || cfg.DefaultClaimTTL < 0 || cfg.CleanupInterval < 0 ||
-		cfg.URLSigningTTL < 0 || cfg.URLSigningMaxTTL < 0 ||
+		cfg.URLSigningTTL < 0 || cfg.URLSigningMaxTTL < 0 || cfg.PublicCacheTTL < 0 ||
 		cfg.KeyRotationInterval < 0 || cfg.KeyGracePeriod < 0 || cfg.UploadLeaseInterval < 0 {
 		return fmt.Errorf("storage durations must be non-negative")
 	}

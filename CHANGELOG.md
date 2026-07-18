@@ -26,6 +26,17 @@ entries are intentionally not duplicated in this changelog.
 - Development watch deployments no longer report success after a deployment
   request fails.
 
+## 0.3.4 - 2026-07-18
+
+### Added
+
+- `ctx.storage.getUrl(id, { mode: 'capability' })` now creates short-lived
+  bearer URLs for native media elements, links, and other clients that cannot
+  attach an authorization header. Identity binding remains the default.
+- `ctx.storage.getUrl(id, { mode: 'public' })` creates stable, queryless bearer
+  URLs with browser and CDN cache headers for intentionally public immutable
+  assets.
+
 ## 0.1.1 - 2026-07-15
 
 ### Fixed

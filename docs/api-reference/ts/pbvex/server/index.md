@@ -49,6 +49,7 @@
 - [Response](interfaces/Response.md)
 - [SchedulerContext](interfaces/SchedulerContext.md)
 - [StorageContext](interfaces/StorageContext.md)
+- [StorageGetUrlOptions](interfaces/StorageGetUrlOptions.md)
 - [StorageReader](interfaces/StorageReader.md)
 - [TableInfo](interfaces/TableInfo.md)
 - [TextDecoder](interfaces/TextDecoder.md)

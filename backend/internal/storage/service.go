@@ -79,6 +79,9 @@ func NewService(app core.App, repo *Repo, config Config) (*Service, error) {
 
 // WarmActive pre-loads signing keys and any other runtime state.
 func (s *Service) WarmActive() error {
+	if err := s.repo.BackfillPublicTokens(schema.WithInternalContext(context.Background()), s.app); err != nil {
+		return fmt.Errorf("backfill storage public tokens: %w", err)
+	}
 	return s.kr.LoadOrCreate(schema.WithInternalContext(context.Background()))
 }
 
@@ -123,6 +126,38 @@ func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (stri
 
 // GetURL returns a signed short-lived download URL for the storage ID, or an empty string if missing/deleted.
 func (s *Service) GetURL(ctx context.Context, storageID string, auth AuthContext) (string, error) {
+	return s.getURL(ctx, storageID, auth, false)
+}
+
+// GetCapabilityURL returns a signed short-lived bearer URL that does not require caller authentication.
+func (s *Service) GetCapabilityURL(ctx context.Context, storageID string) (string, error) {
+	return s.getURL(ctx, storageID, AuthContext{}, true)
+}
+
+// GetPublicURL returns the stable public bearer URL for a stored file.
+func (s *Service) GetPublicURL(ctx context.Context, storageID string) (string, error) {
+	if err := ValidateStorageID(storageID); err != nil {
+		return "", nil
+	}
+	record, err := s.repo.GetFile(schema.WithInternalContext(ctx), s.appFor(ctx), storageID)
+	if err != nil {
+		if errors.Is(err, ErrStorageNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	token := record.GetString(schema.FieldStoragePublicToken)
+	if err := validatePublicToken(token); err != nil {
+		return "", fmt.Errorf("stored public token: %w", err)
+	}
+	base := strings.TrimRight(s.config.BaseURL, "/")
+	if base == "" {
+		base = strings.TrimRight(s.app.Settings().Meta.AppURL, "/")
+	}
+	return base + s.config.BasePath + "/public/" + token + "/blob.bin", nil
+}
+
+func (s *Service) getURL(ctx context.Context, storageID string, auth AuthContext, capability bool) (string, error) {
 	if err := ValidateStorageID(storageID); err != nil {
 		return "", nil
 	}
@@ -133,7 +168,7 @@ func (s *Service) GetURL(ctx context.Context, storageID string, auth AuthContext
 		}
 		return "", err
 	}
-	return s.signURL(ctx, storageID, auth, 0)
+	return s.signURL(ctx, storageID, auth, 0, capability)
 }
 
 // Delete removes a stored file and its metadata.
@@ -355,6 +390,10 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 // upload stops renewing. The token is not consumed yet so that body staging
 // failures remain retryable.
 func (s *Service) reserveUpload(ctx context.Context, app core.App, storageID, fileKey, filename, contentType, createdBy, owner string) (*core.Record, error) {
+	publicToken, err := GenerateToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate public token: %w", err)
+	}
 	rec := FileRecord{
 		StorageID:   storageID,
 		ContentType: contentType,
@@ -364,6 +403,7 @@ func (s *Service) reserveUpload(ctx context.Context, app core.App, storageID, fi
 		Status:      statusUploading,
 		Owner:       owner,
 		LeaseUntil:  time.Now().UTC().Add(s.leaseInterval()),
+		PublicToken: publicToken,
 	}
 	var reserved *core.Record
 	txErr := s.app.RunInTransaction(func(txApp core.App) error {
@@ -579,6 +619,28 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID str
 		return err
 	}
 
+	return s.serveDownload(w, r, record, s.cacheControlHeader(r.URL))
+}
+
+// DownloadPublic serves a stable public storage URL without caller authentication.
+func (s *Service) DownloadPublic(w http.ResponseWriter, r *http.Request, token string) error {
+	if err := validatePublicToken(token); err != nil {
+		return &UploadError{Code: ErrorCodeNotFound, Message: "file not found"}
+	}
+	record, err := s.repo.GetFileByPublicToken(schema.WithInternalContext(r.Context()), s.app, token)
+	if err != nil {
+		if errors.Is(err, ErrStorageNotFound) {
+			return &UploadError{Code: ErrorCodeNotFound, Message: "file not found"}
+		}
+		return err
+	}
+	seconds := int64(s.config.PublicCacheTTL / time.Second)
+	cacheControl := fmt.Sprintf("public, max-age=%d, s-maxage=%d, must-revalidate, stale-if-error=0", seconds, seconds)
+	return s.serveDownload(w, r, record, cacheControl)
+}
+
+func (s *Service) serveDownload(w http.ResponseWriter, r *http.Request, record *core.Record, cacheControl string) error {
+	storageID := record.GetString(schema.FieldStorageID)
 	fileKey := record.GetString(schema.FieldStorageFileKey)
 	filename := record.GetString(schema.FieldStorageFilename)
 	if filename == "" {
@@ -614,7 +676,6 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID str
 	}
 
 	contentType := s.contentTypeHeader(record, attrs)
-	cacheControl := s.cacheControlHeader(r.URL, auth)
 	disposition := s.contentDispositionHeader(filename, contentType)
 
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -762,14 +823,14 @@ func (w *countingResponseWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (s *Service) cacheControlHeader(u *url.URL, auth AuthContext) string {
+func (s *Service) cacheControlHeader(u *url.URL) string {
 	q := u.Query()
 	exp, _ := parseInt(q.Get("exp"))
 	remaining := exp - time.Now().UTC().Unix()
 	if remaining <= 0 {
 		return "no-cache, no-store"
 	}
-	if auth.IsAuthenticated {
+	if q.Get("bnd") != "capability" && q.Get("sub") != "" {
 		return fmt.Sprintf("private, max-age=%d", remaining)
 	}
 	return fmt.Sprintf("public, max-age=%d", remaining)

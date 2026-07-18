@@ -183,6 +183,7 @@ application URL and review these flags/environment variables:
 | `--storageAllowedTypes` | `PBVEX_STORAGE_ALLOWED_TYPES` | Comma-separated MIME patterns |
 | `--storageUploadTtl` | `PBVEX_STORAGE_UPLOAD_TTL` | Upload URL lifetime |
 | `--storageUrlSignTtl` | `PBVEX_STORAGE_URL_SIGN_TTL` | Download URL lifetime |
+| `--storagePublicCacheTtl` | `PBVEX_STORAGE_PUBLIC_CACHE_TTL` | Browser/CDN freshness for stable public URLs; 5 minutes by default |
 | `--storageCleanupInterval` | `PBVEX_STORAGE_CLEANUP_INTERVAL` | Cleanup pass interval |
 | `--storageBaseUrl` | `PBVEX_STORAGE_BASE_URL` | Explicit absolute public base URL |
 | `--storageBasePath` | `PBVEX_STORAGE_BASE_PATH` | Storage API path |

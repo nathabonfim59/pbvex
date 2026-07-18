@@ -24,6 +24,7 @@ import "github.com/nathabonfim59/pbvex/backend/internal/storage"
 - [type FileRecord](<#FileRecord>)
 - [type Repo](<#Repo>)
   - [func NewRepo\(\) \*Repo](<#NewRepo>)
+  - [func \(r \*Repo\) BackfillPublicTokens\(ctx context.Context, app core.App\) error](<#Repo.BackfillPublicTokens>)
   - [func \(r \*Repo\) ClaimToken\(ctx context.Context, app core.App, tokenHash, claim string, claimExpiresAt time.Time\) \(\*core.Record, error\)](<#Repo.ClaimToken>)
   - [func \(r \*Repo\) ConsumeToken\(ctx context.Context, app core.App, tokenHash, claim string\) error](<#Repo.ConsumeToken>)
   - [func \(r \*Repo\) CreateFile\(ctx context.Context, app core.App, record FileRecord\) \(\*core.Record, error\)](<#Repo.CreateFile>)
@@ -34,6 +35,7 @@ import "github.com/nathabonfim59/pbvex/backend/internal/storage"
   - [func \(r \*Repo\) GetFile\(ctx context.Context, app core.App, storageID string\) \(\*core.Record, error\)](<#Repo.GetFile>)
   - [func \(r \*Repo\) GetFileByIDAnyStatus\(ctx context.Context, app core.App, storageID string\) \(\*core.Record, error\)](<#Repo.GetFileByIDAnyStatus>)
   - [func \(r \*Repo\) GetFileByKey\(ctx context.Context, app core.App, fileKey string\) \(\*core.Record, error\)](<#Repo.GetFileByKey>)
+  - [func \(r \*Repo\) GetFileByPublicToken\(ctx context.Context, app core.App, token string\) \(\*core.Record, error\)](<#Repo.GetFileByPublicToken>)
   - [func \(r \*Repo\) GetFilesByStatus\(ctx context.Context, app core.App, status string\) \(\[\]\*core.Record, error\)](<#Repo.GetFilesByStatus>)
   - [func \(r \*Repo\) GetTokenByHash\(ctx context.Context, app core.App, tokenHash string\) \(\*core.Record, error\)](<#Repo.GetTokenByHash>)
   - [func \(r \*Repo\) GetTokenByHashAnyState\(ctx context.Context, app core.App, tokenHash string\) \(\*core.Record, error\)](<#Repo.GetTokenByHashAnyState>)
@@ -48,7 +50,10 @@ import "github.com/nathabonfim59/pbvex/backend/internal/storage"
   - [func NewService\(app core.App, repo \*Repo, config Config\) \(\*Service, error\)](<#NewService>)
   - [func \(s \*Service\) Delete\(ctx context.Context, storageID string\) error](<#Service.Delete>)
   - [func \(s \*Service\) Download\(w http.ResponseWriter, r \*http.Request, storageID string, auth AuthContext\) error](<#Service.Download>)
+  - [func \(s \*Service\) DownloadPublic\(w http.ResponseWriter, r \*http.Request, token string\) error](<#Service.DownloadPublic>)
   - [func \(s \*Service\) GenerateUploadURL\(ctx context.Context, auth AuthContext\) \(string, error\)](<#Service.GenerateUploadURL>)
+  - [func \(s \*Service\) GetCapabilityURL\(ctx context.Context, storageID string\) \(string, error\)](<#Service.GetCapabilityURL>)
+  - [func \(s \*Service\) GetPublicURL\(ctx context.Context, storageID string\) \(string, error\)](<#Service.GetPublicURL>)
   - [func \(s \*Service\) GetURL\(ctx context.Context, storageID string, auth AuthContext\) \(string, error\)](<#Service.GetURL>)
   - [func \(s \*Service\) RunCleanup\(\) error](<#Service.RunCleanup>)
   - [func \(s \*Service\) Start\(\) error](<#Service.Start>)
@@ -96,7 +101,7 @@ func AppFromContext(ctx context.Context) (core.App, bool)
 AppFromContext returns the app instance from the context, or nil/false if none.
 
 <a name="GenerateAttempt"></a>
-## func [GenerateAttempt](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L38>)
+## func [GenerateAttempt](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L39>)
 
 ```go
 func GenerateAttempt() (string, error)
@@ -105,7 +110,7 @@ func GenerateAttempt() (string, error)
 GenerateAttempt returns a random nonce for a single upload attempt.
 
 <a name="GenerateStorageID"></a>
-## func [GenerateStorageID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L20>)
+## func [GenerateStorageID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L21>)
 
 ```go
 func GenerateStorageID() (string, error)
@@ -114,7 +119,7 @@ func GenerateStorageID() (string, error)
 GenerateStorageID returns an opaque, non\-path\-leaking, branded storage identifier.
 
 <a name="GenerateToken"></a>
-## func [GenerateToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L29>)
+## func [GenerateToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L30>)
 
 ```go
 func GenerateToken() (string, error)
@@ -123,7 +128,7 @@ func GenerateToken() (string, error)
 GenerateToken returns a random, unforgeable upload token.
 
 <a name="HashToken"></a>
-## func [HashToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L47>)
+## func [HashToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L48>)
 
 ```go
 func HashToken(token string) string
@@ -132,7 +137,7 @@ func HashToken(token string) string
 HashToken returns the SHA\-256 digest of a token string.
 
 <a name="ValidateStorageID"></a>
-## func [ValidateStorageID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L54>)
+## func [ValidateStorageID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/id.go#L55>)
 
 ```go
 func ValidateStorageID(id string) error
@@ -165,7 +170,7 @@ type AuthContext struct {
 ```
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/config.go#L12-L46>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/config.go#L12-L48>)
 
 Config controls storage service behavior and constraints.
 
@@ -194,6 +199,8 @@ type Config struct {
     URLSigningTTL time.Duration
     // URLSigningMaxTTL is the absolute maximum lifetime a signed URL may request.
     URLSigningMaxTTL time.Duration
+    // PublicCacheTTL controls browser and shared-cache freshness for stable public URLs.
+    PublicCacheTTL time.Duration
     // KeyRotationInterval controls how often signing keys are rotated.
     KeyRotationInterval time.Duration
     // KeyGracePeriod is how long rotated-out keys stay available for verification.
@@ -208,7 +215,7 @@ type Config struct {
 ```
 
 <a name="DefaultConfig"></a>
-### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/config.go#L49>)
+### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/config.go#L51>)
 
 ```go
 func DefaultConfig() Config
@@ -217,7 +224,7 @@ func DefaultConfig() Config
 DefaultConfig returns sane storage defaults.
 
 <a name="NormalizeConfig"></a>
-### func [NormalizeConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/config.go#L70>)
+### func [NormalizeConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/config.go#L73>)
 
 ```go
 func NormalizeConfig(cfg Config) (Config, error)
@@ -253,7 +260,7 @@ const (
 ```
 
 <a name="FileRecord"></a>
-## type [FileRecord](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L516-L527>)
+## type [FileRecord](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L554-L566>)
 
 FileRecord is the domain model for a stored file.
 
@@ -269,6 +276,7 @@ type FileRecord struct {
     Status      string
     Owner       string
     LeaseUntil  time.Time
+    PublicToken string
 }
 ```
 
@@ -290,8 +298,17 @@ func NewRepo() *Repo
 
 NewRepo creates a new storage repository.
 
+<a name="Repo.BackfillPublicTokens"></a>
+### func \(\*Repo\) [BackfillPublicTokens](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L75>)
+
+```go
+func (r *Repo) BackfillPublicTokens(ctx context.Context, app core.App) error
+```
+
+BackfillPublicTokens gives files created by older releases stable public tokens.
+
 <a name="Repo.ClaimToken"></a>
-### func \(\*Repo\) [ClaimToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L191>)
+### func \(\*Repo\) [ClaimToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L229>)
 
 ```go
 func (r *Repo) ClaimToken(ctx context.Context, app core.App, tokenHash, claim string, claimExpiresAt time.Time) (*core.Record, error)
@@ -300,7 +317,7 @@ func (r *Repo) ClaimToken(ctx context.Context, app core.App, tokenHash, claim st
 ClaimToken atomically CAS a token from unclaimed to claimed by attempt.
 
 <a name="Repo.ConsumeToken"></a>
-### func \(\*Repo\) [ConsumeToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L262>)
+### func \(\*Repo\) [ConsumeToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L300>)
 
 ```go
 func (r *Repo) ConsumeToken(ctx context.Context, app core.App, tokenHash, claim string) error
@@ -318,7 +335,7 @@ func (r *Repo) CreateFile(ctx context.Context, app core.App, record FileRecord) 
 CreateFile creates a storage metadata record.
 
 <a name="Repo.CreateToken"></a>
-### func \(\*Repo\) [CreateToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L127>)
+### func \(\*Repo\) [CreateToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L165>)
 
 ```go
 func (r *Repo) CreateToken(ctx context.Context, app core.App, token TokenRecord) (*core.Record, error)
@@ -327,7 +344,7 @@ func (r *Repo) CreateToken(ctx context.Context, app core.App, token TokenRecord)
 CreateToken stores a new upload token. TokenHash is the digest that is persisted.
 
 <a name="Repo.DeleteExpiredTokens"></a>
-### func \(\*Repo\) [DeleteExpiredTokens](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L292>)
+### func \(\*Repo\) [DeleteExpiredTokens](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L330>)
 
 ```go
 func (r *Repo) DeleteExpiredTokens(ctx context.Context, app core.App, before time.Time) (int64, error)
@@ -336,7 +353,7 @@ func (r *Repo) DeleteExpiredTokens(ctx context.Context, app core.App, before tim
 DeleteExpiredTokens removes tokens whose expiry has passed.
 
 <a name="Repo.DeleteUploadingIfLeaseExpired"></a>
-### func \(\*Repo\) [DeleteUploadingIfLeaseExpired](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L432>)
+### func \(\*Repo\) [DeleteUploadingIfLeaseExpired](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L470>)
 
 ```go
 func (r *Repo) DeleteUploadingIfLeaseExpired(ctx context.Context, app core.App, id, owner string, before time.Time) (bool, error)
@@ -345,7 +362,7 @@ func (r *Repo) DeleteUploadingIfLeaseExpired(ctx context.Context, app core.App, 
 DeleteUploadingIfLeaseExpired atomically hard\-deletes an uploading reservation only if its lease has expired \(leaseUntil \< before\) AND it is still owned by the snapshotted owner. The atomic status\+owner\+lease guard means a concurrent renewal that extended the lease, or an owner takeover, causes this to affect zero rows, so cleanup cannot reclaim an actively\-renewed or re\-owned upload. Returns true when the reservation was reclaimed.
 
 <a name="Repo.GetActiveFilesCount"></a>
-### func \(\*Repo\) [GetActiveFilesCount](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L314>)
+### func \(\*Repo\) [GetActiveFilesCount](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L352>)
 
 ```go
 func (r *Repo) GetActiveFilesCount(ctx context.Context, app core.App) (int64, error)
@@ -354,7 +371,7 @@ func (r *Repo) GetActiveFilesCount(ctx context.Context, app core.App) (int64, er
 GetActiveFilesCount returns the number of file records that consume storage capacity \(uploading, staged, active, or deleting\). Deleted records are not counted.
 
 <a name="Repo.GetFile"></a>
-### func \(\*Repo\) [GetFile](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L58>)
+### func \(\*Repo\) [GetFile](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L96>)
 
 ```go
 func (r *Repo) GetFile(ctx context.Context, app core.App, storageID string) (*core.Record, error)
@@ -363,7 +380,7 @@ func (r *Repo) GetFile(ctx context.Context, app core.App, storageID string) (*co
 GetFile returns a non\-deleted storage file metadata record by storageId.
 
 <a name="Repo.GetFileByIDAnyStatus"></a>
-### func \(\*Repo\) [GetFileByIDAnyStatus](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L473>)
+### func \(\*Repo\) [GetFileByIDAnyStatus](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L511>)
 
 ```go
 func (r *Repo) GetFileByIDAnyStatus(ctx context.Context, app core.App, storageID string) (*core.Record, error)
@@ -372,7 +389,7 @@ func (r *Repo) GetFileByIDAnyStatus(ctx context.Context, app core.App, storageID
 GetFileByIDAnyStatus returns a file record by storage ID regardless of status.
 
 <a name="Repo.GetFileByKey"></a>
-### func \(\*Repo\) [GetFileByKey](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L74>)
+### func \(\*Repo\) [GetFileByKey](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L112>)
 
 ```go
 func (r *Repo) GetFileByKey(ctx context.Context, app core.App, fileKey string) (*core.Record, error)
@@ -380,8 +397,17 @@ func (r *Repo) GetFileByKey(ctx context.Context, app core.App, fileKey string) (
 
 GetFileByKey returns a non\-deleted file by its backend file key.
 
+<a name="Repo.GetFileByPublicToken"></a>
+### func \(\*Repo\) [GetFileByPublicToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L59>)
+
+```go
+func (r *Repo) GetFileByPublicToken(ctx context.Context, app core.App, token string) (*core.Record, error)
+```
+
+GetFileByPublicToken returns an active storage file for its stable public token.
+
 <a name="Repo.GetFilesByStatus"></a>
-### func \(\*Repo\) [GetFilesByStatus](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L461>)
+### func \(\*Repo\) [GetFilesByStatus](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L499>)
 
 ```go
 func (r *Repo) GetFilesByStatus(ctx context.Context, app core.App, status string) ([]*core.Record, error)
@@ -390,7 +416,7 @@ func (r *Repo) GetFilesByStatus(ctx context.Context, app core.App, status string
 GetFilesByStatus returns all file records with the given status.
 
 <a name="Repo.GetTokenByHash"></a>
-### func \(\*Repo\) [GetTokenByHash](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L157>)
+### func \(\*Repo\) [GetTokenByHash](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L195>)
 
 ```go
 func (r *Repo) GetTokenByHash(ctx context.Context, app core.App, tokenHash string) (*core.Record, error)
@@ -399,7 +425,7 @@ func (r *Repo) GetTokenByHash(ctx context.Context, app core.App, tokenHash strin
 GetTokenByHash returns a non\-consumed token by its digest.
 
 <a name="Repo.GetTokenByHashAnyState"></a>
-### func \(\*Repo\) [GetTokenByHashAnyState](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L175>)
+### func \(\*Repo\) [GetTokenByHashAnyState](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L213>)
 
 ```go
 func (r *Repo) GetTokenByHashAnyState(ctx context.Context, app core.App, tokenHash string) (*core.Record, error)
@@ -408,7 +434,7 @@ func (r *Repo) GetTokenByHashAnyState(ctx context.Context, app core.App, tokenHa
 GetTokenByHashAnyState returns a token by its digest regardless of consumed state. It is used to classify a failed claim into expired, consumed, or in\-use so that callers can surface a precise error instead of a generic rejection.
 
 <a name="Repo.GetTokenByStorageID"></a>
-### func \(\*Repo\) [GetTokenByStorageID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L489>)
+### func \(\*Repo\) [GetTokenByStorageID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L527>)
 
 ```go
 func (r *Repo) GetTokenByStorageID(ctx context.Context, app core.App, storageID string) (*core.Record, error)
@@ -417,7 +443,7 @@ func (r *Repo) GetTokenByStorageID(ctx context.Context, app core.App, storageID 
 GetTokenByStorageID returns any token for the given storage ID.
 
 <a name="Repo.HardDeleteFile"></a>
-### func \(\*Repo\) [HardDeleteFile](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L107>)
+### func \(\*Repo\) [HardDeleteFile](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L145>)
 
 ```go
 func (r *Repo) HardDeleteFile(ctx context.Context, app core.App, storageID string) (string, error)
@@ -426,7 +452,7 @@ func (r *Repo) HardDeleteFile(ctx context.Context, app core.App, storageID strin
 HardDeleteFile removes a file metadata record.
 
 <a name="Repo.MarkFileStatus"></a>
-### func \(\*Repo\) [MarkFileStatus](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L90>)
+### func \(\*Repo\) [MarkFileStatus](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L128>)
 
 ```go
 func (r *Repo) MarkFileStatus(ctx context.Context, app core.App, storageID, status string) (*core.Record, error)
@@ -435,7 +461,7 @@ func (r *Repo) MarkFileStatus(ctx context.Context, app core.App, storageID, stat
 MarkFileStatus updates the status of a file record and returns its file key.
 
 <a name="Repo.ReleaseClaim"></a>
-### func \(\*Repo\) [ReleaseClaim](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L239>)
+### func \(\*Repo\) [ReleaseClaim](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L277>)
 
 ```go
 func (r *Repo) ReleaseClaim(ctx context.Context, app core.App, tokenHash, claim string) error
@@ -444,7 +470,7 @@ func (r *Repo) ReleaseClaim(ctx context.Context, app core.App, tokenHash, claim 
 ReleaseClaim clears a claim for an attempt if the token is not consumed.
 
 <a name="Repo.ReleaseReservation"></a>
-### func \(\*Repo\) [ReleaseReservation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L408>)
+### func \(\*Repo\) [ReleaseReservation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L446>)
 
 ```go
 func (r *Repo) ReleaseReservation(ctx context.Context, app core.App, storageID, owner string) error
@@ -453,7 +479,7 @@ func (r *Repo) ReleaseReservation(ctx context.Context, app core.App, storageID, 
 ReleaseReservation hard\-deletes an uploading reservation owned by owner. The CAS guard makes it idempotent and safe against a record already reclaimed or committed by another path.
 
 <a name="Repo.RenewUploadLease"></a>
-### func \(\*Repo\) [RenewUploadLease](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L334>)
+### func \(\*Repo\) [RenewUploadLease](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L372>)
 
 ```go
 func (r *Repo) RenewUploadLease(ctx context.Context, app core.App, storageID, owner string, until time.Time) error
@@ -462,7 +488,7 @@ func (r *Repo) RenewUploadLease(ctx context.Context, app core.App, storageID, ow
 RenewUploadLease atomically extends the lease on an uploading reservation owned by owner. It is a CAS: the update only applies while the record is still uploading and owned by owner, so it cannot clobber a record that cleanup reclaimed or commit transitioned. It returns ErrReservationLost when the reservation no longer matches.
 
 <a name="Repo.TransitionUploadingToStaged"></a>
-### func \(\*Repo\) [TransitionUploadingToStaged](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L370>)
+### func \(\*Repo\) [TransitionUploadingToStaged](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L408>)
 
 ```go
 func (r *Repo) TransitionUploadingToStaged(ctx context.Context, app core.App, storageID, owner, sha string, size int64, fileKey string) error
@@ -491,7 +517,7 @@ func NewService(app core.App, repo *Repo, config Config) (*Service, error)
 NewService creates a new storage service.
 
 <a name="Service.Delete"></a>
-### func \(\*Service\) [Delete](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L142>)
+### func \(\*Service\) [Delete](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L177>)
 
 ```go
 func (s *Service) Delete(ctx context.Context, storageID string) error
@@ -500,7 +526,7 @@ func (s *Service) Delete(ctx context.Context, storageID string) error
 Delete removes a stored file and its metadata. When called inside a transaction, it marks the file as deleting and schedules the irreversible blob deletion in TxInfo.OnComplete after successful commit.
 
 <a name="Service.Download"></a>
-### func \(\*Service\) [Download](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L559>)
+### func \(\*Service\) [Download](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L599>)
 
 ```go
 func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID string, auth AuthContext) error
@@ -508,8 +534,17 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID str
 
 Download serves a stored file for GET/HEAD requests.
 
+<a name="Service.DownloadPublic"></a>
+### func \(\*Service\) [DownloadPublic](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L626>)
+
+```go
+func (s *Service) DownloadPublic(w http.ResponseWriter, r *http.Request, token string) error
+```
+
+DownloadPublic serves a stable public storage URL without caller authentication.
+
 <a name="Service.GenerateUploadURL"></a>
-### func \(\*Service\) [GenerateUploadURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L86>)
+### func \(\*Service\) [GenerateUploadURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L89>)
 
 ```go
 func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (string, error)
@@ -517,8 +552,26 @@ func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (stri
 
 GenerateUploadURL returns a short\-lived, single\-use URL for uploading a file.
 
+<a name="Service.GetCapabilityURL"></a>
+### func \(\*Service\) [GetCapabilityURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L133>)
+
+```go
+func (s *Service) GetCapabilityURL(ctx context.Context, storageID string) (string, error)
+```
+
+GetCapabilityURL returns a signed short\-lived bearer URL that does not require caller authentication.
+
+<a name="Service.GetPublicURL"></a>
+### func \(\*Service\) [GetPublicURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L138>)
+
+```go
+func (s *Service) GetPublicURL(ctx context.Context, storageID string) (string, error)
+```
+
+GetPublicURL returns the stable public bearer URL for a stored file.
+
 <a name="Service.GetURL"></a>
-### func \(\*Service\) [GetURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L125>)
+### func \(\*Service\) [GetURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L128>)
 
 ```go
 func (s *Service) GetURL(ctx context.Context, storageID string, auth AuthContext) (string, error)
@@ -554,7 +607,7 @@ func (s *Service) Stop() error
 Stop halts the background cleanup worker and waits for the current pass to finish.
 
 <a name="Service.Upload"></a>
-### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L205>)
+### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L240>)
 
 ```go
 func (s *Service) Upload(ctx context.Context, token string, body io.Reader, contentType, filename string, headerSize int64) (string, error)
@@ -572,7 +625,7 @@ func (s *Service) WarmActive() error
 WarmActive pre\-loads signing keys and any other runtime state.
 
 <a name="TokenRecord"></a>
-## type [TokenRecord](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L505-L513>)
+## type [TokenRecord](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/repo.go#L543-L551>)
 
 TokenRecord is the domain model for an upload token.
 

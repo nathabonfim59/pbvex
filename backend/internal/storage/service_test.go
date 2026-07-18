@@ -772,6 +772,156 @@ func TestDownloadAuthIsolation(t *testing.T) {
 	}
 }
 
+func TestCapabilityDownloadURL(t *testing.T) {
+	_, svc := newStorageTestApp(t)
+
+	uploadURL, err := svc.GenerateUploadURL(context.Background(), AuthContext{IsAuthenticated: true, UserID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("shareable secret")
+	id, err := svc.Upload(context.Background(), extractToken(uploadURL), bytes.NewReader(body), "text/plain", "x.txt", int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	downloadURL, err := svc.GetCapabilityURL(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(downloadURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("bnd"); got != "capability" {
+		t.Fatalf("bnd=%q want capability", got)
+	}
+	if got := parsed.Query().Get("sub"); got != "" {
+		t.Fatalf("capability URL subject=%q want empty", got)
+	}
+
+	for name, auth := range map[string]AuthContext{
+		"anonymous": {},
+		"owner":     {IsAuthenticated: true, UserID: "owner"},
+		"other":     {IsAuthenticated: true, UserID: "other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			err := svc.Download(rr, httptest.NewRequest(http.MethodGet, downloadURL, nil), id, auth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rr.Code != http.StatusOK || rr.Body.String() != string(body) {
+				t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+			}
+			if cc := rr.Header().Get("Cache-Control"); !strings.Contains(cc, "public") {
+				t.Fatalf("expected public cache control, got %q", cc)
+			}
+		})
+	}
+
+	q := parsed.Query()
+	q.Del("bnd")
+	parsed.RawQuery = q.Encode()
+	if err := svc.Download(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, parsed.String(), nil), id, AuthContext{}); err == nil {
+		t.Fatal("expected removing capability binding to invalidate signature")
+	}
+
+	legacyAnonymousURL, err := svc.GetURL(context.Background(), id, AuthContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Download(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, legacyAnonymousURL, nil), id, AuthContext{IsAuthenticated: true, UserID: "other"}); err == nil {
+		t.Fatal("legacy anonymous URL must remain caller-bound")
+	}
+}
+
+func TestPublicDownloadURLIsStableAndCacheable(t *testing.T) {
+	_, svc := newStorageTestApp(t)
+
+	uploadURL, err := svc.GenerateUploadURL(context.Background(), AuthContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("public asset")
+	id, err := svc.Upload(context.Background(), extractToken(uploadURL), bytes.NewReader(body), "text/plain", "asset.txt", int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := svc.GetPublicURL(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.GetPublicURL(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("public URL changed: %q != %q", first, second)
+	}
+	parsed, err := url.Parse(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.RawQuery != "" || !strings.HasSuffix(parsed.Path, "/blob.bin") || strings.Contains(first, id) {
+		t.Fatalf("unexpected public URL %q", first)
+	}
+	parts := strings.Split(parsed.Path, "/")
+	publicToken := parts[len(parts)-2]
+
+	rr := httptest.NewRecorder()
+	if err := svc.DownloadPublic(rr, httptest.NewRequest(http.MethodGet, first, nil), publicToken); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != http.StatusOK || rr.Body.String() != string(body) {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "public, max-age=300, s-maxage=300, must-revalidate, stale-if-error=0" {
+		t.Fatalf("unexpected cache control %q", cc)
+	}
+	if length := rr.Header().Get("Content-Length"); length != strconv.Itoa(len(body)) {
+		t.Fatalf("content-length=%q", length)
+	}
+
+	if err := svc.DownloadPublic(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, first, nil), strings.Repeat("0", 64)); err == nil {
+		t.Fatal("expected unknown public token to fail")
+	}
+	if err := svc.Delete(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.GetPublicURL(context.Background(), id); err != nil || got != "" {
+		t.Fatalf("deleted public URL=%q err=%v", got, err)
+	}
+	if err := svc.DownloadPublic(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, first, nil), publicToken); err == nil {
+		t.Fatal("expected deleted public URL to fail")
+	}
+}
+
+func TestWarmActiveBackfillsPublicTokens(t *testing.T) {
+	app, svc := newStorageTestApp(t)
+	record, err := svc.repo.CreateFile(schema.WithInternalContext(context.Background()), app, FileRecord{
+		StorageID:   "pbv_0123456789abcdef0123456789abcdef",
+		ContentType: "text/plain",
+		FileKey:     "storage/legacy/blob",
+		Filename:    "legacy.txt",
+		Status:      statusActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := record.GetString(schema.FieldStoragePublicToken); got != "" {
+		t.Fatalf("initial public token=%q", got)
+	}
+	if err := svc.WarmActive(); err != nil {
+		t.Fatal(err)
+	}
+	url, err := svc.GetPublicURL(context.Background(), record.GetString(schema.FieldStorageID))
+	if err != nil || url == "" {
+		t.Fatalf("backfilled public URL=%q err=%v", url, err)
+	}
+}
+
 func TestSignedURLAndCreatedByUseGlobalTokenIdentifier(t *testing.T) {
 	app, svc := newStorageTestApp(t)
 	first := "pocketbase:collection_one:same_record_id"

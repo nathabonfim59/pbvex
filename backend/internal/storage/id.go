@@ -15,6 +15,7 @@ import (
 // the literal "pbv_" prefix followed by 32 lowercase hex characters (UUIDv4 sans dashes).
 // Enforcing the canonical form rejects traversal fragments and non-branded ids at the boundary.
 var storageIDPattern = regexp.MustCompile(`^pbv_[0-9a-f]{32}$`)
+var publicTokenPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // GenerateStorageID returns an opaque, non-path-leaking, branded storage identifier.
 func GenerateStorageID() (string, error) {
@@ -60,6 +61,13 @@ func ValidateStorageID(id string) error {
 	}
 	if !storageIDPattern.MatchString(id) {
 		return fmt.Errorf("storage id is invalid")
+	}
+	return nil
+}
+
+func validatePublicToken(token string) error {
+	if !publicTokenPattern.MatchString(token) {
+		return fmt.Errorf("public token is invalid")
 	}
 	return nil
 }

@@ -66,6 +66,12 @@ declare const actionCtx: ActionCtx;
 
 export const _actionUploadUrl: Promise<string> = actionCtx.storage.generateUploadUrl();
 export const _actionStorageUrl: Promise<string | null> = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId);
+export const _actionCapabilityStorageUrl: Promise<string | null> = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId, { mode: 'capability' });
+export const _actionPublicStorageUrl: Promise<string | null> = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId, { mode: 'public' });
+// @ts-expect-error storage URL options require an explicit mode
+export const _actionMissingStorageUrlMode = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId, {});
+// @ts-expect-error invalid storage URL mode
+export const _actionInvalidStorageUrl = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId, { mode: 'shareable' });
 export const _actionStorageDelete: Promise<void> = actionCtx.storage.delete('storage-id' as import('pbvex/server').StorageId);
 export const _actionScheduler = actionCtx.scheduler;
 // @ts-expect-error actions do not expose direct database access

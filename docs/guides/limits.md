@@ -51,6 +51,7 @@ Realtime uses one SSE subscription query per request. Every successful record cr
 | Storage file count | Unlimited by default (`0`) | `--storageMaxFiles` / `PBVEX_STORAGE_MAX_FILES`. |
 | Storage upload URL | 1 hour default | `--storageUploadTtl` / `PBVEX_STORAGE_UPLOAD_TTL`. |
 | Storage download URL | 15 minutes default; requested lifetime cannot exceed 24 hours | Server embedding controls the absolute maximum; the default lifetime is flag/env configurable. |
+| Public storage cache | 5 minutes default | `--storagePublicCacheTtl` / `PBVEX_STORAGE_PUBLIC_CACHE_TTL`; deletion is immediate at the origin but cached responses can remain fresh for this period. |
 | Storage cleanup | Every 5 minutes | `--storageCleanupInterval` / `PBVEX_STORAGE_CLEANUP_INTERVAL`. |
 
 Storage also supports per-token maximum upload size (`--storageTokenMaxSize` / `PBVEX_STORAGE_TOKEN_MAX_SIZE`), clamped to the server file-size maximum, and MIME allowlists (`--storageAllowedTypes` / `PBVEX_STORAGE_ALLOWED_TYPES`). The [self-hosting guide](../self-hosting.md) lists all storage flags and environment variables.

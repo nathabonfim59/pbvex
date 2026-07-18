@@ -1,7 +1,7 @@
 {
   "name": "pbvex",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Convex-like experience on top of PocketBase",
   "scripts": {
     "build": "turbo run build",

@@ -37,6 +37,7 @@ func (r *Repo) CreateFile(ctx context.Context, app core.App, record FileRecord) 
 	rec.Set(schema.FieldStorageStatus, record.Status)
 	rec.Set(schema.FieldStorageCreatedBy, record.CreatedBy)
 	rec.Set(schema.FieldStorageOwner, record.Owner)
+	rec.Set(schema.FieldStoragePublicToken, record.PublicToken)
 	if !record.LeaseUntil.IsZero() {
 		leaseDt, err := types.ParseDateTime(record.LeaseUntil.UTC())
 		if err != nil {
@@ -52,6 +53,43 @@ func (r *Repo) CreateFile(ctx context.Context, app core.App, record FileRecord) 
 		return nil, err
 	}
 	return rec, nil
+}
+
+// GetFileByPublicToken returns an active storage file for its stable public token.
+func (r *Repo) GetFileByPublicToken(ctx context.Context, app core.App, token string) (*core.Record, error) {
+	record, err := app.FindFirstRecordByFilter(
+		schema.CollectionStorageFiles,
+		fmt.Sprintf("%s = {:token} && %s = {:status}", schema.FieldStoragePublicToken, schema.FieldStorageStatus),
+		dbx.Params{"token": token, schema.FieldStorageStatus: statusActive},
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrStorageNotFound
+		}
+		return nil, err
+	}
+	return record, nil
+}
+
+// BackfillPublicTokens gives files created by older releases stable public tokens.
+func (r *Repo) BackfillPublicTokens(ctx context.Context, app core.App) error {
+	records := []*core.Record{}
+	if err := app.RecordQuery(schema.CollectionStorageFiles).
+		AndWhere(dbx.HashExp{schema.FieldStoragePublicToken: ""}).
+		All(&records); err != nil {
+		return err
+	}
+	for _, record := range records {
+		token, err := GenerateToken()
+		if err != nil {
+			return err
+		}
+		record.Set(schema.FieldStoragePublicToken, token)
+		if err := app.SaveWithContext(ctx, record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetFile returns a non-deleted storage file metadata record by storageId.
@@ -524,6 +562,7 @@ type FileRecord struct {
 	Status      string
 	Owner       string
 	LeaseUntil  time.Time
+	PublicToken string
 }
 
 const (

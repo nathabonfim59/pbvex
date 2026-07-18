@@ -353,9 +353,11 @@ func storageFilesCollection() *core.Collection {
 	// the upload is active so cleanup can only reclaim abandoned reservations.
 	col.Fields.Add(&core.TextField{Name: FieldStorageOwner, System: true, Max: 128, Hidden: true})
 	col.Fields.Add(&core.DateField{Name: FieldStorageLeaseUntil, System: true, Hidden: true})
+	col.Fields.Add(&core.TextField{Name: FieldStoragePublicToken, System: true, Max: 64, Hidden: true})
 
 	col.AddIndex("idx_pbvex_storage_files_storageId", true, "storageId", "")
 	col.AddIndex("idx_pbvex_storage_files_fileKey", true, "fileKey", "")
+	col.AddIndex("idx_pbvex_storage_files_publicToken", false, "publicToken", "")
 	return col
 }
 

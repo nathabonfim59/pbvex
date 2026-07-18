@@ -120,6 +120,14 @@ func main() {
 		"default lifetime for signed download URLs",
 	)
 
+	cfg.Storage.PublicCacheTTL = envDuration("PBVEX_STORAGE_PUBLIC_CACHE_TTL", cfg.Storage.PublicCacheTTL)
+	app.RootCmd.PersistentFlags().DurationVar(
+		&cfg.Storage.PublicCacheTTL,
+		"storagePublicCacheTtl",
+		cfg.Storage.PublicCacheTTL,
+		"browser and shared-cache lifetime for stable public storage URLs",
+	)
+
 	cfg.Storage.CleanupInterval = envDuration("PBVEX_STORAGE_CLEANUP_INTERVAL", cfg.Storage.CleanupInterval)
 	app.RootCmd.PersistentFlags().DurationVar(
 		&cfg.Storage.CleanupInterval,

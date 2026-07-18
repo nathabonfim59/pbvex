@@ -40,10 +40,21 @@ func storageExtender(storageService *storage.Service) runtime.ContextExtender {
 					if id == "" {
 						return goja.Null(), nil
 					}
-					url, err := storageService.GetURL(storageCtx, id, storage.AuthContext{
-						IsAuthenticated: auth.IsAuthenticated,
-						TokenIdentifier: auth.TokenIdentifier,
-					})
+					mode, err := extractStorageURLMode(vm, call)
+					if err != nil {
+						return nil, err
+					}
+					var url string
+					if mode == "capability" {
+						url, err = storageService.GetCapabilityURL(storageCtx, id)
+					} else if mode == "public" {
+						url, err = storageService.GetPublicURL(storageCtx, id)
+					} else {
+						url, err = storageService.GetURL(storageCtx, id, storage.AuthContext{
+							IsAuthenticated: auth.IsAuthenticated,
+							TokenIdentifier: auth.TokenIdentifier,
+						})
+					}
 					if err != nil {
 						return nil, err
 					}
@@ -77,6 +88,29 @@ func storageExtender(storageService *storage.Service) runtime.ContextExtender {
 		obj.Set("storage", storageObj)
 		return nil
 	}
+}
+
+func extractStorageURLMode(vm *goja.Runtime, call goja.FunctionCall) (string, error) {
+	if len(call.Arguments) < 2 || goja.IsUndefined(call.Argument(1)) {
+		return "identity", nil
+	}
+	value := call.Argument(1)
+	if goja.IsNull(value) {
+		return "", fmt.Errorf("storage getUrl options must be an object")
+	}
+	obj := value.ToObject(vm)
+	if obj.ClassName() != "Object" {
+		return "", fmt.Errorf("storage getUrl options must be an object")
+	}
+	keys := obj.Keys()
+	if len(keys) != 1 || keys[0] != "mode" {
+		return "", fmt.Errorf("storage getUrl options only support mode")
+	}
+	mode, ok := obj.Get("mode").Export().(string)
+	if !ok || (mode != "identity" && mode != "capability" && mode != "public") {
+		return "", fmt.Errorf("storage getUrl mode must be identity, capability, or public")
+	}
+	return mode, nil
 }
 
 func extractString(call goja.FunctionCall, idx int) string {

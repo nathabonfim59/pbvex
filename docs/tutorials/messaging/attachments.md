@@ -174,12 +174,15 @@ export const getDownloadUrl = query({
       user.tokenIdentifier,
     );
 
-    return ctx.storage.getUrl(attachment.storageId as StorageId);
+    return ctx.storage.getUrl(
+      attachment.storageId as StorageId,
+      { mode: 'capability' },
+    );
   },
 });
 ```
 
-`ctx.storage.getUrl` does not decide application ownership. The membership check before it is the authorization boundary.
+`ctx.storage.getUrl` does not decide application ownership. The membership check before it is the authorization boundary. Capability mode lets a native link or media element use the URL without an authorization header, so anyone who obtains the URL can download the attachment until it expires.
 
 ## Delete an attachment
 

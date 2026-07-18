@@ -523,8 +523,17 @@ export function isCronJobsDefinition(value: unknown): value is CronJobsDefinitio
   return definition.kind === 'pbvex.cronJobs' && Array.isArray(definition.jobs);
 }
 
+export interface StorageGetUrlOptions {
+  /**
+   * Identity-bound URLs are the default and require the caller's bearer token.
+   * Capability URLs authorize anyone possessing the short-lived signed URL.
+   * Public URLs are stable, CDN-cacheable bearer URLs that remain valid until deletion.
+   */
+  mode: 'identity' | 'capability' | 'public';
+}
+
 export interface StorageReader {
-  getUrl: (id: StorageId) => Promise<string | null>;
+  getUrl: (id: StorageId, options?: StorageGetUrlOptions) => Promise<string | null>;
 }
 
 export interface StorageContext extends StorageReader {
