@@ -14,6 +14,7 @@ const FIXTURE = new URL('../fixtures/example', import.meta.url).pathname;
 const USAGE = new URL('./fixtures/usage.ts', import.meta.url).pathname;
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 const TSC = path.resolve(REPO_ROOT, 'packages/pbvex/node_modules/typescript/bin/tsc');
+const FULL_CODEGEN_COMPILE_TIMEOUT_MS = 30_000;
 
 async function writeTsconfig(tempDir: string) {
   const tsconfigPath = path.join(tempDir, 'tsconfig.json');
@@ -75,7 +76,7 @@ describe('codegen compile', () => {
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
 
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('compiles generated api with hyphen and dot module segments', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-compile-'));

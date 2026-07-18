@@ -43,11 +43,11 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Test
+        run: pnpm exec turbo run test --concurrency=1
+
       - name: Build
         run: pnpm build
-
-      - name: Test
-        run: pnpm test
 
       - name: Test packed packages in a clean consumer
         run: ./scripts/pack-smoke.sh
