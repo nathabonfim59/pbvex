@@ -1,10 +1,11 @@
 import { decodeId, encodeValue, isIdentifier, isSafeFieldName } from '@pbvex/protocol';
 import type { JSONValue, PbvexValue } from '@pbvex/protocol';
+import type { StorageId } from '@pbvex/protocol';
 
 export type GenericId<TableName extends string = string> = string & { __table: TableName };
 
 const VALIDATOR_KINDS = new Set<ValidatorKind>([
-  'id', 'string', 'number', 'int64', 'float64', 'boolean', 'bytes', 'any', 'null', 'literal',
+  'id', 'image', 'string', 'number', 'int64', 'float64', 'boolean', 'bytes', 'any', 'null', 'literal',
   'object', 'array', 'record', 'union', 'optional', 'defaulted', 'delayed', 'recursive',
 ]);
 
@@ -23,6 +24,7 @@ export type ObjectValidator<Out extends Record<string, any> = Record<string, any
 
 export type ValidatorKind =
   | 'id'
+  | 'image'
   | 'string'
   | 'number'
   | 'int64'
@@ -74,6 +76,43 @@ export function id<TableName extends string = string>(tableName: TableName): Val
     },
     false,
     () => ({ type: 'id', tableName }),
+  );
+}
+
+export interface ImageValidatorOptions {
+  readonly thumbs?: readonly string[];
+  readonly mimeTypes?: readonly string[];
+}
+
+const imageThumbPattern = /^(\d+)x(\d+)(t|b|f)?$/;
+const defaultImageMimeTypes = ['image/gif', 'image/jpeg', 'image/png', 'image/webp'] as const;
+
+export function image(options: ImageValidatorOptions = {}): Validator<StorageId> {
+  const thumbs = [...(options.thumbs ?? [])].sort();
+  const mimeTypes = [...(options.mimeTypes ?? defaultImageMimeTypes)].sort();
+  if (thumbs.length > 16 || new Set(thumbs).size !== thumbs.length) {
+    throw new ValidationError('Image thumbs must be unique and contain at most 16 entries');
+  }
+  for (const thumb of thumbs) {
+    const match = imageThumbPattern.exec(thumb);
+    const width = match ? Number(match[1]) : 0;
+    const height = match ? Number(match[2]) : 0;
+    if (!match || (match[3] !== undefined && (width === 0 || height === 0)) || (width === 0 && height === 0) || width > 4096 || height > 4096 || (width > 0 && height > 0 && width * height > 16_777_216)) {
+      throw new ValidationError(`Invalid image thumb: ${JSON.stringify(thumb)}`);
+    }
+  }
+  if (mimeTypes.length === 0 || new Set(mimeTypes).size !== mimeTypes.length || mimeTypes.some((type) => !defaultImageMimeTypes.includes(type as any))) {
+    throw new ValidationError('Image mimeTypes must be a non-empty unique list of supported image MIME types');
+  }
+  const descriptor = Object.freeze({ type: 'image', thumbs: Object.freeze(thumbs), mimeTypes: Object.freeze(mimeTypes) });
+  return new V<StorageId>(
+    'image',
+    (value) => {
+      if (typeof value !== 'string' || !/^pbv_[0-9a-f]{32}$/.test(value)) throw new ValidationError('Expected storage image id');
+      return value as StorageId;
+    },
+    false,
+    () => descriptor,
   );
 }
 
@@ -383,6 +422,7 @@ export function isValidator<T>(value: unknown): value is Validator<T> {
 
 export const v = {
   id,
+  image,
   string,
   number,
   int64,

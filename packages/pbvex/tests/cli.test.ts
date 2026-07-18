@@ -58,7 +58,7 @@ describe('cli', () => {
     expect(metadata.diagnostics).toEqual([]);
 
     const generatedApi = await readFile(path.join(tempDir, 'pbvex', '_generated', 'api.ts'), 'utf-8');
-    expect(generatedApi).toContain("import type { FunctionReference } from 'pbvex/server'");
+    expect(generatedApi).toContain("import type { FunctionReference, StorageId } from 'pbvex/server'");
     expect(generatedApi).toContain('"list": { "_path": "pbvex_messages_list_');
     expect(generatedApi).toContain('"_type": "query"');
     expect(generatedApi).toContain('"_visibility": "public"');

@@ -97,6 +97,7 @@ const (
 	FieldStorageOwner       = "leaseOwner"
 	FieldStorageLeaseUntil  = "leaseUntil"
 	FieldStoragePublicToken = "publicToken"
+	FieldStorageMetadata    = "metadata"
 
 	FieldToken               = "token"
 	FieldTokenStorageID      = "storageId"
@@ -108,6 +109,7 @@ const (
 	FieldTokenFilename       = "filename"
 	FieldTokenClaim          = "claim"
 	FieldTokenClaimExpiresAt = "claimExpiresAt"
+	FieldTokenPolicy         = "policy"
 
 	FieldKeyringKeyID     = "keyId"
 	FieldKeyringKey       = "key"

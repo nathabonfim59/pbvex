@@ -348,6 +348,9 @@ func (s *Service) verifySignedURL(storageID string, u *url.URL, auth AuthContext
 	q := u.Query()
 	sig := q.Get("sig")
 	q.Del("sig")
+	// The thumb selector is not an authorization claim. The serving path checks
+	// it against the immutable image policy persisted with the file.
+	q.Del("thumb")
 	if sig == "" {
 		return ErrURLTampered
 	}

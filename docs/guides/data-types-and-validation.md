@@ -45,6 +45,7 @@ All entries below are methods of `v` imported from `pbvex/values`. `Validator<Ou
 | `v.null()` | `null` | Only `null`; it does not accept `undefined`. |
 | `v.bytes()` | `ArrayBuffer` | Only an `ArrayBuffer`, encoded as PBVex `$bytes` base64 on the wire. A `Uint8Array` is not itself accepted; pass its `.buffer` when that is the intended value. |
 | `v.id('table')` | `GenericId<'table'>` / server `Id<'table'>` | An authenticated opaque ID for exactly that logical table. The table name must be a valid identifier. It is not an arbitrary string and cannot be created client-side. |
+| `v.image(options)` | `StorageId` | A canonical PBVex storage ID for an image field. `thumbs` contains at most 16 predefined PocketBase resize strings; `mimeTypes` is a non-empty subset of GIF, JPEG, PNG, and WebP. Use a schema-bound image upload URL to enforce the byte-level policy. |
 | `v.literal(value)` | the literal type of `value` | `value` may be a `string`, finite `number`, `bigint`, or `boolean`. Equality is exact; non-finite numeric literals are rejected. |
 | `v.array(item)` | `Out[]` | A JavaScript array whose every item validates with `item`. An omitted/`undefined` item is not allowed unless the item validator accepts it. |
 | `v.object(shape)` | object mapped from `shape` | A constrained, non-array object with the declared fields. Required fields must be present; unknown fields are not retained locally and are rejected at the persisted/runtime document boundary. |
@@ -316,7 +317,7 @@ These are separate stages; success at one does not remove checks at the next:
 
 The source-guaranteed codec/validator budgets are maximum depth 128, at most 16,384 accounting nodes, a 4 MiB internal wire-byte budget, and at most 1,024 array entries or object fields in the backend validator. A union has at most 64 deployable branches. Function-argument and return byte limits are deployment configuration: they default to 1 MiB and may be lowered or raised only up to the 16 MiB protocol ceiling. See [limits](./limits.md) for the full, current configuration matrix. Do not treat limits not documented there as a stable application contract.
 
-Scheduled calls accept the generated mutation/action reference and its typed args; scheduler time input (`Date | number`) is a scheduler API parameter, not a PBVex value validator type. Storage APIs use their separate opaque `StorageId` type. Neither changes the set of values accepted by `v`.
+Scheduled calls accept the generated mutation/action reference and its typed args; scheduler time input (`Date | number`) is a scheduler API parameter, not a PBVex value validator type. Generic storage APIs use an opaque `StorageId`; `v.image()` is the schema validator for image-backed storage IDs.
 
 ## Patterns and common failures
 

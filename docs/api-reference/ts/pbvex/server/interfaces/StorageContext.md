@@ -26,11 +26,37 @@
 
 ### generateUploadUrl
 
-> **generateUploadUrl**: () => `Promise`\<`string`\>
+> **generateUploadUrl**: (`options?`) => `Promise`\<`string`\>
+
+#### Parameters
+
+##### options?
+
+[`StorageImageUploadOptions`](StorageImageUploadOptions.md)
 
 #### Returns
 
 `Promise`\<`string`\>
+
+***
+
+### getMetadata
+
+> **getMetadata**: (`id`) => `Promise`\<`Readonly`\<\{ `contentType`: `string`; `extension`: `string`; `filename`: `string`; `kind`: `"file"`; `sha256`: `string`; `size`: `number`; `storageId`: [`StorageId`](../../index/type-aliases/StorageId.md); \}\> \| [`StorageImageMetadata`](../../index/type-aliases/StorageImageMetadata.md) \| `null`\>
+
+#### Parameters
+
+##### id
+
+[`StorageId`](../../index/type-aliases/StorageId.md)
+
+#### Returns
+
+`Promise`\<`Readonly`\<\{ `contentType`: `string`; `extension`: `string`; `filename`: `string`; `kind`: `"file"`; `sha256`: `string`; `size`: `number`; `storageId`: [`StorageId`](../../index/type-aliases/StorageId.md); \}\> \| [`StorageImageMetadata`](../../index/type-aliases/StorageImageMetadata.md) \| `null`\>
+
+#### Inherited from
+
+[`StorageReader`](StorageReader.md).[`getMetadata`](StorageReader.md#getmetadata)
 
 ***
 

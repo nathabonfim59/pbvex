@@ -1,4 +1,4 @@
-[@pbvex/client](../index.md) / StorageUploadResponse
+[pbvex](../../index.md) / [index](../index.md) / StorageUploadResponse
 
 # Type Alias: StorageUploadResponse
 

@@ -192,6 +192,8 @@ application URL and review these flags/environment variables:
 Durations use Go duration syntax such as `30s`, `15m`, or `24h`. Invalid
 explicit values fail startup rather than silently weakening limits.
 
+Schema-declared image thumbnails are generated lazily and stored beside the original object in the configured local or S3 filesystem. Include these variant objects in backups. Image decoding consumes CPU and memory based on decoded dimensions, not compressed upload bytes alone; keep upload limits appropriate for your application. Deleting an original removes its complete object prefix, including variants.
+
 ## Scheduler operations
 
 The scheduler is durable and pins the deployment snapshot associated with each

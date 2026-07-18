@@ -1,9 +1,9 @@
 import { encodeValue, isCronExpression, isIdentifier } from '@pbvex/protocol';
-import type { JSONValue, PbvexValue, StorageId } from '@pbvex/protocol';
+import type { JSONValue, PbvexValue, StorageFileMetadata, StorageId, StorageImageMetadata } from '@pbvex/protocol';
 import type { ObjectValidator, Validator } from './values.js';
 import { v, isValidator } from './values.js';
 
-export type { StorageId } from '@pbvex/protocol';
+export type { StorageFileMetadata, StorageId, StorageImageMetadata, StorageUploadResponse } from '@pbvex/protocol';
 
 export type { TableDefinition, SchemaDefinition, IndexDefinition } from '../schema/schema.js';
 export { defineSchema, defineTable, index, isSchemaDefinition, isTableDefinition } from '../schema/schema.js';
@@ -532,12 +532,20 @@ export interface StorageGetUrlOptions {
   mode: 'identity' | 'capability' | 'public';
 }
 
+export interface StorageImageUploadOptions {
+  /** Top-level schema table containing the image field. */
+  table: string;
+  /** Top-level field declared with `v.image()`. */
+  field: string;
+}
+
 export interface StorageReader {
   getUrl: (id: StorageId, options?: StorageGetUrlOptions) => Promise<string | null>;
+  getMetadata: (id: StorageId) => Promise<StorageFileMetadata | StorageImageMetadata | null>;
 }
 
 export interface StorageContext extends StorageReader {
-  generateUploadUrl: () => Promise<string>;
+  generateUploadUrl: (options?: StorageImageUploadOptions) => Promise<string>;
   delete: (id: StorageId) => Promise<void>;
 }
 

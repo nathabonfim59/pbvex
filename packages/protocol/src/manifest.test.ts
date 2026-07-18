@@ -22,6 +22,15 @@ import type { JSONValue } from './types.js';
 const fixturesDir = fileURLToPath(new URL('../../../fixtures/manifests', import.meta.url));
 const uploadsDir = fileURLToPath(new URL('../../../fixtures/uploads', import.meta.url));
 
+test('image descriptors require bounded predefined thumbs and supported MIME types', () => {
+  assert.equal(isValidValidatorDescriptor({ type: 'image', thumbs: ['96x96', '640x0'], mimeTypes: ['image/jpeg', 'image/png'] }), true);
+  assert.equal(isValidValidatorDescriptor({ type: 'image', thumbs: ['0x0'], mimeTypes: ['image/png'] }), false);
+  assert.equal(isValidValidatorDescriptor({ type: 'image', thumbs: ['640x0f'], mimeTypes: ['image/png'] }), false);
+  assert.equal(isValidValidatorDescriptor({ type: 'image', thumbs: ['96x96', '96x96'], mimeTypes: ['image/png'] }), false);
+  assert.equal(isValidValidatorDescriptor({ type: 'image', thumbs: ['99999x1'], mimeTypes: ['image/png'] }), false);
+  assert.equal(isValidValidatorDescriptor({ type: 'image', thumbs: [], mimeTypes: ['image/svg+xml'] }), false);
+});
+
 function fixture(name: string) {
   return readFileSync(`${fixturesDir}/${name}`, 'utf8');
 }

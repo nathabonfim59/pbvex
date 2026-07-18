@@ -65,6 +65,7 @@ declare const mutationCtx: MutationCtx;
 declare const actionCtx: ActionCtx;
 
 export const _actionUploadUrl: Promise<string> = actionCtx.storage.generateUploadUrl();
+export const _actionImageUploadUrl: Promise<string> = actionCtx.storage.generateUploadUrl({ table: 'photos', field: 'image' });
 export const _actionStorageUrl: Promise<string | null> = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId);
 export const _actionCapabilityStorageUrl: Promise<string | null> = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId, { mode: 'capability' });
 export const _actionPublicStorageUrl: Promise<string | null> = actionCtx.storage.getUrl('storage-id' as import('pbvex/server').StorageId, { mode: 'public' });

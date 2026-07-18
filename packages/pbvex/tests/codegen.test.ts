@@ -26,7 +26,7 @@ describe('codegen', () => {
       handler: () => {},
     };
     const output = generateApiTs([fakeFn, internalFn]);
-    expect(output).toContain("import type { FunctionReference } from 'pbvex/server'");
+    expect(output).toContain("import type { FunctionReference, StorageId } from 'pbvex/server'");
     expect(output).toContain('export const api');
     expect(output).toContain('export const internal');
     expect(output).toContain('"messages": {');
@@ -86,7 +86,7 @@ describe('codegen', () => {
     expect(output).toContain('export type ActionCtx');
     expect(output).toContain('export type HttpActionCtx');
     expect(output).toContain('export type EmailTemplateName = never;');
-    expect(output).toContain('StorageReader, StorageContext, StorageId, EmailContext, EmailSendOptions, EmailTemplateVariables, HttpContext, HttpSendOptions, HttpSendResponse');
+    expect(output).toContain('StorageReader, StorageContext, StorageId, StorageFileMetadata, StorageImageMetadata, StorageUploadResponse, EmailContext, EmailSendOptions, EmailTemplateVariables, HttpContext, HttpSendOptions, HttpSendResponse');
     expect(output).toContain('export const httpAction');
     expect(output).not.toContain('internalHttpAction');
   });

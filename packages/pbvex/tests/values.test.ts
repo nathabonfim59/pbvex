@@ -9,6 +9,21 @@ describe('values validators', () => {
     expect(() => validator.validate(123 as any)).toThrow(ValidationError);
   });
 
+  it('validates image storage ids and canonicalizes policy', () => {
+    const validator = v.image({ thumbs: ['640x0', '96x96'], mimeTypes: ['image/png', 'image/jpeg'] });
+    expect(validator.toJSON()).toEqual({
+      type: 'image',
+      thumbs: ['640x0', '96x96'],
+      mimeTypes: ['image/jpeg', 'image/png'],
+    });
+    expect(validator.validate('pbv_0123456789abcdef0123456789abcdef')).toBe('pbv_0123456789abcdef0123456789abcdef');
+    expect(() => validator.validate('not-storage')).toThrow(ValidationError);
+    expect(() => v.image({ thumbs: ['0x0'] })).toThrow(ValidationError);
+    expect(() => v.image({ thumbs: ['640x0f'] })).toThrow(ValidationError);
+    expect(() => v.image({ thumbs: ['96x96', '96x96'] })).toThrow(ValidationError);
+    expect(() => v.image({ mimeTypes: ['image/svg+xml'] })).toThrow(ValidationError);
+  });
+
   it('validates number', () => {
     const validator = v.number();
     expect(validator.validate(42)).toBe(42);

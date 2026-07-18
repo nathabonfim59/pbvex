@@ -36,6 +36,9 @@ entries are intentionally not duplicated in this changelog.
 - `ctx.storage.getUrl(id, { mode: 'public' })` creates stable, queryless bearer
   URLs with browser and CDN cache headers for intentionally public immutable
   assets.
+- `v.image({ thumbs, mimeTypes })` adds schema-bound image uploads, trusted file
+  metadata, and lazy PocketBase-compatible `?thumb=...` variants for local and
+  S3 storage.
 
 ## 0.1.1 - 2026-07-15
 

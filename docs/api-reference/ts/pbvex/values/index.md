@@ -6,6 +6,10 @@
 
 - [ValidationError](classes/ValidationError.md)
 
+## Interfaces
+
+- [ImageValidatorOptions](interfaces/ImageValidatorOptions.md)
+
 ## Type Aliases
 
 - [GenericId](type-aliases/GenericId.md)
@@ -28,6 +32,7 @@
 - [delayed](functions/delayed.md)
 - [float64](functions/float64.md)
 - [id](functions/id.md)
+- [image](functions/image.md)
 - [int64](functions/int64.md)
 - [isValidator](functions/isValidator.md)
 - [literal](functions/literal.md)

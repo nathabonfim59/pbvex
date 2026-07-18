@@ -298,7 +298,17 @@ func (s *Service) cleanupOrphanBlobs(ctx context.Context) (int, error) {
 			}
 		} else {
 			// Final blob: keep it while any record or pending token exists.
+			if hasRecord && status != statusDeleted {
+				continue
+			}
 			if hasRecord {
+				// A deleted record cannot own an object, including a thumbnail
+				// recreated by an in-flight request at the deletion boundary.
+				if err := fs.Delete(key); err != nil && !errors.Is(err, filesystem.ErrNotFound) {
+					s.app.Logger().Warn("failed to delete orphan blob", "key", "<redacted>", "error", err)
+					continue
+				}
+				removed++
 				continue
 			}
 			keep, err := s.hasActiveToken(ctx, storageID)
@@ -333,7 +343,8 @@ func (s *Service) hasActiveToken(ctx context.Context, storageID string) (bool, e
 }
 
 // parseStorageKey extracts a storage ID from a file key and reports whether it is a stage key.
-// Expected forms: "prefix/<storageId>/blob" and "prefix/<storageId>/_stage/<attempt>/blob".
+// Expected forms: "prefix/<storageId>/blob", "prefix/<storageId>/_stage/<attempt>/blob",
+// and "prefix/<storageId>/thumbs/<selector>/blob".
 func parseStorageKey(prefix, key string) (storageID string, isStage bool) {
 	key = strings.TrimPrefix(key, prefix+"/")
 	parts := strings.Split(key, "/")
@@ -342,6 +353,9 @@ func parseStorageKey(prefix, key string) (storageID string, isStage bool) {
 	}
 	if len(parts) == 4 && parts[1] == "_stage" && parts[3] == "blob" {
 		return parts[0], true
+	}
+	if len(parts) == 4 && parts[1] == "thumbs" && parts[2] != "" && parts[3] == "blob" {
+		return parts[0], false
 	}
 	return "", false
 }

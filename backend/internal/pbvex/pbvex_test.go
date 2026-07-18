@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/nathabonfim59/pbvex/backend/internal/deploy"
 	"github.com/nathabonfim59/pbvex/backend/internal/realtime"
 	"github.com/nathabonfim59/pbvex/backend/internal/schema"
+	"github.com/nathabonfim59/pbvex/backend/internal/storage"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -1991,6 +1993,48 @@ func TestExtractStorageURLMode(t *testing.T) {
 				t.Fatalf("mode=%q want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestImagePolicyForField(t *testing.T) {
+	manifest := deploy.DeploymentManifest{Schema: map[string]any{
+		"tables": []any{map[string]any{
+			"tableName": "photos",
+			"fields": map[string]any{
+				"image": map[string]any{
+					"type":      "optional",
+					"validator": map[string]any{"type": "image", "thumbs": []any{"96x96"}, "mimeTypes": []any{"image/png"}},
+				},
+			},
+		}},
+	}}
+	policy, err := imagePolicyForField(manifest, "pbvex/photos.ts", "photos", "image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(policy, storage.ImagePolicy{Kind: "image", Thumbs: []string{"96x96"}, MimeTypes: []string{"image/png"}}) {
+		t.Fatalf("unexpected policy %#v", policy)
+	}
+	if _, err := imagePolicyForField(manifest, "pbvex/photos.ts", "photos", "missing"); err == nil {
+		t.Fatal("expected missing image field to fail")
+	}
+
+	componentSchema := map[string]any{"tables": []any{map[string]any{
+		"tableName": "assets",
+		"fields": map[string]any{
+			"source": map[string]any{"type": "image", "thumbs": []any{"320x0"}, "mimeTypes": []any{"image/webp"}},
+		},
+	}}}
+	manifest.Components = &deploy.ComponentGraph{
+		Definitions: []deploy.ComponentDefinition{{ComponentID: "gallery-definition", ModulePaths: []string{"images.ts"}, Schema: componentSchema}},
+		Mounts:      []deploy.ComponentMount{{Name: "gallery", ComponentID: "gallery-definition"}},
+	}
+	componentPolicy, err := imagePolicyForField(manifest, "pbvex/components/gallery/images.ts", "assets", "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(componentPolicy, storage.ImagePolicy{Kind: "image", Thumbs: []string{"320x0"}, MimeTypes: []string{"image/webp"}}) {
+		t.Fatalf("unexpected component policy %#v", componentPolicy)
 	}
 }
 

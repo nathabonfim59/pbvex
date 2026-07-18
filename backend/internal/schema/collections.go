@@ -354,6 +354,7 @@ func storageFilesCollection() *core.Collection {
 	col.Fields.Add(&core.TextField{Name: FieldStorageOwner, System: true, Max: 128, Hidden: true})
 	col.Fields.Add(&core.DateField{Name: FieldStorageLeaseUntil, System: true, Hidden: true})
 	col.Fields.Add(&core.TextField{Name: FieldStoragePublicToken, System: true, Max: 64, Hidden: true})
+	col.Fields.Add(&core.JSONField{Name: FieldStorageMetadata, System: true, MaxSize: 16 << 10, Hidden: true})
 
 	col.AddIndex("idx_pbvex_storage_files_storageId", true, "storageId", "")
 	col.AddIndex("idx_pbvex_storage_files_fileKey", true, "fileKey", "")
@@ -403,6 +404,7 @@ func storageTokensCollection() *core.Collection {
 
 	col.Fields.Add(&core.TextField{Name: FieldTokenClaim, System: true, Max: 64})
 	col.Fields.Add(&core.DateField{Name: FieldTokenClaimExpiresAt, System: true, Hidden: true})
+	col.Fields.Add(&core.JSONField{Name: FieldTokenPolicy, System: true, MaxSize: 8 << 10, Hidden: true})
 
 	col.AddIndex("idx_pbvex_storage_tokens_token", true, "token", "")
 	col.AddIndex("idx_pbvex_storage_tokens_expires", false, "expiresAt", "")

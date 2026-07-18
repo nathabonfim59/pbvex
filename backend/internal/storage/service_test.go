@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -706,6 +711,26 @@ func TestAllowedContentTypes(t *testing.T) {
 	}
 }
 
+func TestAllowedContentTypesChecksDetectedType(t *testing.T) {
+	_, svc := newStorageTestApp(t)
+
+	cfg := DefaultConfig()
+	cfg.AllowedContentTypes = []string{"image/png"}
+	svc, err := NewService(svc.app, NewRepo(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	url, err := svc.GenerateUploadURL(context.Background(), AuthContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("<!doctype html><title>not a png</title>")
+	if _, err := svc.Upload(context.Background(), extractToken(url), bytes.NewReader(body), "image/png", "spoof.png", int64(len(body))); err == nil {
+		t.Fatal("expected detected text/html to be rejected")
+	}
+}
+
 func TestTamperedToken(t *testing.T) {
 	_, svc := newStorageTestApp(t)
 
@@ -895,6 +920,152 @@ func TestPublicDownloadURLIsStableAndCacheable(t *testing.T) {
 	}
 	if err := svc.DownloadPublic(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, first, nil), publicToken); err == nil {
 		t.Fatal("expected deleted public URL to fail")
+	}
+}
+
+func TestImageUploadMetadataAndPredefinedThumb(t *testing.T) {
+	_, svc := newStorageTestApp(t)
+	policy := ImagePolicy{Kind: "image", Thumbs: []string{"2x2", "3x0"}, MimeTypes: []string{"image/png"}}
+	uploadURL, err := svc.GenerateImageUploadURL(context.Background(), AuthContext{}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 4, 3))
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 4; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 50), G: uint8(y * 70), B: 100, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	id, err := svc.Upload(context.Background(), extractToken(uploadURL), bytes.NewReader(encoded.Bytes()), "application/octet-stream", "photo.fake", int64(encoded.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := svc.GetMetadata(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata["kind"] != "image" || metadata["extension"] != "png" || metadata["contentType"] != "image/png" || metadata["width"] != 4 || metadata["height"] != 3 {
+		t.Fatalf("unexpected image metadata %#v", metadata)
+	}
+
+	publicURL, err := svc.GetPublicURL(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(publicURL)
+	parts := strings.Split(parsed.Path, "/")
+	publicToken := parts[len(parts)-2]
+	thumbURL := publicURL + "?thumb=2x2"
+	rr := httptest.NewRecorder()
+	if err := svc.DownloadPublic(rr, httptest.NewRequest(http.MethodGet, thumbURL, nil), publicToken); err != nil {
+		t.Fatal(err)
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(rr.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "png" || config.Width != 2 || config.Height != 2 {
+		t.Fatalf("thumb format=%q size=%dx%d", format, config.Width, config.Height)
+	}
+	if rr.Header().Get("Digest") != "" {
+		t.Fatal("thumb must not advertise the original digest")
+	}
+	capabilityURL, err := svc.GetCapabilityURL(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilityRR := httptest.NewRecorder()
+	if err := svc.Download(capabilityRR, httptest.NewRequest(http.MethodGet, capabilityURL+"&thumb=3x0", nil), id, AuthContext{}); err != nil {
+		t.Fatal(err)
+	}
+	capabilityConfig, _, err := image.DecodeConfig(bytes.NewReader(capabilityRR.Body.Bytes()))
+	if err != nil || capabilityConfig.Width != 3 || capabilityConfig.Height != 2 {
+		t.Fatalf("signed thumb size=%dx%d err=%v", capabilityConfig.Width, capabilityConfig.Height, err)
+	}
+
+	badRR := httptest.NewRecorder()
+	if err := svc.DownloadPublic(badRR, httptest.NewRequest(http.MethodGet, publicURL+"?thumb=9x9", nil), publicToken); err == nil {
+		t.Fatal("expected undeclared thumb to fail")
+	}
+	fs, err := svc.app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	thumbKey := strings.TrimSuffix(svc.fileKey(id), "/blob") + "/thumbs/2x2/blob"
+	if exists, err := fs.Exists(thumbKey); err != nil || !exists {
+		fs.Close()
+		t.Fatalf("generated thumb missing: exists=%v err=%v", exists, err)
+	}
+	fs.Close()
+	if err := svc.Delete(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	fs, err = svc.app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	if exists, err := fs.Exists(thumbKey); err != nil || exists {
+		t.Fatalf("thumb survived delete: exists=%v err=%v", exists, err)
+	}
+}
+
+func TestImageUploadRejectsNonImageBytes(t *testing.T) {
+	_, svc := newStorageTestApp(t)
+	uploadURL, err := svc.GenerateImageUploadURL(context.Background(), AuthContext{}, ImagePolicy{Kind: "image", MimeTypes: []string{"image/png"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("not an image")
+	if _, err := svc.Upload(context.Background(), extractToken(uploadURL), bytes.NewReader(body), "image/png", "fake.png", int64(len(body))); err == nil {
+		t.Fatal("expected non-image bytes to be rejected")
+	}
+}
+
+func TestImageUploadRejectsTruncatedAndOversizedImages(t *testing.T) {
+	_, svc := newStorageTestApp(t)
+	policy := ImagePolicy{Kind: "image", MimeTypes: []string{"image/png"}}
+
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 4, 3))); err != nil {
+		t.Fatal(err)
+	}
+	truncated := encoded.Bytes()[:50]
+	url, err := svc.GenerateImageUploadURL(context.Background(), AuthContext{}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Upload(context.Background(), extractToken(url), bytes.NewReader(truncated), "image/png", "broken.png", int64(len(truncated))); err == nil {
+		t.Fatal("expected truncated image to be rejected")
+	}
+
+	width := uint32(maxOriginalImageDimension)
+	height := uint32(maxOriginalImagePixels/maxOriginalImageDimension + 1)
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8], ihdr[9] = 8, 2
+	chunk := append([]byte("IHDR"), ihdr...)
+	oversized := append([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\r"), chunk...)
+	crc := make([]byte, 4)
+	binary.BigEndian.PutUint32(crc, crc32.ChecksumIEEE(chunk))
+	oversized = append(oversized, crc...)
+	url, err = svc.GenerateImageUploadURL(context.Background(), AuthContext{}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Upload(context.Background(), extractToken(url), bytes.NewReader(oversized), "image/png", "huge.png", int64(len(oversized))); err == nil {
+		t.Fatal("expected oversized image dimensions to be rejected")
+	}
+	if err := validateThumbForImage("4096x0", 1, maxOriginalImageDimension); err == nil {
+		t.Fatal("expected extreme aspect ratio thumb to be rejected")
+	}
+	if err := validateThumbForImage("320x0", 1600, 900); err != nil {
+		t.Fatalf("expected ordinary aspect ratio thumb to pass: %v", err)
 	}
 }
 
@@ -1615,12 +1786,16 @@ func TestCleanupOrphanBlobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalKey := svc.fileKey(storageID)
+	thumbKey := strings.TrimSuffix(finalKey, "/blob") + "/thumbs/320x240f/blob"
 
 	fs, err := app.NewFilesystem()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := fs.Upload([]byte("orphan"), finalKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Upload([]byte("orphan thumb"), thumbKey); err != nil {
 		t.Fatal(err)
 	}
 	fs.Close()
@@ -1638,6 +1813,11 @@ func TestCleanupOrphanBlobs(t *testing.T) {
 		t.Fatal(err)
 	} else if exists {
 		t.Fatal("expected orphan blob to be removed")
+	}
+	if exists, err := fs.Exists(thumbKey); err != nil {
+		t.Fatal(err)
+	} else if exists {
+		t.Fatal("expected orphan thumbnail to be removed")
 	}
 }
 
@@ -1681,6 +1861,46 @@ func TestCleanupOrphanBlobsSkipsActiveToken(t *testing.T) {
 		t.Fatal(err)
 	} else if !exists {
 		t.Fatal("expected orphan blob to be kept while a token exists")
+	}
+}
+
+func TestCleanupOrphanThumbnailForDeletedRecord(t *testing.T) {
+	app, svc := newStorageTestApp(t)
+	storageID, err := GenerateStorageID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalKey := svc.fileKey(storageID)
+	thumbKey := strings.TrimSuffix(finalKey, "/blob") + "/thumbs/320x240f/blob"
+	if _, err := svc.repo.CreateFile(schema.WithInternalContext(context.Background()), app, FileRecord{
+		StorageID:   storageID,
+		ContentType: "image/png",
+		FileKey:     finalKey,
+		Filename:    "deleted.png",
+		Status:      statusDeleted,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Upload([]byte("late thumb"), thumbKey); err != nil {
+		fs.Close()
+		t.Fatal(err)
+	}
+	fs.Close()
+
+	if err := svc.RunCleanup(); err != nil {
+		t.Fatal(err)
+	}
+	fs, err = app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	if exists, err := fs.Exists(thumbKey); err != nil || exists {
+		t.Fatalf("deleted-record thumbnail survived cleanup: exists=%v err=%v", exists, err)
 	}
 }
 
@@ -2447,7 +2667,7 @@ func TestCommitUploadClassifiesContention(t *testing.T) {
 	}
 
 	// commitUpload must surface the CAS failure, not mask it as internal.
-	err = svc.commitUpload(schema.WithInternalContext(context.Background()), app, tokenHash, attempt, storageID, "abc", 3, svc.stageFileKey(storageID, attempt))
+	err = svc.commitUpload(schema.WithInternalContext(context.Background()), app, tokenHash, attempt, storageID, "abc", 3, svc.stageFileKey(storageID, attempt), "text/plain", nil)
 	if !errors.Is(err, ErrTokenClaimFailed) {
 		t.Fatalf("expected ErrTokenClaimFailed for contention, got %v", err)
 	}

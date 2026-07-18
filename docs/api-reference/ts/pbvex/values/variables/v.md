@@ -130,6 +130,20 @@
 
 [`Validator`](../type-aliases/Validator.md)\<[`GenericId`](../type-aliases/GenericId.md)\<`TableName`\>\>
 
+### image
+
+> **image**: (`options`) => [`Validator`](../type-aliases/Validator.md)\<[`StorageId`](../../index/type-aliases/StorageId.md)\>
+
+#### Parameters
+
+##### options?
+
+[`ImageValidatorOptions`](../interfaces/ImageValidatorOptions.md) = `{}`
+
+#### Returns
+
+[`Validator`](../type-aliases/Validator.md)\<[`StorageId`](../../index/type-aliases/StorageId.md)\>
+
 ### int64
 
 > **int64**: () => [`Validator`](../type-aliases/Validator.md)\<`bigint`\>

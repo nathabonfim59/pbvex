@@ -139,7 +139,7 @@ export const send = mutation({
 ```
 
 The package supports queries, mutations, actions, internal functions, HTTP
-actions, bounded outbound HTTP, database indexes and pagination, authentication, scheduling, storage,
+actions, bounded outbound HTTP, database indexes and pagination, authentication, scheduling, storage with schema-declared image variants,
 and component definitions. Generated references distinguish public/internal
 visibility and whether arguments may be omitted.
 

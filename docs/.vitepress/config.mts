@@ -154,6 +154,7 @@ function docsSidebarItems(): DefaultTheme.SidebarItem[] {
     'guides/authorization.md',
     'guides/email-templates.md',
     'guides/storage.md',
+    'guides/image-resizing.md',
     'guides/scheduling.md',
     'guides/cron-jobs.md',
     'guides/environment-variables.md',

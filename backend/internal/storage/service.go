@@ -24,6 +24,8 @@ import (
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/filesystem/blob"
 	"github.com/pocketbase/pocketbase/tools/types"
+	"golang.org/x/sync/semaphore"
+	"golang.org/x/sync/singleflight"
 )
 
 // AuthContext is the caller identity carried through to storage operations.
@@ -61,6 +63,9 @@ type Service struct {
 	// persistHook is a test-only hook invoked at the start of persistStagedBlob.
 	// When non-nil it can block to simulate a slow backend persist.
 	persistHook func()
+
+	thumbPending singleflight.Group
+	thumbSem     *semaphore.Weighted
 }
 
 // NewService creates a new storage service.
@@ -70,10 +75,11 @@ func NewService(app core.App, repo *Repo, config Config) (*Service, error) {
 		return nil, fmt.Errorf("invalid storage config: %w", err)
 	}
 	return &Service{
-		app:    app,
-		repo:   repo,
-		config: cfg,
-		kr:     newKeyring(app, cfg),
+		app:      app,
+		repo:     repo,
+		config:   cfg,
+		kr:       newKeyring(app, cfg),
+		thumbSem: semaphore.NewWeighted(2),
 	}, nil
 }
 
@@ -87,6 +93,18 @@ func (s *Service) WarmActive() error {
 
 // GenerateUploadURL returns a short-lived, single-use URL for uploading a file.
 func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (string, error) {
+	return s.generateUploadURL(ctx, auth, nil)
+}
+
+// GenerateImageUploadURL creates an upload URL bound to a schema image policy.
+func (s *Service) GenerateImageUploadURL(ctx context.Context, auth AuthContext, policy ImagePolicy) (string, error) {
+	if err := validateImagePolicy(&policy); err != nil {
+		return "", err
+	}
+	return s.generateUploadURL(ctx, auth, &policy)
+}
+
+func (s *Service) generateUploadURL(ctx context.Context, auth AuthContext, policy *ImagePolicy) (string, error) {
 	storageID, err := GenerateStorageID()
 	if err != nil {
 		return "", fmt.Errorf("generate upload url: %w", err)
@@ -115,6 +133,10 @@ func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (stri
 		MaxSize:      maxSize,
 		AllowedTypes: s.config.AllowedContentTypes,
 	}
+	if policy != nil {
+		rec.AllowedTypes = policy.MimeTypes
+		rec.Policy = policy
+	}
 
 	app := s.appFor(ctx)
 	if _, err := s.repo.CreateToken(schema.WithInternalContext(ctx), app, rec); err != nil {
@@ -122,6 +144,50 @@ func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (stri
 	}
 
 	return s.uploadURL(token), nil
+}
+
+// GetMetadata returns persisted metadata for a storage object.
+func (s *Service) GetMetadata(ctx context.Context, storageID string) (map[string]any, error) {
+	if err := ValidateStorageID(storageID); err != nil {
+		return nil, nil
+	}
+	record, err := s.repo.GetFile(schema.WithInternalContext(ctx), s.appFor(ctx), storageID)
+	if err != nil {
+		if errors.Is(err, ErrStorageNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	result := map[string]any{
+		"storageId":   storageID,
+		"kind":        "file",
+		"filename":    record.GetString(schema.FieldStorageFilename),
+		"contentType": record.GetString(schema.FieldStorageContentType),
+		"size":        record.GetInt(schema.FieldStorageSize),
+		"sha256":      record.GetString(schema.FieldStorageSha256),
+		"extension":   fileExtension(record.GetString(schema.FieldStorageFilename), record.GetString(schema.FieldStorageContentType)),
+	}
+	if metadata, err := imageMetadataFromRecord(record); err != nil {
+		return nil, err
+	} else if metadata != nil {
+		result["kind"] = metadata.Kind
+		result["extension"] = metadata.Extension
+		result["width"] = metadata.Width
+		result["height"] = metadata.Height
+		result["thumbs"] = metadata.Thumbs
+	}
+	return result, nil
+}
+
+func fileExtension(filename, contentType string) string {
+	extension := strings.TrimPrefix(strings.ToLower(path.Ext(filename)), ".")
+	if extension != "" && len(extension) <= 16 {
+		return extension
+	}
+	if extensions, err := mime.ExtensionsByType(contentType); err == nil && len(extensions) > 0 {
+		return strings.TrimPrefix(extensions[0], ".")
+	}
+	return ""
 }
 
 // GetURL returns a signed short-lived download URL for the storage ID, or an empty string if missing/deleted.
@@ -221,7 +287,7 @@ func (s *Service) deleteInApp(ctx context.Context, app core.App, storageID strin
 // report accurate recovery metrics and retry. A missing blob is treated as
 // success.
 func (s *Service) deleteBlob(record *core.Record, fileKey string) error {
-	if err := s.deleteFile(s.app, fileKey); err != nil {
+	if err := s.deleteFilePrefix(s.app, strings.TrimRight(path.Dir(fileKey), "/")+"/"); err != nil {
 		return fmt.Errorf("delete storage blob: %w", err)
 	}
 	record.Set(schema.FieldStorageStatus, statusDeleted)
@@ -229,6 +295,23 @@ func (s *Service) deleteBlob(record *core.Record, fileKey string) error {
 	record.Set("updated", types.NowDateTime())
 	if err := s.app.SaveWithContext(schema.WithInternalContext(context.Background()), record); err != nil {
 		return fmt.Errorf("mark storage file deleted: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) deleteFilePrefix(app core.App, prefix string) error {
+	if prefix == "" || prefix == "." || prefix == "/" {
+		return fmt.Errorf("refusing to delete invalid storage prefix")
+	}
+	fs, err := app.NewFilesystem()
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
+	for _, err := range fs.DeletePrefix(prefix) {
+		if err != nil && !errors.Is(err, filesystem.ErrNotFound) {
+			return err
+		}
 	}
 	return nil
 }
@@ -289,18 +372,29 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 		return "", &UploadError{Code: ErrorCodeBadRequest, Message: err.Error(), Err: err}
 	}
 
-	if err := s.validateContentType(contentType, tokenRec.GetString(schema.FieldTokenAllowedTypes)); err != nil {
+	imagePolicy, err := imagePolicyFromRecord(tokenRec, schema.FieldTokenPolicy)
+	if err != nil {
 		_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
-		return "", err
+		return "", &UploadError{Code: ErrorCodeInternal, Message: "invalid upload policy", Err: err}
+	}
+	if imagePolicy == nil {
+		if err := s.validateContentType(contentType, tokenRec.GetString(schema.FieldTokenAllowedTypes)); err != nil {
+			_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
+			return "", err
+		}
 	}
 
 	createdBy := tokenRec.GetString(schema.FieldTokenCreatedBy)
+	reservationContentType := contentType
+	if imagePolicy != nil {
+		reservationContentType = "application/octet-stream"
+	}
 
 	// Reserve capacity BEFORE reading the request body. The durable "uploading"
 	// record counts toward MaxFiles and is reclaimed by the cleanup worker if the
 	// process exits before the stage blob is committed. Because it is not
 	// "staged", cleanup never finalizes it ahead of its blob.
-	if _, err := s.reserveUpload(ctx, app, storageID, stageKey, filename, contentType, createdBy, attempt); err != nil {
+	if _, err := s.reserveUpload(ctx, app, storageID, stageKey, filename, reservationContentType, createdBy, attempt); err != nil {
 		_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
 		var uploadErr *UploadError
 		if errors.As(err, &uploadErr) {
@@ -330,6 +424,26 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	}
 	defer os.Remove(tmpPath)
 
+	var metadata any
+	if imagePolicy != nil {
+		if err := s.thumbSem.Acquire(ctx, 1); err != nil {
+			stopRenewer()
+			_ = s.releaseReservation(storageID, attempt)
+			_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
+			return "", &UploadError{Code: ErrorCodeInternal, Message: "image inspection cancelled", Err: err}
+		}
+		imageMetadata, detectedContentType, inspectErr := inspectImage(tmpPath, imagePolicy)
+		s.thumbSem.Release(1)
+		if inspectErr != nil {
+			stopRenewer()
+			_ = s.releaseReservation(storageID, attempt)
+			_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
+			return "", inspectErr
+		}
+		metadata = imageMetadata
+		contentType = detectedContentType
+	}
+
 	// Persist the staged blob to the storage backend (now capacity-reserved).
 	persistErr := s.persistStagedBlob(tmpPath, stageKey, filename)
 	stopRenewer()
@@ -339,12 +453,29 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 		s.app.Logger().Error("storage upload persist failed", "storageId", storageID, "error", persistErr)
 		return "", persistErr
 	}
+	if storedType, err := s.storedContentType(stageKey); err != nil {
+		_ = s.deleteFile(app, stageKey)
+		_ = s.releaseReservation(storageID, attempt)
+		_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
+		return "", &UploadError{Code: ErrorCodeInternal, Message: "failed to inspect stored upload", Err: err}
+	} else {
+		contentType = storedType
+	}
+	if imagePolicy == nil {
+		if err := s.validateContentType(contentType, tokenRec.GetString(schema.FieldTokenAllowedTypes)); err != nil {
+			_ = s.deleteFile(app, stageKey)
+			_ = s.releaseReservation(storageID, attempt)
+			_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
+			return "", err
+		}
+	}
 
 	// Commit: atomically consume the token and CAS-transition the reservation
 	// from uploading to staged with the finalized metadata. A CAS failure here
 	// means the reservation was reclaimed or the claim was lost during the
 	// (potentially slow) staging; classify/handle precisely rather than 500.
-	if err := s.commitUpload(ctx, app, tokenHash, attempt, storageID, sha, size, stageKey); err != nil {
+	if err := s.commitUpload(ctx, app, tokenHash, attempt, storageID, sha, size, stageKey, contentType, metadata); err != nil {
+		_ = s.deleteFile(app, stageKey)
 		_ = s.releaseReservation(storageID, attempt)
 		if errors.Is(err, ErrTokenClaimFailed) {
 			return "", s.classifyTokenFailure(ctx, app, tokenHash)
@@ -381,6 +512,23 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	}
 
 	return storageID, nil
+}
+
+func (s *Service) storedContentType(fileKey string) (string, error) {
+	fs, err := s.app.NewFilesystem()
+	if err != nil {
+		return "", err
+	}
+	defer fs.Close()
+	attrs, err := fs.Attributes(fileKey)
+	if err != nil {
+		return "", err
+	}
+	mediaType, _, err := mime.ParseMediaType(attrs.ContentType)
+	if err != nil {
+		return "", err
+	}
+	return mediaType, nil
 }
 
 // reserveUpload atomically reserves upload capacity before the request body is
@@ -439,12 +587,12 @@ func (s *Service) reserveUpload(ctx context.Context, app core.App, storageID, fi
 // ownership/status CAS means it cannot transition a record that cleanup
 // reclaimed or another owner took; it surfaces ErrReservationLost in that case.
 // A token CAS failure (ErrTokenClaimFailed) surfaces for the caller to classify.
-func (s *Service) commitUpload(ctx context.Context, app core.App, tokenHash, attempt, storageID, sha string, size int64, fileKey string) error {
+func (s *Service) commitUpload(ctx context.Context, app core.App, tokenHash, attempt, storageID, sha string, size int64, fileKey, contentType string, metadata any) error {
 	return s.app.RunInTransaction(func(txApp core.App) error {
 		if err := s.repo.ConsumeToken(schema.WithInternalContext(ctx), txApp, tokenHash, attempt); err != nil {
 			return err
 		}
-		return s.repo.TransitionUploadingToStaged(schema.WithInternalContext(ctx), txApp, storageID, attempt, sha, size, fileKey)
+		return s.repo.TransitionUploadingToStaged(schema.WithInternalContext(ctx), txApp, storageID, attempt, sha, size, fileKey, contentType, metadata)
 	})
 }
 
@@ -652,6 +800,16 @@ func (s *Service) serveDownload(w http.ResponseWriter, r *http.Request, record *
 		return err
 	}
 	defer fs.Close()
+	thumb, _, err := requestedThumb(record, r)
+	if err != nil {
+		return err
+	}
+	if thumb != "" {
+		fileKey, err = s.ensureThumb(r.Context(), fs, storageID, fileKey, thumb)
+		if err != nil {
+			return &UploadError{Code: ErrorCodeInternal, Message: "failed to create image thumb", Err: err}
+		}
+	}
 
 	attrs, err := fs.Attributes(fileKey)
 	if err != nil {
@@ -662,20 +820,27 @@ func (s *Service) serveDownload(w http.ResponseWriter, r *http.Request, record *
 	}
 
 	sha := record.GetString(schema.FieldStorageSha256)
-	if sha != "" {
+	if sha != "" && thumb == "" {
 		shaBytes, _ := hex.DecodeString(sha)
 		if len(shaBytes) > 0 {
 			w.Header().Set("Digest", "sha-256="+base64.StdEncoding.EncodeToString(shaBytes))
 		}
 	}
 
-	etag := fmt.Sprintf("%q", sha)
+	etagValue := sha
+	if thumb != "" {
+		etagValue = fmt.Sprintf("%x", sha256.Sum256([]byte(sha+":"+thumb)))
+	}
+	etag := fmt.Sprintf("%q", etagValue)
 	modTime := attrs.ModTime
 	if modTime.IsZero() {
 		modTime = record.GetDateTime("created").Time()
 	}
 
 	contentType := s.contentTypeHeader(record, attrs)
+	if thumb != "" {
+		contentType = attrs.ContentType
+	}
 	disposition := s.contentDispositionHeader(filename, contentType)
 
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -699,7 +864,7 @@ func (s *Service) serveDownload(w http.ResponseWriter, r *http.Request, record *
 	// HEAD never needs the body: serve from metadata only (avoids opening the
 	// S3/local body stream).
 	if r.Method == http.MethodHead {
-		w.Header().Set("Content-Length", strconv.FormatInt(int64(record.GetInt(schema.FieldStorageSize)), 10))
+		w.Header().Set("Content-Length", strconv.FormatInt(attrs.Size, 10))
 		cw.WriteHeader(http.StatusOK)
 		s.app.Logger().Info("storage download served", "storageId", storageID, "method", r.Method, "status", cw.status, "bytes", cw.bytes)
 		return nil

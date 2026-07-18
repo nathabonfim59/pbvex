@@ -242,6 +242,17 @@ __pbvex.registerFunction({name:"action",type:"action",visibility:"public",module
 	}
 }
 
+func TestImageExpressionUsesStringSemantics(t *testing.T) {
+	info := validatorExpressionInfo(map[string]any{
+		"type":      "image",
+		"thumbs":    []any{"320x240f"},
+		"mimeTypes": []any{"image/png"},
+	})
+	if info.kind != "string" || info.nullable {
+		t.Fatalf("unexpected image expression info: %#v", info)
+	}
+}
+
 func TestProtocolValidatorValues(t *testing.T) {
 	id := structuralID("messages", "abcdefghijklmnop"[:15])
 	cases := []struct {

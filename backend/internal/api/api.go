@@ -352,7 +352,11 @@ func handleStorageUpload(s *storage.Service) func(*core.RequestEvent) error {
 		if err != nil {
 			return storageServiceError(err, e)
 		}
-		return e.JSON(http.StatusOK, map[string]any{"storageId": id})
+		metadata, err := s.GetMetadata(e.Request.Context(), id)
+		if err != nil {
+			return storageServiceError(err, e)
+		}
+		return e.JSON(http.StatusOK, map[string]any{"storageId": id, "metadata": metadata})
 	}
 }
 

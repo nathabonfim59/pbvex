@@ -2,4 +2,4 @@
 
 # Type Alias: StorageUploadResponse
 
-> **StorageUploadResponse** = `Readonly`\<\{ `storageId`: [`StorageId`](StorageId.md); \}\>
+> **StorageUploadResponse** = `Readonly`\<\{ `metadata?`: [`StorageFileMetadata`](StorageFileMetadata.md) \| [`StorageImageMetadata`](StorageImageMetadata.md); `storageId`: [`StorageId`](StorageId.md); \}\>

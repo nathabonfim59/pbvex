@@ -23,6 +23,7 @@ For feature-by-feature walkthroughs, build contacts, conversations, realtime mes
 - [Authorization](./authorization.md) — protect application data with ownership, membership, and role checks.
 - [Application email templates](./email-templates.md) — create typed templates and send them from functions.
 - [File storage](./storage.md) — upload, inspect, download, and delete files.
+- [Image uploads and resizing](./image-resizing.md) — validate image bytes, inspect trusted metadata, and serve predefined thumbnail variants.
 - [Scheduling work](./scheduling.md) — enqueue durable one-shot work for a delay or exact instant.
 - [Cron jobs](./cron-jobs.md) — declare recurring application-wide schedules backed by PocketBase cron.
 - [Environment variables and secrets](./environment-variables.md) — declare and provision typed configuration.

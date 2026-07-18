@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -38,6 +39,9 @@ func (r *Repo) CreateFile(ctx context.Context, app core.App, record FileRecord) 
 	rec.Set(schema.FieldStorageCreatedBy, record.CreatedBy)
 	rec.Set(schema.FieldStorageOwner, record.Owner)
 	rec.Set(schema.FieldStoragePublicToken, record.PublicToken)
+	if record.Metadata != nil {
+		rec.Set(schema.FieldStorageMetadata, record.Metadata)
+	}
 	if !record.LeaseUntil.IsZero() {
 		leaseDt, err := types.ParseDateTime(record.LeaseUntil.UTC())
 		if err != nil {
@@ -181,6 +185,9 @@ func (r *Repo) CreateToken(ctx context.Context, app core.App, token TokenRecord)
 	rec.Set(schema.FieldTokenMaxSize, token.MaxSize)
 	rec.Set(schema.FieldTokenAllowedTypes, strings.Join(token.AllowedTypes, ","))
 	rec.Set(schema.FieldTokenFilename, token.Filename)
+	if token.Policy != nil {
+		rec.Set(schema.FieldTokenPolicy, token.Policy)
+	}
 	now := types.NowDateTime()
 	rec.Set("created", now)
 	rec.Set("updated", now)
@@ -405,27 +412,35 @@ func (r *Repo) RenewUploadLease(ctx context.Context, app core.App, storageID, ow
 // staged with the finalized metadata. The CAS (status=uploading AND owner)
 // ensures it cannot transition a record that cleanup reclaimed or another owner
 // took. Returns ErrReservationLost when the reservation no longer matches.
-func (r *Repo) TransitionUploadingToStaged(ctx context.Context, app core.App, storageID, owner, sha string, size int64, fileKey string) error {
+func (r *Repo) TransitionUploadingToStaged(ctx context.Context, app core.App, storageID, owner, sha string, size int64, fileKey, contentType string, metadata any) error {
 	sizeDt := size
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("encode storage metadata: %w", err)
+	}
 	res, err := app.DB().NewQuery(fmt.Sprintf(
-		"UPDATE %s SET %s = {:sha}, %s = {:size}, %s = {:fileKey}, %s = {:staged}, updated = {:updated} WHERE %s = {:storageId} AND %s = {:uploading} AND %s = {:owner}",
+		"UPDATE %s SET %s = {:sha}, %s = {:size}, %s = {:fileKey}, %s = {:contentType}, %s = {:metadata}, %s = {:staged}, updated = {:updated} WHERE %s = {:storageId} AND %s = {:uploading} AND %s = {:owner}",
 		schema.CollectionStorageFiles,
 		schema.FieldStorageSha256,
 		schema.FieldStorageSize,
 		schema.FieldStorageFileKey,
+		schema.FieldStorageContentType,
+		schema.FieldStorageMetadata,
 		schema.FieldStorageStatus,
 		schema.FieldStorageID,
 		schema.FieldStorageStatus,
 		schema.FieldStorageOwner,
 	)).Bind(dbx.Params{
-		"sha":       sha,
-		"size":      sizeDt,
-		"fileKey":   fileKey,
-		"staged":    statusStaged,
-		"updated":   types.NowDateTime(),
-		"storageId": storageID,
-		"uploading": statusUploading,
-		"owner":     owner,
+		"sha":         sha,
+		"size":        sizeDt,
+		"fileKey":     fileKey,
+		"contentType": contentType,
+		"metadata":    string(metadataJSON),
+		"staged":      statusStaged,
+		"updated":     types.NowDateTime(),
+		"storageId":   storageID,
+		"uploading":   statusUploading,
+		"owner":       owner,
 	}).WithContext(ctx).Execute()
 	if err != nil {
 		return fmt.Errorf("transition upload to staged: %w", err)
@@ -548,6 +563,7 @@ type TokenRecord struct {
 	MaxSize      int64
 	AllowedTypes []string
 	Filename     string
+	Policy       any
 }
 
 // FileRecord is the domain model for a stored file.
@@ -563,6 +579,7 @@ type FileRecord struct {
 	Owner       string
 	LeaseUntil  time.Time
 	PublicToken string
+	Metadata    any
 }
 
 const (

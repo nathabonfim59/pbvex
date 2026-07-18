@@ -34,6 +34,7 @@ export function validatorSource(raw: JSONValue): string {
       return `v.${descriptor.type}()`;
     case 'null': return 'v.null()';
     case 'id': return `v.id(${JSON.stringify(descriptor.tableName)})`;
+    case 'image': return `v.image({ thumbs: ${JSON.stringify(descriptor.thumbs)}, mimeTypes: ${JSON.stringify(descriptor.mimeTypes)} })`;
     case 'literal': return `v.literal(${literalSource(descriptor.value!)})`;
     case 'array': return `v.array(${validatorSource(descriptor.item!)})`;
     case 'record': return `v.record(${validatorSource(descriptor.key!)}, ${validatorSource(descriptor.value!)})`;

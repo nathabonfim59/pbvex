@@ -543,7 +543,7 @@ function validateTableDescriptor(value: unknown, index: number): TableDescriptor
 const DESCRIPTOR_ALLOWED_KEYS: Record<string, readonly string[]> = {
   string: ['type'], number: ['type'], int64: ['type'], float64: ['type'],
   bytes: ['type'], boolean: ['type'], any: ['type'], null: ['type'],
-  id: ['type', 'tableName'], literal: ['type', 'value'], array: ['type', 'item'],
+  id: ['type', 'tableName'], image: ['type', 'thumbs', 'mimeTypes'], literal: ['type', 'value'], array: ['type', 'item'],
   record: ['type', 'key', 'value'], object: ['type', 'shape', 'fields'], union: ['type', 'validators'],
   optional: ['type', 'validator'], defaulted: ['type', 'validator', 'defaultValue'],
   recursive: ['type', 'name', 'validator'], ref: ['type', 'name'],
@@ -604,6 +604,8 @@ function isValidValidatorDescriptorWith(value: unknown, definitions: Map<string,
       return descriptorOnlyKeys(o, allowed);
     case 'id':
       return typeof o.tableName === 'string' && isIdentifier(o.tableName) && descriptorOnlyKeys(o, allowed);
+    case 'image':
+      return descriptorOnlyKeys(o, allowed) && isValidImageDescriptor(o);
     case 'literal':
       return 'value' in o && isLiteralWireValue(o.value) && descriptorOnlyKeys(o, allowed);
     case 'array':
@@ -655,6 +657,25 @@ function isValidValidatorDescriptorWith(value: unknown, definitions: Map<string,
     default:
       return false;
   }
+}
+
+const imageThumbPattern = /^(\d+)x(\d+)(t|b|f)?$/;
+const supportedImageMimeTypes = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+
+function isValidImageDescriptor(o: Record<string, unknown>): boolean {
+  if (!Array.isArray(o.thumbs) || !Array.isArray(o.mimeTypes) || o.thumbs.length > 16 || o.mimeTypes.length === 0) return false;
+  if (!o.thumbs.every((value) => typeof value === 'string') || !o.mimeTypes.every((value) => typeof value === 'string')) return false;
+  const thumbs = o.thumbs as string[];
+  const mimeTypes = o.mimeTypes as string[];
+  if (new Set(thumbs).size !== thumbs.length || new Set(mimeTypes).size !== mimeTypes.length) return false;
+  if (!thumbs.every((thumb) => {
+    const match = imageThumbPattern.exec(thumb);
+    if (!match) return false;
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    return !(match[3] !== undefined && (width === 0 || height === 0)) && !(width === 0 && height === 0) && width <= 4096 && height <= 4096 && (width === 0 || height === 0 || width * height <= 16_777_216);
+  })) return false;
+  return mimeTypes.every((type) => supportedImageMimeTypes.has(type));
 }
 
 function isValidRecordKeyDescriptor(value: unknown): boolean {
@@ -711,6 +732,8 @@ function wireValueValidates(
       const [target, ok] = opaqueIDTarget(value);
       return ok && target === table;
     }
+    case 'image':
+      return typeof value === 'string' && /^pbv_[0-9a-f]{32}$/.test(value) && isValidImageDescriptor(o);
     case 'object': {
       const shape = descriptorShape(o);
       if (!shape) return validateWireValue(value, depth + 1, seen, budget, false);

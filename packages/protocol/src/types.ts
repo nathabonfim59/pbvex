@@ -348,7 +348,27 @@ declare const storageIdBrand: unique symbol;
 /** Opaque identifier returned by the PBVex storage upload endpoint. */
 export type StorageId = string & { readonly [storageIdBrand]: 'StorageId' };
 
-export type StorageUploadResponse = Readonly<{ storageId: StorageId }>;
+export type StorageFileMetadata = Readonly<{
+  storageId: StorageId;
+  kind: 'file';
+  filename: string;
+  contentType: string;
+  extension: string;
+  size: number;
+  sha256: string;
+}>;
+
+export type StorageImageMetadata = Omit<StorageFileMetadata, 'kind'> & Readonly<{
+  kind: 'image';
+  width: number;
+  height: number;
+  thumbs: readonly string[];
+}>;
+
+export type StorageUploadResponse = Readonly<{
+  storageId: StorageId;
+  metadata?: StorageFileMetadata | StorageImageMetadata;
+}>;
 
 export type StructuredError = Readonly<{
   error: true;

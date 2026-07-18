@@ -52,9 +52,13 @@ Realtime uses one SSE subscription query per request. Every successful record cr
 | Storage upload URL | 1 hour default | `--storageUploadTtl` / `PBVEX_STORAGE_UPLOAD_TTL`. |
 | Storage download URL | 15 minutes default; requested lifetime cannot exceed 24 hours | Server embedding controls the absolute maximum; the default lifetime is flag/env configurable. |
 | Public storage cache | 5 minutes default | `--storagePublicCacheTtl` / `PBVEX_STORAGE_PUBLIC_CACHE_TTL`; deletion is immediate at the origin but cached responses can remain fresh for this period. |
+| Image thumbnail policy | 16 predefined sizes; each dimension at most 4,096; bounded boxes at most 16,777,216 pixels | Fixed validation limits. Decoded originals still require application/operator upload limits appropriate to expected images. |
+| Original image dimensions | At most 16,384 on either axis and 32,000,000 pixels total | Fixed validation limits. |
 | Storage cleanup | Every 5 minutes | `--storageCleanupInterval` / `PBVEX_STORAGE_CLEANUP_INTERVAL`. |
 
 Storage also supports per-token maximum upload size (`--storageTokenMaxSize` / `PBVEX_STORAGE_TOKEN_MAX_SIZE`), clamped to the server file-size maximum, and MIME allowlists (`--storageAllowedTypes` / `PBVEX_STORAGE_ALLOWED_TYPES`). The [self-hosting guide](../self-hosting.md) lists all storage flags and environment variables.
+
+Image variants use PocketBase's resize implementation, apply image orientation, and decode only the first animated-image frame. Generation is lazy and deduplicated per variant within a server process. Upload inspection and variant generation share a two-worker decode limit per process.
 
 ## Runtime and topology incompatibilities
 

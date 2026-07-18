@@ -129,6 +129,7 @@ const (
     FieldStorageOwner       = "leaseOwner"
     FieldStorageLeaseUntil  = "leaseUntil"
     FieldStoragePublicToken = "publicToken"
+    FieldStorageMetadata    = "metadata"
 
     FieldToken               = "token"
     FieldTokenStorageID      = "storageId"
@@ -140,6 +141,7 @@ const (
     FieldTokenFilename       = "filename"
     FieldTokenClaim          = "claim"
     FieldTokenClaimExpiresAt = "claimExpiresAt"
+    FieldTokenPolicy         = "policy"
 
     FieldKeyringKeyID     = "keyId"
     FieldKeyringKey       = "key"
@@ -180,7 +182,7 @@ var InternalContextKey = internalKey{}
 ```
 
 <a name="AppFromContext"></a>
-## func [AppFromContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L466>)
+## func [AppFromContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L468>)
 
 ```go
 func AppFromContext(ctx context.Context) (core.App, bool)
@@ -189,7 +191,7 @@ func AppFromContext(ctx context.Context) (core.App, bool)
 AppFromContext returns the PocketBase app stored in the context.
 
 <a name="Bootstrap"></a>
-## func [Bootstrap](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L137>)
+## func [Bootstrap](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L139>)
 
 ```go
 func Bootstrap(app core.App) error
@@ -198,7 +200,7 @@ func Bootstrap(app core.App) error
 Bootstrap ensures all PBVex system collections exist and creates the active state seed.
 
 <a name="CanonicalWire"></a>
-## func [CanonicalWire](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L464>)
+## func [CanonicalWire](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L514>)
 
 ```go
 func CanonicalWire(value any) bool
@@ -243,7 +245,7 @@ func IndexableValidator(validator any) bool
 IndexableValidator reports whether a manifest validator has a stable, materializable scalar sort key. This is deliberately conservative: a SQLite index over an arbitrary union/object/array would have semantics that differ from the protocol evaluator.
 
 <a name="IsBackingCollection"></a>
-## func [IsBackingCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L436>)
+## func [IsBackingCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L438>)
 
 ```go
 func IsBackingCollection(c *core.Collection) bool
@@ -252,7 +254,7 @@ func IsBackingCollection(c *core.Collection) bool
 IsBackingCollection reports whether a collection has the PBVex backing storage fingerprint. It deliberately recognizes the internal fields even if an operator has drifted a rule/hidden flag: those fields must never become a raw PocketBase API escape hatch while activation is rejecting that drift. A non\-PBVex collection which deliberately adopts this private ABI is also protected, which is the safe failure mode for reserved storage names.
 
 <a name="IsReservedCollection"></a>
-## func [IsReservedCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L418>)
+## func [IsReservedCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L420>)
 
 ```go
 func IsReservedCollection(name string) bool
@@ -261,7 +263,7 @@ func IsReservedCollection(name string) bool
 IsReservedCollection reports whether the name belongs to the PBVex system.
 
 <a name="NormalizeDocument"></a>
-## func [NormalizeDocument](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L47>)
+## func [NormalizeDocument](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L90>)
 
 ```go
 func NormalizeDocument(fields map[string]any, doc map[string]any, partial, rejectSystem bool, check IDChecker) (map[string]any, error)
@@ -270,7 +272,7 @@ func NormalizeDocument(fields map[string]any, doc map[string]any, partial, rejec
 NormalizeDocument validates a document shape and applies defaults. When partial is true omitted fields are intentionally left untouched; otherwise required and defaulted fields are resolved. rejectSystem reserves document \_id/\_creationTime while allowing those ordinary names in nested objects.
 
 <a name="NormalizeValue"></a>
-## func [NormalizeValue](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L34>)
+## func [NormalizeValue](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L77>)
 
 ```go
 func NormalizeValue(validator, value any, check IDChecker) (any, error)
@@ -279,7 +281,7 @@ func NormalizeValue(validator, value any, check IDChecker) (any, error)
 NormalizeValue validates one wire value and applies defaulted validators.
 
 <a name="ObjectFieldValidator"></a>
-## func [ObjectFieldValidator](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L524>)
+## func [ObjectFieldValidator](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L574>)
 
 ```go
 func ObjectFieldValidator(validator any, name string) (any, bool)
@@ -288,7 +290,7 @@ func ObjectFieldValidator(validator any, name string) (any, bool)
 ObjectFieldValidator returns a direct child validator of a constrained object. It intentionally does not traverse an unconstrained object or a union: q.field paths are schema\-addressable only when every requested segment is unambiguous and declared. Other wire\-object keys remain valid application data but are not query\-path syntax.
 
 <a name="OpaqueIDMAC"></a>
-## func [OpaqueIDMAC](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L715>)
+## func [OpaqueIDMAC](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L765>)
 
 ```go
 func OpaqueIDMAC(key, payload []byte) []byte
@@ -306,7 +308,7 @@ func OpaqueIDOrderKey(table, raw string) string
 OpaqueIDOrderKey is the canonical ordering representation of an ID value. The signed transport encoding intentionally changes when key versions or MACs change; ordering the capability text would make the same record move between pages after rotation. The table/raw\-record tuple is immutable and is also what the system \_id SQL expression projects.
 
 <a name="OpaqueIDVersionMAC"></a>
-## func [OpaqueIDVersionMAC](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L729>)
+## func [OpaqueIDVersionMAC](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L779>)
 
 ```go
 func OpaqueIDVersionMAC(root []byte, keyID int, payload []byte) []byte
@@ -369,7 +371,7 @@ func SQLiteJSONPathLiteralPath(parts []string) string
 SQLiteJSONPathLiteralPath is the nested\-path counterpart used for canonical q.field\("parent.child"\) traversal. Each segment is independently JSON\-path quoted; callers never concatenate a user field name into SQL syntax.
 
 <a name="ValidateComponentValue"></a>
-## func [ValidateComponentValue](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L62>)
+## func [ValidateComponentValue](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L105>)
 
 ```go
 func ValidateComponentValue(validator, value any) bool
@@ -378,7 +380,7 @@ func ValidateComponentValue(validator, value any) bool
 ValidateComponentValue applies structural validation for mount arguments. Legacy pbv1 capabilities are root\-only and can never be mounted into a component namespace.
 
 <a name="ValidateDescriptor"></a>
-## func [ValidateDescriptor](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L73>)
+## func [ValidateDescriptor](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L116>)
 
 ```go
 func ValidateDescriptor(validator any) bool
@@ -387,7 +389,7 @@ func ValidateDescriptor(validator any) bool
 ValidateDescriptor validates the serializable validator graph. It also validates default values against their child, rejects delayed descriptors \(which cannot be serialized safely\), bounds union width, and enforces the record\-key contract.
 
 <a name="ValidateValue"></a>
-## func [ValidateValue](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L54>)
+## func [ValidateValue](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L97>)
 
 ```go
 func ValidateValue(validator, value any, check IDChecker) bool
@@ -396,7 +398,7 @@ func ValidateValue(validator, value any, check IDChecker) bool
 ValidateValue is a convenience predicate used by callers that do not need normalized output.
 
 <a name="VerifyOpaqueID"></a>
-## func [VerifyOpaqueID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L743>)
+## func [VerifyOpaqueID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L793>)
 
 ```go
 func VerifyOpaqueID(value, namespace string, identityRoot, legacyRoot []byte, cursorKeyID int, cursorCurrent, cursorPrevious []byte) (string, string, bool)
@@ -405,7 +407,7 @@ func VerifyOpaqueID(value, namespace string, identityRoot, legacyRoot []byte, cu
 VerifyOpaqueID authenticates a PBVex capability against the persisted namespace identity root. legacyRoot is a durable, one\-time migration verifier for ids written by the historical cursor\-key scheme. It is kept independently of cursor current/previous so those old ids survive arbitrary future cursor rotations and restarts. current/previous remain a short compatibility path for a rolling upgrade that has not yet persisted the anchor.
 
 <a name="WithApp"></a>
-## func [WithApp](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L460>)
+## func [WithApp](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L462>)
 
 ```go
 func WithApp(ctx context.Context, app core.App) context.Context
@@ -414,7 +416,7 @@ func WithApp(ctx context.Context, app core.App) context.Context
 WithApp returns a context carrying the given PocketBase app and marked as internal.
 
 <a name="WithInternalContext"></a>
-## func [WithInternalContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L450>)
+## func [WithInternalContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L452>)
 
 ```go
 func WithInternalContext(ctx context.Context) context.Context
@@ -423,7 +425,7 @@ func WithInternalContext(ctx context.Context) context.Context
 WithInternalContext returns a context marked for PBVex internal writes.
 
 <a name="IDChecker"></a>
-## type [IDChecker](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L31>)
+## type [IDChecker](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/validator.go#L74>)
 
 IDChecker authenticates a table\-bound opaque id. Nil retains structural validation for deployment\-time schema checks, while runtime callers provide the persisted\-key checker.
 

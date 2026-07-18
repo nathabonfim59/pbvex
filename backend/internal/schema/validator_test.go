@@ -10,6 +10,35 @@ import (
 	"testing"
 )
 
+func TestImageDescriptor(t *testing.T) {
+	descriptor := map[string]any{
+		"type":      "image",
+		"thumbs":    []any{"96x96", "640x0"},
+		"mimeTypes": []any{"image/jpeg", "image/png"},
+	}
+	if !ValidateDescriptor(descriptor) {
+		t.Fatal("expected image descriptor to be valid")
+	}
+	if value, err := NormalizeValue(descriptor, "pbv_0123456789abcdef0123456789abcdef", nil); err != nil || value == nil {
+		t.Fatalf("valid image id rejected: value=%v err=%v", value, err)
+	}
+	if _, err := NormalizeValue(descriptor, "not-storage", nil); err == nil {
+		t.Fatal("invalid image id accepted")
+	}
+	descriptor["thumbs"] = []any{"0x0"}
+	if ValidateDescriptor(descriptor) {
+		t.Fatal("zero-sized image thumb accepted")
+	}
+	descriptor["thumbs"] = []any{"640x0f"}
+	if ValidateDescriptor(descriptor) {
+		t.Fatal("one-axis image thumb suffix accepted")
+	}
+	descriptor["thumbs"] = []any{strings.Repeat("9", 100) + "x1"}
+	if ValidateDescriptor(descriptor) {
+		t.Fatal("overflowing image thumb accepted")
+	}
+}
+
 func TestRecursiveDescriptorValidation(t *testing.T) {
 	// A self-referential Tree: { name: string, children: Tree[] }.
 	tree := map[string]any{

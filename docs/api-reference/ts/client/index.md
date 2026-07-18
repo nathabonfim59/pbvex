@@ -48,6 +48,8 @@
 - [OptionalArgs](type-aliases/OptionalArgs.md)
 - [PbvexValue](type-aliases/PbvexValue.md)
 - [ReturnOf](type-aliases/ReturnOf.md)
+- [StorageFileMetadata](type-aliases/StorageFileMetadata.md)
 - [StorageId](type-aliases/StorageId.md)
+- [StorageImageMetadata](type-aliases/StorageImageMetadata.md)
 - [StorageUploadResponse](type-aliases/StorageUploadResponse.md)
 - [Unsubscribe](type-aliases/Unsubscribe.md)

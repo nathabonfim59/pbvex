@@ -20,6 +20,8 @@ export default defineSchema({
 
 Validators use the same `v` API as function arguments. Table and index names must be identifiers. Index fields must exist and may be dotted fields through an object validator; arrays, IDs, and primitive fields are leaves. An index has a non-empty field list and a unique name/field list.
 
+Use `v.image({ thumbs, mimeTypes })` for image storage fields. It generates `StorageId` document/insert types and records the bounded upload/resize policy in the deployment schema. The storage guide explains schema-bound uploads and lazy variants.
+
 Run `pbvex codegen` after schema changes. The generated `Doc`, `Id`, and context types make table names, fields, index names, and ID tables type-safe.
 
 ## CRUD and query entry points

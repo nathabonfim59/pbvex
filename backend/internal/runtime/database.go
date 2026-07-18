@@ -1103,7 +1103,7 @@ func validatorExpressionInfoAt(validator any, depth int, stack map[uintptr]bool)
 		return expressionInfo{kind: "number"}
 	case "boolean":
 		return expressionInfo{kind: "boolean"}
-	case "string":
+	case "string", "image":
 		return expressionInfo{kind: "string"}
 	case "id":
 		return expressionInfo{kind: "id"}

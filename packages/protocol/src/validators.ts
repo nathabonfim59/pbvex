@@ -204,6 +204,8 @@ function isValidatorDescriptorAt(value: unknown, depth: number): boolean {
         isIdentifier(o.tableName)
       );
     }
+    case 'image':
+      return validImageDescriptor(o);
     case 'literal': {
       return Object.keys(o).length === 2 && 'value' in o && isLiteralValue(o.value, depth);
     }
@@ -374,6 +376,8 @@ function validateValueAt(descriptor: JSONValue | undefined, value: unknown, dept
       const parsed = parseOpaqueId(value, allowLegacyRoot);
       return typeof o.tableName === 'string' && isIdentifier(o.tableName) && parsed?.table === o.tableName;
     }
+    case 'image':
+      return validImageDescriptor(o) && typeof value === 'string' && /^pbv_[0-9a-f]{32}$/.test(value);
     case 'record': {
       if (Object.keys(o).length !== 3) return false;
       if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -385,6 +389,23 @@ function validateValueAt(descriptor: JSONValue | undefined, value: unknown, dept
     default:
       return false;
   }
+}
+
+function validImageDescriptor(o: Record<string, unknown>): boolean {
+  if (Object.keys(o).some((key) => !['type', 'thumbs', 'mimeTypes'].includes(key))) return false;
+  if (!Array.isArray(o.thumbs) || !Array.isArray(o.mimeTypes) || o.thumbs.length > 16 || o.mimeTypes.length === 0) return false;
+  const thumbs = o.thumbs as unknown[];
+  const mimeTypes = o.mimeTypes as unknown[];
+  if (new Set(thumbs).size !== thumbs.length || new Set(mimeTypes).size !== mimeTypes.length) return false;
+  const supported = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+  return thumbs.every((value) => {
+    if (typeof value !== 'string') return false;
+    const match = /^(\d+)x(\d+)(t|b|f)?$/.exec(value);
+    if (!match) return false;
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    return !(match[3] !== undefined && (width === 0 || height === 0)) && !(width === 0 && height === 0) && width <= 4096 && height <= 4096 && (width === 0 || height === 0 || width * height <= 16_777_216);
+  }) && mimeTypes.every((value) => typeof value === 'string' && supported.has(value));
 }
 
 function validateDocument(shape: Record<string, unknown>, doc: Record<string, unknown>, depth: number, allowLegacyRoot: boolean): boolean {

@@ -13,9 +13,52 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var imageThumbPattern = regexp.MustCompile(`^(\d+)x(\d+)(t|b|f)?$`)
+var storageImageIDPattern = regexp.MustCompile(`^pbv_[0-9a-f]{32}$`)
+
+func validStorageID(value string) bool {
+	return storageImageIDPattern.MatchString(value)
+}
+
+func validImageDescriptor(o map[string]any) bool {
+	if len(o) != 3 {
+		return false
+	}
+	thumbs, thumbsOK := o["thumbs"].([]any)
+	mimeTypes, mimeOK := o["mimeTypes"].([]any)
+	if !thumbsOK || !mimeOK || len(thumbs) > 16 || len(mimeTypes) == 0 {
+		return false
+	}
+	seenThumbs := map[string]bool{}
+	for _, raw := range thumbs {
+		thumb, ok := raw.(string)
+		match := imageThumbPattern.FindStringSubmatch(thumb)
+		if !ok || len(match) == 0 || seenThumbs[thumb] {
+			return false
+		}
+		seenThumbs[thumb] = true
+		width, widthErr := strconv.Atoi(match[1])
+		height, heightErr := strconv.Atoi(match[2])
+		if widthErr != nil || heightErr != nil || (match[3] != "" && (width == 0 || height == 0)) || (width == 0 && height == 0) || width > 4096 || height > 4096 || (width > 0 && height > 0 && int64(width)*int64(height) > 16_777_216) {
+			return false
+		}
+	}
+	supported := map[string]bool{"image/gif": true, "image/jpeg": true, "image/png": true, "image/webp": true}
+	seenTypes := map[string]bool{}
+	for _, raw := range mimeTypes {
+		mimeType, ok := raw.(string)
+		if !ok || !supported[mimeType] || seenTypes[mimeType] {
+			return false
+		}
+		seenTypes[mimeType] = true
+	}
+	return true
+}
 
 const (
 	MaxValidatorDepth = 128
@@ -129,6 +172,8 @@ func (n *normalizer) descriptor(validator any, depth int) bool {
 	case "id":
 		table, ok := o["tableName"].(string)
 		return ok && len(o) == 2 && safeIdentifier(table)
+	case "image":
+		return validImageDescriptor(o)
 	case "literal":
 		value, ok := o["value"]
 		return ok && len(o) == 2 && CanonicalWire(value)
@@ -365,6 +410,11 @@ func (n *normalizer) normalize(validator, value any, present bool, depth int) (a
 			return nil, false, fmt.Errorf("invalid value")
 		}
 		if !n.allowLegacyID && parsed.V != 2 {
+			return nil, false, fmt.Errorf("invalid value")
+		}
+	case "image":
+		id, ok := value.(string)
+		if !ok || !validImageDescriptor(o) || !validStorageID(id) {
 			return nil, false, fmt.Errorf("invalid value")
 		}
 	case "array":

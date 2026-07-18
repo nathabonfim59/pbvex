@@ -50,6 +50,7 @@
 - [SchedulerContext](interfaces/SchedulerContext.md)
 - [StorageContext](interfaces/StorageContext.md)
 - [StorageGetUrlOptions](interfaces/StorageGetUrlOptions.md)
+- [StorageImageUploadOptions](interfaces/StorageImageUploadOptions.md)
 - [StorageReader](interfaces/StorageReader.md)
 - [TableInfo](interfaces/TableInfo.md)
 - [TextDecoder](interfaces/TextDecoder.md)
@@ -238,9 +239,27 @@ Re-exports [SchemaDefinition](../index/interfaces/SchemaDefinition.md)
 
 ***
 
+### StorageFileMetadata
+
+Re-exports [StorageFileMetadata](../index/type-aliases/StorageFileMetadata.md)
+
+***
+
 ### StorageId
 
 Re-exports [StorageId](../index/type-aliases/StorageId.md)
+
+***
+
+### StorageImageMetadata
+
+Re-exports [StorageImageMetadata](../index/type-aliases/StorageImageMetadata.md)
+
+***
+
+### StorageUploadResponse
+
+Re-exports [StorageUploadResponse](../index/type-aliases/StorageUploadResponse.md)
 
 ***
 

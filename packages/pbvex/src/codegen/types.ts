@@ -133,6 +133,8 @@ export function validatorToTypeString(
   switch (s.type) {
     case 'id':
       return `Id<${JSON.stringify(s.tableName as string)}>`;
+    case 'image':
+      return 'StorageId';
     case 'string':
       return 'string';
     case 'number':

@@ -64,14 +64,42 @@ func storageExtender(storageService *storage.Service) runtime.ContextExtender {
 					return url, nil
 				})
 			}))
+			storageObj.Set("getMetadata", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+				return wrapPromise(vm, func() (any, error) {
+					metadata, err := storageService.GetMetadata(storageCtx, extractString(call, 0))
+					if err != nil {
+						return nil, err
+					}
+					if metadata == nil {
+						return goja.Null(), nil
+					}
+					return metadata, nil
+				})
+			}))
 		}
 		if isWriter {
 			storageObj.Set("generateUploadUrl", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 				return wrapPromise(vm, func() (any, error) {
-					url, err := storageService.GenerateUploadURL(storageCtx, storage.AuthContext{
+					authContext := storage.AuthContext{
 						IsAuthenticated: auth.IsAuthenticated,
 						TokenIdentifier: auth.TokenIdentifier,
-					})
+					}
+					options, err := extractImageUploadOptions(call)
+					if err != nil {
+						return nil, err
+					}
+					if options == nil {
+						return storageService.GenerateUploadURL(storageCtx, authContext)
+					}
+					manifest, ok := runtime.ManifestFromContext(ctx)
+					if !ok {
+						return nil, fmt.Errorf("deployment manifest unavailable")
+					}
+					policy, err := imagePolicyForField(manifest, fd.ModulePath, options["table"], options["field"])
+					if err != nil {
+						return nil, err
+					}
+					url, err := storageService.GenerateImageUploadURL(storageCtx, authContext, policy)
 					return url, err
 				})
 			}))
@@ -88,6 +116,83 @@ func storageExtender(storageService *storage.Service) runtime.ContextExtender {
 		obj.Set("storage", storageObj)
 		return nil
 	}
+}
+
+func extractImageUploadOptions(call goja.FunctionCall) (map[string]string, error) {
+	if len(call.Arguments) == 0 || goja.IsUndefined(call.Argument(0)) {
+		return nil, nil
+	}
+	options, ok := call.Argument(0).Export().(map[string]any)
+	if !ok || len(options) != 2 {
+		return nil, fmt.Errorf("generateUploadUrl options must contain table and field")
+	}
+	table, tableOK := options["table"].(string)
+	field, fieldOK := options["field"].(string)
+	if !tableOK || !fieldOK || table == "" || field == "" {
+		return nil, fmt.Errorf("generateUploadUrl table and field must be strings")
+	}
+	return map[string]string{"table": table, "field": field}, nil
+}
+
+func imagePolicyForField(manifest deploy.DeploymentManifest, modulePath, tableName, fieldName string) (storage.ImagePolicy, error) {
+	deployedSchema := manifest.Schema
+	if namespace, ok := deploy.NamespaceForModule(manifest, modulePath); ok {
+		deployedSchema = namespace.Schema
+	}
+	schemaObject, ok := deployedSchema.(map[string]any)
+	if !ok {
+		return storage.ImagePolicy{}, fmt.Errorf("deployment has no schema")
+	}
+	tables, ok := schemaObject["tables"].([]any)
+	if !ok {
+		return storage.ImagePolicy{}, fmt.Errorf("deployment schema is invalid")
+	}
+	for _, rawTable := range tables {
+		table, ok := rawTable.(map[string]any)
+		if !ok || table["tableName"] != tableName {
+			continue
+		}
+		fields, ok := table["fields"].(map[string]any)
+		if !ok {
+			break
+		}
+		descriptor, ok := fields[fieldName].(map[string]any)
+		if !ok {
+			break
+		}
+		for descriptor["type"] == "optional" || descriptor["type"] == "defaulted" {
+			descriptor, ok = descriptor["validator"].(map[string]any)
+			if !ok {
+				break
+			}
+		}
+		if descriptor["type"] != "image" {
+			break
+		}
+		thumbs, thumbsOK := stringSlice(descriptor["thumbs"])
+		mimeTypes, mimeOK := stringSlice(descriptor["mimeTypes"])
+		if !thumbsOK || !mimeOK {
+			break
+		}
+		return storage.ImagePolicy{Kind: "image", Thumbs: thumbs, MimeTypes: mimeTypes}, nil
+	}
+	return storage.ImagePolicy{}, fmt.Errorf("schema field %s.%s is not an image", tableName, fieldName)
+}
+
+func stringSlice(value any) ([]string, bool) {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	result := make([]string, len(raw))
+	for i, value := range raw {
+		item, ok := value.(string)
+		if !ok {
+			return nil, false
+		}
+		result[i] = item
+	}
+	return result, true
 }
 
 func extractStorageURLMode(vm *goja.Runtime, call goja.FunctionCall) (string, error) {

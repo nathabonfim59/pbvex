@@ -263,7 +263,7 @@ func OrderKeyWithID(validator any, value any, present bool, check IDChecker) (st
 		var b [8]byte
 		binary.BigEndian.PutUint64(b[:], bits)
 		return orderNumber + hex.EncodeToString(b[:]), nil
-	case "string":
+	case "string", "image":
 		s, ok := value.(string)
 		if !ok {
 			return "", fmt.Errorf("invalid string")
@@ -346,7 +346,7 @@ func IndexableValidator(validator any) bool {
 		return IndexableValidator(o["validator"])
 	}
 	switch typ {
-	case "string", "number", "float64", "boolean", "null", "id", "int64", "bytes":
+	case "string", "number", "float64", "boolean", "null", "id", "image", "int64", "bytes":
 		return true
 	case "literal":
 		o, _ := validator.(map[string]any)

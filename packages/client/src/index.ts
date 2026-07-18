@@ -40,5 +40,5 @@ export type {
   WatchCallbacks,
   WatchOptions,
 } from './types.js';
-export type { PbvexValue, StorageId, StorageUploadResponse } from '@pbvex/protocol';
+export type { PbvexValue, StorageFileMetadata, StorageId, StorageImageMetadata, StorageUploadResponse } from '@pbvex/protocol';
 export type { FetchRealtimeTransportOptions } from './realtime.js';

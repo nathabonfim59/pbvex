@@ -17,7 +17,10 @@
 - [FunctionType](type-aliases/FunctionType.md)
 - [FunctionVisibility](type-aliases/FunctionVisibility.md)
 - [OptionalRestArgs](type-aliases/OptionalRestArgs.md)
+- [StorageFileMetadata](type-aliases/StorageFileMetadata.md)
 - [StorageId](type-aliases/StorageId.md)
+- [StorageImageMetadata](type-aliases/StorageImageMetadata.md)
+- [StorageUploadResponse](type-aliases/StorageUploadResponse.md)
 
 ## Functions
 
@@ -566,6 +569,12 @@ Re-exports [StorageContext](../server/interfaces/StorageContext.md)
 ### StorageGetUrlOptions
 
 Re-exports [StorageGetUrlOptions](../server/interfaces/StorageGetUrlOptions.md)
+
+***
+
+### StorageImageUploadOptions
+
+Re-exports [StorageImageUploadOptions](../server/interfaces/StorageImageUploadOptions.md)
 
 ***
 
