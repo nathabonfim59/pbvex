@@ -1,6 +1,6 @@
 {
   "name": "@pbvex/react",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "React adapter for the PBVex SDK",
   "license": "MIT",
   "repository": {
@@ -31,7 +31,7 @@
     "lint": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@pbvex/protocol": "workspace:0.4.0"
+    "@pbvex/protocol": "workspace:0.4.1"
   },
   "peerDependencies": {
     "@pbvex/client": "workspace:*",

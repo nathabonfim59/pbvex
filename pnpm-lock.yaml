@@ -33,7 +33,7 @@ importers:
   packages/client:
     dependencies:
       '@pbvex/protocol':
-        specifier: workspace:0.4.0
+        specifier: workspace:0.4.1
         version: link:../protocol
     devDependencies:
       pbvex:
@@ -49,10 +49,10 @@ importers:
   packages/pbvex:
     dependencies:
       '@pbvex/protocol':
-        specifier: workspace:0.4.0
+        specifier: workspace:0.4.1
         version: link:../protocol
       '@pbvex/server':
-        specifier: workspace:0.4.0
+        specifier: workspace:0.4.1
         version: link:../server
       chokidar:
         specifier: ^3.6.0
@@ -89,7 +89,7 @@ importers:
   packages/react:
     dependencies:
       '@pbvex/protocol':
-        specifier: workspace:0.4.0
+        specifier: workspace:0.4.1
         version: link:../protocol
     devDependencies:
       '@pbvex/client':
@@ -132,7 +132,7 @@ importers:
   packages/svelte:
     dependencies:
       '@pbvex/protocol':
-        specifier: workspace:0.4.0
+        specifier: workspace:0.4.1
         version: link:../protocol
     devDependencies:
       '@pbvex/client':
