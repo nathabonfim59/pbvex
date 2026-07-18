@@ -233,6 +233,12 @@ export class AuthCollection<T extends AuthRecord = AuthRecord> {
     return response;
   }
 
+  create(data: Record<string, unknown>, options?: AuthRequestOptions): Promise<T> {
+    return this.request<T>(`${this.path}/records`, {
+      method: 'POST', body: { ...data, ...options?.body }, options,
+    });
+  }
+
   listAuthMethods(options?: AuthRequestOptions): Promise<AuthMethodsList> {
     return this.request(`${this.path}/auth-methods`, { options });
   }

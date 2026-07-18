@@ -4,6 +4,7 @@ import type {
   DeploymentListResponse,
   DeploymentActivateResponse,
   DeploymentRollbackResponse,
+  MigrationWarning,
 } from '@pbvex/protocol';
 import {
   isStructuredError,
@@ -20,6 +21,7 @@ export interface DeployResult {
   deploymentId?: string;
   status: string;
   error?: string;
+  warnings?: MigrationWarning[];
 }
 
 export interface DeployClientOptions {
@@ -121,8 +123,8 @@ export class DeployClient {
     try {
       const request = toUploadRequest(artifact);
       const upload = await this.upload(request);
-      await this.activate(upload.deploymentId);
-      return { ok: true, deploymentId: upload.deploymentId, status: 'active' };
+      const activation = await this.activate(upload.deploymentId);
+      return { ok: true, deploymentId: upload.deploymentId, status: 'active', warnings: activation.warnings };
     } catch (err) {
       return { ok: false, status: 'failed', error: err instanceof Error ? err.message : String(err) };
     }

@@ -21,8 +21,8 @@ Do not skip directly to general web search. PBVex is new, so broader results are
 
 Use this skill to orient a PBVex change, then load only the specialized skill(s) it needs:
 
-- Backend binary, PocketBase embedding, runtime route, migrations, or Go tests: `pbvex-backend`.
-- `pbvex/` schema/functions, indexed queries and pagination, authorization, relationships, outbound HTTP, HTTP actions, email templates, or scheduling: `pbvex-functions`.
+- Backend binary, PocketBase embedding, runtime routes, migration activation/rollback internals, PocketBase host migrations, or Go tests: `pbvex-backend`.
+- `pbvex/` schema/functions, first-class migration definitions, indexed queries and pagination, authorization, relationships, outbound HTTP, HTTP actions, email templates, or scheduling: `pbvex-functions`.
 - Vanilla typed calls, PocketBase application auth, errors, SSE/realtime, or storage: `pbvex-client`.
 - React provider/hooks/tests: `pbvex-react`; Svelte 5 runes/tests: `pbvex-svelte`.
 - Component definitions, mounts, namespaces, or compatibility: `pbvex-components`.
@@ -37,7 +37,7 @@ PBVex authoring is TypeScript under `pbvex/`; the CLI bundles it into a deployme
 
 Follow this path for an application change:
 
-1. Define schema and functions under `pbvex/`, using public `pbvex/server` and `pbvex/values` APIs plus generated factories/references.
+1. Define schema and functions under `pbvex/`, using public `pbvex/server` and `pbvex/values` APIs plus generated factories/references. For incompatible root-table changes, run `pbvex migrations plan`, then `pbvex migrations create <name> --table <table>` and implement the required pure `up`/`down` handlers under `pbvex/migrations/`. Host-level PocketBase state such as auth collections uses the separate nested command `pbvex migrations pocketbase create <name>` under `pbvex/pocketbaseMigrations/`.
 2. Run `pbvex codegen` after schema or exported-function changes.
 3. Type-check and bundle with `pbvex typecheck` and `pbvex build` (or `build --check` when no artifact is needed).
 4. Use generated `api`/`internal` references from `pbvex/_generated/` in server and client code.
@@ -45,6 +45,14 @@ Follow this path for an application change:
    to independently managed targets with a superuser token only from trusted
    deployment automation; verify calls, realtime, scheduled work, and storage
    relevant to the release.
+
+First-class PBVex migrations are bundled application artifacts and run during
+atomic activation; rollback runs `down`. They only target object documents in
+root PBVex tables and have no database or side-effect context. PocketBase host
+migrations are external JavaScript files run at backend startup and have a
+separate rollback lifecycle. Never use both systems for the same table, edit an
+applied migration ID, invent row/byte estimates from the structural plan, or
+assume maintenance mode exists.
 
 Design database reads as bounded access patterns. Prefer a matching index plus `first`, `unique`, `take`, or `paginate`; use `collect` only for provably small result sets. Pagination uses HMAC-authenticated keyset cursors: keep `continueCursor` opaque and restart from `null` when bounds, order, or page size change.
 

@@ -27,7 +27,9 @@ Do not expose an internal function through the public call path, weaken argument
 
 Keep platform routes ahead of application HTTP actions: deployment, call, realtime, jobs, and storage are reserved under `/api/pbvex`. Public call routing, optional PocketBase record-token identity, and HTTP-action route validation are server-owned. Realtime query subscriptions use SSE and must close/reconnect across deployment activation or rollback.
 
-Use PocketBase migrations/collections through the established host lifecycle. PBVex-owned collections, schema materialization, component namespaces, scheduler state, and storage metadata are persistent runtime contracts; do not mutate them ad hoc.
+First-class definitions from `pbvex/migrations/*.ts` are bundled and registered with the candidate deployment. Activation resolves schema-hash chains, checks durable ID/checksum history, runs `up`, normalizes defaults/projections, records history, and changes the active deployment in one transaction. Deployment rollback runs `down` in reverse order under the same atomic guarantee. Preserve root-table/object-only scope, immutable `_id`/`_creationTime`, the pure synchronous context, mandatory `down`, the fixed 10,000-document/64-MiB hard ceilings, and structured warnings at 80%. `pbvex migrations plan` is structural only; do not add fake record or byte estimates. Maintenance mode is not implemented.
+
+Use PocketBase migrations/collections through the separate host lifecycle. Application-owned host migrations live in `pbvex/pocketbaseMigrations/`; create them with the nested command `pbvex migrations pocketbase create <name>` so they reference the generated `pbvex/_generated/pocketbase.d.ts`, and validate them with `pbvex typecheck`. They run at backend startup and are not deployment artifacts or reversed by PBVex rollback. The npm CLI override is `--pocketbaseMigrationsDir`; the direct backend flag remains `--migrationsDir`. Use host migrations for PocketBase state such as auth collections, not tables owned by `pbvex/schema.ts`.
 
 ## Single binary and tests
 

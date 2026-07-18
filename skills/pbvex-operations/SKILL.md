@@ -19,6 +19,7 @@ versions identical. Standalone GitHub archives remain the Node-free server
 distribution.
 
 ```bash
+pbvex migrations plan -t <target>
 pbvex codegen -t <target>
 pbvex typecheck -t <target>
 pbvex build -t <target>
@@ -32,7 +33,11 @@ Application environment bindings are component-only and resolve from the PBVex b
 
 ## Activation and recovery
 
-Deployment activation validates/compiles the whole artifact, applies compatible schema/component work transactionally, then atomically changes the active deployment. Failure retains the prior release. Keep `.pbvex/dist/artifact.json` as a release record, not a secret store. Test a representative generated call, realtime subscription, scheduled job, and storage path after release.
+Deployment activation validates/compiles the whole artifact, runs bundled `pbvex/migrations/*.ts` `up` handlers, applies schema/component work, records migration history, then changes the active deployment in the same transaction. Failure retains the prior release and documents. Application rollback runs required `down` handlers in reverse order before restoring the previous deployment; a failed down leaves the current release active. Keep `.pbvex/dist/artifact.json` as a release record, not a secret store. Test both migration directions against representative backup data plus a generated call, realtime subscription, scheduled job, and storage path.
+
+`pbvex migrations plan` is a structural active-to-local comparison, not a data scan or row/byte estimate; use `--active-artifact <path>` for offline review. Activation enforces non-configurable hard ceilings of 10,000 processed documents and 64 MiB encoded work and returns structured warnings at 80% utilization. There is no force bypass or maintenance mode. Back up and reduce/re-stage work that cannot fit.
+
+Keep PocketBase host migrations operationally separate. Create them with `pbvex migrations pocketbase create <name>`, install `pbvex/pocketbaseMigrations/` beside the process, and restart so they run before serving. The npm wrappers accept `--pocketbaseMigrationsDir`; the direct backend uses `--migrationsDir`. PBVex deployment rollback never reverses host migrations.
 
 Back up the data directory before binary upgrades/downgrades or schema-changing releases; include external object storage with database state. Application rollback is an authenticated deployment API operation and is not a binary/data rollback. For a bad binary upgrade, restore the matching binary and backup.
 

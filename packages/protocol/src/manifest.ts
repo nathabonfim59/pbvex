@@ -13,6 +13,8 @@ import type {
   SchemaDescriptor,
   TableDescriptor,
   IndexDescriptor,
+  MigrationDescriptor,
+  MigrationWarning,
   JSONValue,
 } from './types.js';
 import {
@@ -60,6 +62,9 @@ export const MAX_MAP_SIZE = 1024;
 export const MAX_ARRAY_SIZE = 1024;
 export const MAX_BUDGET_NODES = 16 * 1024;
 export const MAX_BUDGET_BYTES = 4 << 20;
+export const MAX_ACTIVATION_WARNINGS = 1;
+const MIGRATION_WARNING_ROW_LIMIT = 10_000;
+const MIGRATION_WARNING_BYTE_LIMIT = 64 << 20;
 
 export function normalizeConfig(config?: Partial<DeploymentConfig>): DeploymentConfig {
   return {
@@ -89,6 +94,7 @@ export function validateManifest(value: unknown): DeploymentManifest {
   const schema = 'schema' in o && o.schema !== undefined ? validateSchema(o.schema) : undefined;
   const emailTemplates = validateEmailTemplates(o.emailTemplates);
   const cronJobs = validateCronJobs(o.cronJobs, functions ?? [], normalizeConfig(config));
+  const migrations = validateMigrations(o.migrations, schema);
   return {
     protocolVersion: 'v1',
     deploymentId: o.deploymentId,
@@ -98,7 +104,81 @@ export function validateManifest(value: unknown): DeploymentManifest {
     schema,
     emailTemplates,
     cronJobs,
+    migrations,
   };
+}
+
+const MIGRATION_KEYS = [
+  'id', 'table', 'mode', 'from', 'to', 'sourceSchemaHash', 'targetSchemaHash',
+  'checksum', 'modulePath', 'exportName', 'reversibility',
+];
+
+function validateMigrations(value: unknown, targetSchema?: SchemaDescriptor): MigrationDescriptor[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 256) {
+    throw new Error('migrations must be an array with at most 256 entries');
+  }
+  const ids = new Set<string>();
+  const tables = new Set(targetSchema?.tables.map((table) => table.tableName) ?? []);
+  const entries = value.map((raw, index): MigrationDescriptor => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`Migration[${index}] must be an object`);
+    }
+    const migration = raw as Record<string, unknown>;
+    if (Object.keys(migration).some((key) => !MIGRATION_KEYS.includes(key))) {
+      throw new Error(`Migration[${index}] has unknown fields`);
+    }
+    if (typeof migration.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(migration.id)) {
+      throw new Error(`Migration[${index}] id is invalid`);
+    }
+    if (ids.has(migration.id)) throw new Error(`Migration[${index}] id is duplicated`);
+    if (!isIdentifier(migration.table) || migration.table.toLowerCase().startsWith('pbvex_cmp_') || !tables.has(migration.table)) {
+      throw new Error(`Migration[${index}] table is invalid`);
+    }
+    if (migration.mode !== 'transactional') throw new Error(`Migration[${index}] mode is invalid`);
+    if (!isObjectValidatorDescriptor(migration.from)) throw new Error(`Migration[${index}] from must be an object validator`);
+    if (!isObjectValidatorDescriptor(migration.to)) throw new Error(`Migration[${index}] to must be an object validator`);
+    if (!isSha256Hex(migration.sourceSchemaHash)) throw new Error(`Migration[${index}] sourceSchemaHash is invalid`);
+    if (!isSha256Hex(migration.targetSchemaHash)) throw new Error(`Migration[${index}] targetSchemaHash is invalid`);
+    if (canonicalHashSync(migration.from as JSONValue) !== migration.sourceSchemaHash) {
+      throw new Error(`Migration[${index}] sourceSchemaHash does not match from`);
+    }
+    if (canonicalHashSync(migration.to as JSONValue) !== migration.targetSchemaHash) {
+      throw new Error(`Migration[${index}] targetSchemaHash does not match to`);
+    }
+    if (!isSha256Hex(migration.checksum)) throw new Error(`Migration[${index}] checksum is invalid`);
+    if (
+      !isModulePath(migration.modulePath) ||
+      !migration.modulePath.startsWith('pbvex/migrations/') ||
+      !migration.modulePath.endsWith('.ts')
+    ) throw new Error(`Migration[${index}] modulePath is invalid`);
+    if (!isExportName(migration.exportName)) throw new Error(`Migration[${index}] exportName is invalid`);
+    if (migration.reversibility !== 'reversible') throw new Error(`Migration[${index}] reversibility is invalid`);
+    ids.add(migration.id);
+    return {
+      id: migration.id,
+      table: migration.table,
+      mode: 'transactional',
+      from: migration.from as JSONValue,
+      to: migration.to as JSONValue,
+      sourceSchemaHash: migration.sourceSchemaHash,
+      targetSchemaHash: migration.targetSchemaHash,
+      checksum: migration.checksum,
+      modulePath: migration.modulePath,
+      exportName: migration.exportName,
+      reversibility: 'reversible',
+    };
+  });
+  for (let index = 1; index < entries.length; index += 1) {
+    if (entries[index - 1]!.id >= entries[index]!.id) {
+      throw new Error('migrations entries must be sorted by id');
+    }
+  }
+  return entries;
+}
+
+function isObjectValidatorDescriptor(value: unknown): boolean {
+  return isValidValidatorDescriptor(value) && (value as Record<string, unknown>).type === 'object';
 }
 
 function validateCronJobs(
@@ -249,7 +329,36 @@ export function validateActivateResponse(value: unknown): DeploymentActivateResp
   if (!isIsoDateString(o.activatedAt)) throw new Error('activatedAt must be an ISO date string');
   const previousDeploymentId = 'previousDeploymentId' in o && o.previousDeploymentId !== undefined ? o.previousDeploymentId : undefined;
   if (previousDeploymentId !== undefined && !isIdentifier(previousDeploymentId)) throw new Error('previousDeploymentId is invalid');
-  return { deploymentId: o.deploymentId, activatedAt: o.activatedAt, previousDeploymentId: previousDeploymentId as string | undefined };
+  const warnings = validateMigrationWarnings(o.warnings);
+  return { deploymentId: o.deploymentId, activatedAt: o.activatedAt, previousDeploymentId: previousDeploymentId as string | undefined, warnings };
+}
+
+function validateMigrationWarnings(value: unknown): MigrationWarning[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_ACTIVATION_WARNINGS) {
+    throw new Error(`warnings must be an array with at most ${MAX_ACTIVATION_WARNINGS} entries`);
+  }
+  const keys = ['code', 'rows', 'rowLimit', 'estimatedBytes', 'byteLimit', 'utilizationPercent'];
+  return value.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Warning[${index}] must be an object`);
+    const warning = raw as Record<string, unknown>;
+    if (Object.keys(warning).length !== keys.length || keys.some((key) => !(key in warning))) {
+      throw new Error(`Warning[${index}] has unknown or missing fields`);
+    }
+    if (warning.code !== 'transactional_migration_utilization') throw new Error(`Warning[${index}] code is invalid`);
+    for (const key of keys.slice(1)) {
+      if (!Number.isSafeInteger(warning[key]) || (warning[key] as number) < 0) throw new Error(`Warning[${index}] ${key} is invalid`);
+    }
+    if ((warning.rows as number) > (warning.rowLimit as number) ||
+        (warning.estimatedBytes as number) > (warning.byteLimit as number) ||
+        warning.rowLimit !== MIGRATION_WARNING_ROW_LIMIT ||
+        warning.byteLimit !== MIGRATION_WARNING_BYTE_LIMIT ||
+        (warning.utilizationPercent as number) < 80 ||
+        (warning.utilizationPercent as number) > 100) {
+      throw new Error(`Warning[${index}] exceeds its bounds`);
+    }
+    return warning as MigrationWarning;
+  });
 }
 
 export function validateRollbackResponse(value: unknown): DeploymentRollbackResponse {

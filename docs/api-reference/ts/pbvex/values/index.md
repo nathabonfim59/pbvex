@@ -9,6 +9,7 @@
 ## Type Aliases
 
 - [GenericId](type-aliases/GenericId.md)
+- [ObjectValidator](type-aliases/ObjectValidator.md)
 - [Validator](type-aliases/Validator.md)
 - [ValidatorKind](type-aliases/ValidatorKind.md)
 

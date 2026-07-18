@@ -18,6 +18,9 @@ export type Validator<Out = any, In = Out> = {
   toJSON(): unknown;
 };
 
+export type ObjectValidator<Out extends Record<string, any> = Record<string, any>, In extends Record<string, any> = Out> =
+  Validator<Out, In> & { readonly kind: 'object' };
+
 export type ValidatorKind =
   | 'id'
   | 'string'
@@ -202,7 +205,7 @@ type ObjectInput<T extends Record<string, Validator<any, any>>> = {
 
 export function object<T extends Record<string, Validator<any, any>>>(
   shape: T,
-): Validator<ObjectOutput<T>, ObjectInput<T>> {
+): ObjectValidator<ObjectOutput<T>, ObjectInput<T>> {
   return new V(
     'object',
     (value) => {
@@ -217,7 +220,7 @@ export function object<T extends Record<string, Validator<any, any>>>(
     },
     false,
     () => ({ type: 'object', shape: Object.fromEntries(Object.entries(shape).map(([k, v]) => [k, v.toJSON()])) }),
-  );
+  ) as ObjectValidator<ObjectOutput<T>, ObjectInput<T>>;
 }
 
 export function array<T extends Validator<any, any>>(item: T): Validator<OutputOf<T>[], Array<Exclude<InputOf<T>, undefined>>> {

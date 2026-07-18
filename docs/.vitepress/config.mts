@@ -150,6 +150,7 @@ function docsSidebarItems(): DefaultTheme.SidebarItem[] {
 
   const platform = pagesFor(pages, [
     'guides/auth.md',
+    'guides/migrations.md',
     'guides/authorization.md',
     'guides/email-templates.md',
     'guides/storage.md',
@@ -424,6 +425,7 @@ function buildNav(): DefaultTheme.NavItem[] {
         { text: 'All guides', link: '/guides/' },
         { text: 'Build your backend', link: '/guides/functions' },
         { text: 'Authentication', link: '/guides/auth' },
+        { text: 'PocketBase migrations', link: '/guides/migrations' },
         { text: 'Client SDK', link: '/guides/client/' },
         { text: 'React', link: '/guides/react/' },
         { text: 'Svelte', link: '/guides/svelte/' },

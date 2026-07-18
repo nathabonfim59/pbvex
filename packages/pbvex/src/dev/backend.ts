@@ -14,6 +14,13 @@ export interface ManagedBackend {
 export interface ManagedBackendOptions {
   debug?: boolean;
   adminUI?: boolean;
+  pocketbaseMigrationsDir?: string;
+}
+
+export function applicationPocketBaseMigrationsDir(rootDir: string, override?: string): string {
+  return override
+    ? path.resolve(rootDir, override)
+    : path.join(rootDir, 'pbvex', 'pocketbaseMigrations');
 }
 
 export function managedBackendArgs(
@@ -23,6 +30,7 @@ export function managedBackendArgs(
 ): string[] {
   const args = ['--dir', dataDir, '--hooksWatch=false'];
   if (options.debug) args.push('--dev=true');
+  if (options.pocketbaseMigrationsDir) args.push('--migrationsDir', options.pocketbaseMigrationsDir);
   args.push('serve');
   if (options.adminUI !== false) args.push('--admin-ui');
   args.push('--http', address);
@@ -111,7 +119,10 @@ export async function startManagedBackend(config: ResolvedConfig, options: Manag
   await mkdir(dataDir, { recursive: true });
   const token = randomBytes(32).toString('base64url');
   const env = { ...process.env, PBVEX_DEV_DEPLOY_TOKEN: token };
-  const serverArgs = managedBackendArgs(dataDir, address, options);
+  const serverArgs = managedBackendArgs(dataDir, address, {
+    ...options,
+    pocketbaseMigrationsDir: applicationPocketBaseMigrationsDir(config.rootDir, options.pocketbaseMigrationsDir),
+  });
   const child = spawnServer(serverArgs, {
     cwd: config.rootDir,
     env,

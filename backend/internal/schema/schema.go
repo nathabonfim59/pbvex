@@ -16,14 +16,15 @@ import (
 )
 
 const (
-	CollectionDeployments    = "_pbvex_deployments"
-	CollectionFunctions      = "_pbvex_functions"
-	CollectionSchemaState    = "_pbvex_schemaState"
-	CollectionJobs           = "_pbvex_jobs"
-	CollectionComponents     = "_pbvex_components"
-	CollectionStorageFiles   = "_pbvex_storage_files"
-	CollectionStorageTokens  = "_pbvex_storage_tokens"
-	CollectionStorageKeyring = "_pbvex_storage_keyring"
+	CollectionDeployments      = "_pbvex_deployments"
+	CollectionFunctions        = "_pbvex_functions"
+	CollectionSchemaState      = "_pbvex_schemaState"
+	CollectionJobs             = "_pbvex_jobs"
+	CollectionComponents       = "_pbvex_components"
+	CollectionStorageFiles     = "_pbvex_storage_files"
+	CollectionStorageTokens    = "_pbvex_storage_tokens"
+	CollectionStorageKeyring   = "_pbvex_storage_keyring"
+	CollectionMigrationHistory = "_pbvex_migration_history"
 
 	StateKeyActive = "active"
 
@@ -77,6 +78,12 @@ const (
 	FieldAttempts       = "attempts"
 	FieldCreated        = "created"
 	FieldUpdated        = "updated"
+	FieldMigrationID    = "migrationId"
+	FieldChecksum       = "checksum"
+	FieldSourceHash     = "sourceSchemaHash"
+	FieldTargetHash     = "targetSchemaHash"
+	FieldDirection      = "direction"
+	FieldAppliedAt      = "appliedAt"
 
 	FieldStorageID          = "storageId"
 	FieldStorageSha256      = "sha256"
@@ -117,6 +124,7 @@ var collectionNames = []string{
 	CollectionStorageFiles,
 	CollectionStorageTokens,
 	CollectionStorageKeyring,
+	CollectionMigrationHistory,
 }
 
 type internalKey struct{}
@@ -211,6 +219,8 @@ func ensureCollection(app core.App, name string) error {
 			col = storageTokensCollection()
 		case CollectionStorageKeyring:
 			col = storageKeyringCollection()
+		case CollectionMigrationHistory:
+			col = migrationHistoryCollection()
 		default:
 			return fmt.Errorf("unknown pbvex collection %q", name)
 		}
@@ -243,6 +253,8 @@ func mergeCollection(app core.App, existing *core.Collection, name string) error
 			return storageTokensCollection()
 		case CollectionStorageKeyring:
 			return storageKeyringCollection()
+		case CollectionMigrationHistory:
+			return migrationHistoryCollection()
 		}
 		return nil
 	}()

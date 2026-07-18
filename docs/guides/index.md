@@ -19,6 +19,7 @@ For feature-by-feature walkthroughs, build contacts, conversations, realtime mes
 ## Add platform capabilities
 
 - [Authentication](./auth.md) — use password, OTP, OAuth2, MFA, and authenticated function calls.
+- [Migrations](./migrations.md) — transform PBVex documents transactionally and manage separate PocketBase host migrations.
 - [Authorization](./authorization.md) — protect application data with ownership, membership, and role checks.
 - [Application email templates](./email-templates.md) — create typed templates and send them from functions.
 - [File storage](./storage.md) — upload, inspect, download, and delete files.

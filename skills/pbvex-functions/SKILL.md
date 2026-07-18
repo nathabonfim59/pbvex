@@ -29,6 +29,12 @@ Choose the narrowest function kind:
 
 Do not treat nested calls from an action as one transaction. Keep handlers within wire, timeout, nesting, and runtime limits; deployed code is Goja, not Node.js.
 
+## Migrate root documents
+
+For an incompatible `pbvex/schema.ts` change, run `pbvex migrations plan` and scaffold `pbvex migrations create <name> --table <table>`. Implement the resulting `defineMigration` in `pbvex/migrations/*.ts` with object `from`/`to` validators and required synchronous `up` and `down` handlers. It can transform one root PBVex table only; it cannot access components, other tables, PocketBase collections, or side-effect APIs. The input exposes read-only `_id` and `_creationTime`, but output must omit them. The pure context exposes only `migrationId`, stable `activationTime`, and `fail(message)`.
+
+Migrations are bundled and run during atomic deployment activation; deployment rollback runs `down` in reverse order. Never edit/reuse an applied migration ID because history binds it to checksums and source/target schema hashes. Activation has fixed 10,000-document and 64-MiB hard limits with warnings at 80%; there is no force bypass or maintenance mode. `pbvex migrations plan` reports structural changes and chain matches only, with `--active-artifact <path>` for offline source selection. Use the separate `pbvex migrations pocketbase create <name>` command only for host-level PocketBase state such as auth collections, never a PBVex schema table.
+
 ## Query and authorize bounded data
 
 Design indexes from access patterns: equality fields first, then the range/order field. Use `withIndex` to reduce candidates, reserve `filter` for residual predicates, and use `fullTableScan` only when the bounded scan is deliberate. Finish every growing query with `first`, `unique`, `take`, or `paginate`; reserve `collect` for provably small sets.

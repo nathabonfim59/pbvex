@@ -161,6 +161,20 @@ func schemaStateCollection() *core.Collection {
 	return col
 }
 
+func migrationHistoryCollection() *core.Collection {
+	col := core.NewBaseCollection(CollectionMigrationHistory)
+	col.System = true
+	col.Fields.Add(&core.TextField{Name: FieldMigrationID, System: true, Required: true, Max: 128})
+	col.Fields.Add(&core.TextField{Name: FieldChecksum, System: true, Required: true, Max: 64})
+	col.Fields.Add(&core.TextField{Name: FieldSourceHash, System: true, Required: true, Max: 64})
+	col.Fields.Add(&core.TextField{Name: FieldTargetHash, System: true, Required: true, Max: 64})
+	col.Fields.Add(&core.TextField{Name: FieldDeploymentID, System: true, Required: true, Max: 1024})
+	col.Fields.Add(&core.TextField{Name: FieldDirection, System: true, Required: true, Max: 4})
+	col.Fields.Add(&core.DateField{Name: FieldAppliedAt, System: true, Required: true, Hidden: true})
+	col.AddIndex("idx_pbvex_migration_history_id", false, FieldMigrationID, "")
+	return col
+}
+
 func jobsCollection() *core.Collection {
 	col := core.NewBaseCollection(CollectionJobs)
 	col.System = true

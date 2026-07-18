@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -39,6 +40,13 @@ type RuntimeInvoker interface {
 	InvokeHTTP(ctx context.Context, deploymentID, functionName string, httpEnvelope *deploy.HTTPRequestEnvelope, identity *auth.UserIdentity, requestID string) (*deploy.HTTPResponseEnvelope, error)
 }
 
+const maxMigrationFailureMessage = 1024
+
+// MigrationError is the bounded, document-free failure produced by ctx.fail.
+type MigrationError struct{ Message string }
+
+func (e *MigrationError) Error() string { return "migration failed: " + e.Message }
+
 // Scheduler is the capability exposed to mutations and actions.
 type Scheduler interface {
 	RunAfter(ctx context.Context, delayMs int64, deploymentID, functionName string, args any) (string, error)
@@ -71,6 +79,11 @@ func NewManager(config Config) *Manager {
 
 // Compile compiles and stores the bundle program for a deployment.
 func (m *Manager) Compile(deploymentID, bundle string, descriptors []deploy.FunctionDescriptor, configs ...deploy.DeploymentConfig) error {
+	return m.CompileDeployment(deploymentID, bundle, descriptors, nil, configs...)
+}
+
+// CompileDeployment stores both function and migration registration contracts.
+func (m *Manager) CompileDeployment(deploymentID, bundle string, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, configs ...deploy.DeploymentConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	config := deploy.DefaultDeploymentConfig
@@ -78,7 +91,7 @@ func (m *Manager) Compile(deploymentID, bundle string, descriptors []deploy.Func
 		config = deploy.NormalizeConfig(&configs[0])
 	}
 
-	fingerprint := runtimeFingerprint(bundle, descriptors, config, m.config)
+	fingerprint := runtimeFingerprint(bundle, descriptors, migrations, config, m.config)
 	if existing, ok := m.pools[deploymentID]; ok && existing.fingerprint == fingerprint {
 		return nil
 	}
@@ -89,7 +102,7 @@ func (m *Manager) Compile(deploymentID, bundle string, descriptors []deploy.Func
 	}
 
 	extenders := append([]ContextExtender(nil), m.extenders...)
-	m.pools[deploymentID] = newPool(m.config.PoolSize, m.config.Timeout, program, descriptors, config, fingerprint, m.Scheduler, deploymentID, extenders)
+	m.pools[deploymentID] = newPool(m.config.PoolSize, m.config.Timeout, program, descriptors, migrations, config, fingerprint, m.Scheduler, deploymentID, extenders)
 	return nil
 }
 
@@ -101,11 +114,15 @@ func (m *Manager) Drop(deploymentID string) {
 	m.mu.Unlock()
 }
 
-func runtimeFingerprint(bundle string, descriptors []deploy.FunctionDescriptor, cfg deploy.DeploymentConfig, config Config) string {
+func runtimeFingerprint(bundle string, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, cfg deploy.DeploymentConfig, config Config) string {
 	h := sha256.New()
 	h.Write([]byte(bundle))
 	for _, d := range descriptors {
 		s, _ := deploy.CanonicalJSON(descriptorJSON(d))
+		h.Write([]byte(s))
+	}
+	for _, d := range migrations {
+		s, _ := deploy.CanonicalJSON(migrationDescriptorJSON(d))
 		h.Write([]byte(s))
 	}
 	cfgJSON, _ := deploy.CanonicalJSON(deploymentConfigJSON(cfg))
@@ -128,6 +145,11 @@ func deploymentConfigJSON(cfg deploy.DeploymentConfig) map[string]any {
 // Verify loads the bundle in a fresh runtime and confirms that every declared
 // function is registered with an exact descriptor match.
 func (m *Manager) Verify(ctx context.Context, deploymentID, bundle string, descriptors []deploy.FunctionDescriptor) error {
+	return m.VerifyDeployment(ctx, deploymentID, bundle, descriptors, nil)
+}
+
+// VerifyDeployment requires exact function and migration registration parity.
+func (m *Manager) VerifyDeployment(ctx context.Context, deploymentID, bundle string, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor) error {
 	program, err := goja.Compile("bundle.js", bundle, false)
 	if err != nil {
 		return fmt.Errorf("invalid bundle: %w", err)
@@ -136,12 +158,31 @@ func (m *Manager) Verify(ctx context.Context, deploymentID, bundle string, descr
 	ctx, cancel := contextWithTimeout(ctx, m.config.Timeout)
 	defer cancel()
 
-	e := newEntry(program, descriptors, deploy.DefaultDeploymentConfig)
+	e := newEntry(program, descriptors, migrations, deploy.DefaultDeploymentConfig)
 
 	if err := e.load(ctx, program); err != nil {
 		return err
 	}
-	return e.bridge.Verify(descriptors)
+	return e.bridge.Verify(descriptors, migrations)
+}
+
+// InvokeMigration executes a pure synchronous up/down handler. The caller owns
+// the surrounding database transaction; this method never starts one.
+func (m *Manager) InvokeMigration(ctx context.Context, deploymentID, migrationID, direction string, document any, activationTime int64) (any, error) {
+	m.mu.RLock()
+	pool, ok := m.pools[deploymentID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("deployment %s runtime not compiled", deploymentID)
+	}
+	ctx, cancel := contextWithTimeout(ctx, m.config.Timeout)
+	defer cancel()
+	e, err := pool.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer pool.release()
+	return e.invokeMigration(ctx, migrationID, direction, document, activationTime)
 }
 
 // Invoke runs the named function in a fresh bounded runtime.
@@ -323,6 +364,7 @@ func contextWithTimeout(ctx context.Context, timeout time.Duration) (context.Con
 type Pool struct {
 	program      *goja.Program
 	descriptors  []deploy.FunctionDescriptor
+	migrations   []deploy.MigrationDescriptor
 	config       deploy.DeploymentConfig
 	timeout      time.Duration
 	sem          chan struct{}
@@ -332,10 +374,11 @@ type Pool struct {
 	extenders    []ContextExtender
 }
 
-func newPool(maxSize int, timeout time.Duration, program *goja.Program, descriptors []deploy.FunctionDescriptor, config deploy.DeploymentConfig, fingerprint string, scheduler Scheduler, deploymentID string, extenders []ContextExtender) *Pool {
+func newPool(maxSize int, timeout time.Duration, program *goja.Program, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, config deploy.DeploymentConfig, fingerprint string, scheduler Scheduler, deploymentID string, extenders []ContextExtender) *Pool {
 	return &Pool{
 		program:      program,
 		descriptors:  descriptors,
+		migrations:   migrations,
 		config:       config,
 		timeout:      timeout,
 		sem:          make(chan struct{}, maxSize),
@@ -349,7 +392,7 @@ func newPool(maxSize int, timeout time.Duration, program *goja.Program, descript
 func (p *Pool) acquire(ctx context.Context) (*entry, error) {
 	select {
 	case p.sem <- struct{}{}:
-		return newEntry(p.program, p.descriptors, p.config, p.scheduler, p.deploymentID, p.extenders), nil
+		return newEntry(p.program, p.descriptors, p.migrations, p.config, p.scheduler, p.deploymentID, p.extenders), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -407,7 +450,7 @@ func (p *Pool) invokeNested(parent *Invocation, functionName string, targetType 
 	}
 	child.Namespace = namespaceForDescriptor(parent.Manifest, descriptor)
 	invoke := func() (any, error) {
-		e := newEntry(p.program, p.descriptors, p.config, p.scheduler, p.deploymentID, p.extenders)
+		e := newEntry(p.program, p.descriptors, p.migrations, p.config, p.scheduler, p.deploymentID, p.extenders)
 		return e.invoke(child, functionName, args)
 	}
 	if targetType == deploy.FunctionTypeMutation && parent.FunctionType != deploy.FunctionTypeMutation && parent.App != nil {
@@ -449,7 +492,7 @@ func (p *Pool) verify(ctx context.Context, descriptors []deploy.FunctionDescript
 		return err
 	}
 
-	return e.bridge.Verify(descriptors)
+	return e.bridge.Verify(descriptors, p.migrations)
 }
 
 type entry struct {
@@ -467,13 +510,24 @@ type entry struct {
 	extenders      []ContextExtender
 }
 
-func newEntry(program *goja.Program, descriptors []deploy.FunctionDescriptor, config any, extra ...any) *entry {
+func newEntry(program *goja.Program, descriptors []deploy.FunctionDescriptor, args ...any) *entry {
+	var migrations []deploy.MigrationDescriptor
+	extra := args
+	if len(args) > 0 {
+		if value, ok := args[0].([]deploy.MigrationDescriptor); ok {
+			migrations = value
+			extra = args[1:]
+		}
+	}
 	loop := eventloop.NewEventLoop(eventloop.EnableConsole(false))
 	bridge := &Bridge{
-		handlers:            make(map[string]goja.Callable),
-		descriptors:         make(map[string]deploy.FunctionDescriptor),
-		descriptorsByPath:   make(map[string]deploy.FunctionDescriptor),
-		manifestDescriptors: descriptors,
+		handlers:             make(map[string]goja.Callable),
+		descriptors:          make(map[string]deploy.FunctionDescriptor),
+		descriptorsByPath:    make(map[string]deploy.FunctionDescriptor),
+		manifestDescriptors:  descriptors,
+		migrationHandlers:    make(map[string]migrationHandlers),
+		migrationDescriptors: make(map[string]deploy.MigrationDescriptor),
+		manifestMigrations:   migrations,
 	}
 	e := &entry{
 		loop:    loop,
@@ -481,7 +535,11 @@ func newEntry(program *goja.Program, descriptors []deploy.FunctionDescriptor, co
 		bridge:  bridge,
 		program: program,
 	}
-	if len(extra) >= 3 {
+	if len(extra) >= 4 {
+		e.scheduler, _ = extra[1].(Scheduler)
+		e.deploymentID, _ = extra[2].(string)
+		e.extenders, _ = extra[3].([]ContextExtender)
+	} else if len(extra) >= 3 {
 		e.scheduler, _ = extra[0].(Scheduler)
 		e.deploymentID, _ = extra[1].(string)
 		e.extenders, _ = extra[2].([]ContextExtender)
@@ -537,7 +595,8 @@ func (e *entry) loadInLoop(vm *goja.Runtime, program *goja.Program) error {
 	e.promiseCtor = promiseObj
 
 	_ = vm.Set("__pbvex", map[string]any{
-		"registerFunction": e.bridge.RegisterFunction,
+		"registerFunction":  e.bridge.RegisterFunction,
+		"registerMigration": e.bridge.RegisterMigration,
 	})
 
 	if _, err := vm.RunProgram(program); err != nil {
@@ -593,6 +652,70 @@ func (e *entry) invokeHTTP(invocation *Invocation, functionName string, httpEnve
 		return nil, err
 	}
 	return e.toHTTPResponse(raw, invocation)
+}
+
+func (e *entry) invokeMigration(ctx context.Context, migrationID, direction string, document any, activationTime int64) (any, error) {
+	var raw goja.Value
+	var err error
+	var stop func() bool
+	e.loop.Run(func(vm *goja.Runtime) {
+		e.vm = vm
+		stop = e.startTimer(ctx, vm)
+		if err = e.loadInLoop(vm, e.program); err != nil {
+			return
+		}
+		handlers, ok := e.bridge.migrationHandlers[migrationID]
+		if !ok {
+			err = fmt.Errorf("migration is not registered")
+			return
+		}
+		fn := handlers.up
+		if direction == "down" {
+			fn = handlers.down
+		} else if direction != "up" {
+			err = fmt.Errorf("migration direction is invalid")
+			return
+		}
+		doc, decodeErr := decodeWire(vm, document)
+		if decodeErr != nil {
+			err = fmt.Errorf("migration input is invalid")
+			return
+		}
+		migrationCtx := vm.NewObject()
+		_ = migrationCtx.Set("migrationId", migrationID)
+		_ = migrationCtx.Set("activationTime", activationTime)
+		_ = migrationCtx.Set("fail", func(call goja.FunctionCall) goja.Value {
+			message := call.Argument(0).String()
+			if len(message) > maxMigrationFailureMessage {
+				message = message[:maxMigrationFailureMessage]
+			}
+			panic(vm.NewGoError(&MigrationError{Message: message}))
+		})
+		raw, err = fn(goja.Undefined(), doc, migrationCtx)
+	})
+	if stop != nil {
+		stop()
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("migration handler failed")
+	}
+	if raw == nil || goja.IsNull(raw) || goja.IsUndefined(raw) {
+		return nil, fmt.Errorf("migration output must be an object")
+	}
+	if _, promise := raw.Export().(*goja.Promise); promise {
+		return nil, fmt.Errorf("migration handler must be synchronous")
+	}
+	encoded, err := encodeWire(e.vm, raw)
+	if err != nil {
+		return nil, fmt.Errorf("migration output is invalid")
+	}
+	if _, ok := encoded.(map[string]any); !ok {
+		return nil, fmt.Errorf("migration output must be an object")
+	}
+	return encoded, nil
 }
 
 func (e *entry) invokeRaw(invocation *Invocation, functionName string, args any) (goja.Value, error) {
@@ -896,11 +1019,19 @@ func (e *entry) toHTTPResponse(v goja.Value, invocation *Invocation) (*deploy.HT
 
 // Bridge is the host bridge exposed to the JS bundle.
 type Bridge struct {
-	handlers            map[string]goja.Callable
-	descriptors         map[string]deploy.FunctionDescriptor
-	descriptorsByPath   map[string]deploy.FunctionDescriptor
-	mu                  sync.RWMutex
-	manifestDescriptors []deploy.FunctionDescriptor
+	handlers             map[string]goja.Callable
+	descriptors          map[string]deploy.FunctionDescriptor
+	descriptorsByPath    map[string]deploy.FunctionDescriptor
+	mu                   sync.RWMutex
+	manifestDescriptors  []deploy.FunctionDescriptor
+	migrationHandlers    map[string]migrationHandlers
+	migrationDescriptors map[string]deploy.MigrationDescriptor
+	manifestMigrations   []deploy.MigrationDescriptor
+}
+
+type migrationHandlers struct {
+	up   goja.Callable
+	down goja.Callable
 }
 
 // RegisterFunction implements globalThis.__pbvex.registerFunction(descriptor, handler).
@@ -937,7 +1068,7 @@ func (b *Bridge) RegisterFunction(descriptor goja.Value, handler goja.Value) err
 }
 
 // Verify ensures every manifest function is registered and descriptors match exactly.
-func (b *Bridge) Verify(descriptors []deploy.FunctionDescriptor) error {
+func (b *Bridge) Verify(descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for _, expected := range descriptors {
@@ -956,7 +1087,81 @@ func (b *Bridge) Verify(descriptors []deploy.FunctionDescriptor) error {
 	if len(b.handlers) != len(descriptors) {
 		return fmt.Errorf("bundle registered unexpected functions")
 	}
+	for _, expected := range migrations {
+		if _, ok := b.migrationHandlers[expected.ID]; !ok {
+			return fmt.Errorf("migration %q is not registered", expected.ID)
+		}
+		if got, ok := b.migrationDescriptors[expected.ID]; !ok || !migrationDescriptorsEqual(expected, got) {
+			return fmt.Errorf("migration descriptor mismatch for %q", expected.ID)
+		}
+	}
+	if len(b.migrationHandlers) != len(migrations) {
+		return fmt.Errorf("bundle registered unexpected migrations")
+	}
 	return nil
+}
+
+// RegisterMigration implements __pbvex.registerMigration(descriptor, up, down).
+func (b *Bridge) RegisterMigration(descriptor, up, down goja.Value) error {
+	obj, ok := descriptor.Export().(map[string]any)
+	if !ok || !exactMigrationKeys(obj) {
+		return fmt.Errorf("migration descriptor must be an exact object")
+	}
+	var got deploy.MigrationDescriptor
+	encoded, err := json.Marshal(obj)
+	if err != nil || json.Unmarshal(encoded, &got) != nil {
+		return fmt.Errorf("migration descriptor is invalid")
+	}
+	matched := false
+	for _, expected := range b.manifestMigrations {
+		if migrationDescriptorsEqual(expected, got) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return fmt.Errorf("migration descriptor mismatch")
+	}
+	upFn, upOK := goja.AssertFunction(up)
+	downFn, downOK := goja.AssertFunction(down)
+	if !upOK || !downOK {
+		return fmt.Errorf("migration handlers must be functions")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, exists := b.migrationHandlers[got.ID]; exists {
+		return fmt.Errorf("duplicate migration registration")
+	}
+	b.migrationHandlers[got.ID] = migrationHandlers{up: upFn, down: downFn}
+	b.migrationDescriptors[got.ID] = got
+	return nil
+}
+
+func migrationDescriptorsEqual(a, b deploy.MigrationDescriptor) bool {
+	left, errA := deploy.CanonicalJSON(migrationDescriptorJSON(a))
+	right, errB := deploy.CanonicalJSON(migrationDescriptorJSON(b))
+	return errA == nil && errB == nil && left == right
+}
+
+func migrationDescriptorJSON(d deploy.MigrationDescriptor) map[string]any {
+	return map[string]any{
+		"id": d.ID, "table": d.Table, "mode": d.Mode, "from": d.From, "to": d.To,
+		"sourceSchemaHash": d.SourceSchemaHash, "targetSchemaHash": d.TargetSchemaHash,
+		"checksum": d.Checksum, "modulePath": d.ModulePath, "exportName": d.ExportName,
+		"reversibility": d.Reversibility,
+	}
+}
+
+func exactMigrationKeys(obj map[string]any) bool {
+	if len(obj) != 11 {
+		return false
+	}
+	for _, key := range []string{"id", "table", "mode", "from", "to", "sourceSchemaHash", "targetSchemaHash", "checksum", "modulePath", "exportName", "reversibility"} {
+		if _, ok := obj[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *Bridge) matchesManifest(fd deploy.FunctionDescriptor) bool {

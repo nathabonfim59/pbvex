@@ -2,13 +2,52 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nathabonfim59/pbvex/backend/internal/deploy"
 )
+
+func TestMigrationRegistrationAndPureInvocation(t *testing.T) {
+	from := map[string]any{"type": "object", "shape": map[string]any{"name": map[string]any{"type": "string"}}}
+	to := map[string]any{"type": "object", "shape": map[string]any{"name": map[string]any{"type": "string"}, "active": map[string]any{"type": "boolean"}}}
+	fromHash, _ := deploy.CanonicalHash(from)
+	toHash, _ := deploy.CanonicalHash(to)
+	descriptor := deploy.MigrationDescriptor{ID: "add_active", Table: "users", Mode: "transactional", From: from, To: to, SourceSchemaHash: fromHash, TargetSchemaHash: toHash, Checksum: strings.Repeat("a", 64), ModulePath: "pbvex/migrations/add.ts", ExportName: "default", Reversibility: "reversible"}
+	raw, _ := json.Marshal(descriptor)
+	bundle := `__pbvex.registerMigration(` + string(raw) + `,
+		function(doc,ctx){if(typeof ctx.db!=="undefined"||ctx.migrationId!=="add_active")ctx.fail("capability leak");return {name:doc.name,active:ctx.activationTime===123};},
+		function(doc){return {name:doc.name};});`
+	manager := NewManager(Config{PoolSize: 1, Timeout: time.Second})
+	if err := manager.VerifyDeployment(context.Background(), "dep", bundle, nil, []deploy.MigrationDescriptor{descriptor}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.CompileDeployment("dep", bundle, nil, []deploy.MigrationDescriptor{descriptor}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.InvokeMigration(context.Background(), "dep", descriptor.ID, "up", map[string]any{"name": "Ada", "_id": "id", "_creationTime": float64(1)}, 123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := result.(map[string]any)
+	if object["name"] != "Ada" || object["active"] != true {
+		t.Fatalf("migration result %#v", object)
+	}
+	if err := manager.VerifyDeployment(context.Background(), "dep", bundle, nil, nil); err == nil {
+		t.Fatal("unexpected migration registration accepted")
+	}
+	badBundle := `__pbvex.registerMigration(` + string(raw) + `,function(){return Promise.resolve({});},function(){return {};});`
+	if err := manager.CompileDeployment("async", badBundle, nil, []deploy.MigrationDescriptor{descriptor}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.InvokeMigration(context.Background(), "async", descriptor.ID, "up", map[string]any{}, 1); err == nil || !strings.Contains(err.Error(), "synchronous") {
+		t.Fatalf("async migration result: %v", err)
+	}
+}
 
 const testBundle = `__pbvex.registerFunction({name:"block",type:"query",visibility:"public",modulePath:"block",exportName:"default"}, function(ctx,args) { var end = Date.now() + 60000; while (Date.now() < end) {} return "done"; });`
 

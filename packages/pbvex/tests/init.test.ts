@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const cliPath = path.resolve(fileURLToPath(import.meta.url), '../../dist/cli/index.js');
+const typescriptCli = path.resolve(fileURLToPath(import.meta.url), '../../node_modules/typescript/bin/tsc');
 
 function runCli(cwd: string, ...args: string[]): string {
   return execFileSync(process.execPath, [cliPath, ...args], {
@@ -35,6 +36,24 @@ describe('pbvex init', () => {
 
     expect(runCli(projectDir, 'codegen')).toContain('Generated pbvex/_generated files');
     expect(runCli(projectDir, 'build')).toContain('Wrote artifact');
+    expect(runCli(projectDir, 'migrations', 'pocketbase', 'create', 'create users')).toContain('Created pbvex/pocketbaseMigrations/');
+
+    const migrationsDir = path.join(projectDir, 'pbvex', 'pocketbaseMigrations');
+    const migrationFiles = (await readdir(migrationsDir)).filter((file) => file.endsWith('.js'));
+    expect(migrationFiles).toHaveLength(1);
+    expect(migrationFiles[0]).toMatch(/^\d+_create_users\.js$/);
+    expect(await readFile(path.join(migrationsDir, migrationFiles[0]), 'utf8')).toContain(
+      '../_generated/pocketbase.d.ts',
+    );
+    expect(await readFile(path.join(projectDir, 'pbvex', '_generated', 'pocketbase.d.ts'), 'utf8')).toContain(
+      'declare function migrate',
+    );
+    expect(() => execFileSync(process.execPath, [
+      typescriptCli,
+      '--noEmit',
+      '--project',
+      path.join(migrationsDir, 'tsconfig.json'),
+    ], { cwd: projectDir, stdio: 'pipe' })).not.toThrow();
 
     const artifact = JSON.parse(await readFile(path.join(projectDir, '.pbvex', 'dist', 'artifact.json'), 'utf8'));
     expect(artifact.manifest.functions).toHaveLength(2);

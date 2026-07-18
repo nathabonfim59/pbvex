@@ -6,6 +6,7 @@ import {
   validateManifest,
   validateUploadRequest,
   validateActivateRequest,
+  validateActivateResponse,
   validateDeployment,
   normalizeConfig,
   DEFAULT_CONFIG,
@@ -14,7 +15,7 @@ import {
   MAX_FUNCTION_ARGS_LIMIT,
   MAX_RETURN_VALUE_LIMIT,
 } from './manifest.js';
-import { canonicalJson, canonicalHash, hashSha256 } from './canonical.js';
+import { canonicalJson, canonicalHash, canonicalHashSync, hashSha256 } from './canonical.js';
 import { computeComponentId } from './components.js';
 import type { JSONValue } from './types.js';
 
@@ -228,6 +229,83 @@ test('validateManifest permits schema-only deployments without functions', () =>
     deploymentId: 'schema_only',
   });
   assert.strictEqual(manifest.functions, undefined);
+});
+
+function migrationDescriptor(id = '20260718_add_active') {
+  const from = { type: 'object', shape: { name: { type: 'string' } } };
+  const to = { type: 'object', shape: { name: { type: 'string' }, active: { type: 'boolean' } } };
+  return {
+    id,
+    table: 'users',
+    mode: 'transactional',
+    from,
+    to,
+    sourceSchemaHash: canonicalHashSync(from),
+    targetSchemaHash: canonicalHashSync(to),
+    checksum: '3'.repeat(64),
+    modulePath: `pbvex/migrations/${id}.ts`,
+    exportName: 'migration',
+    reversibility: 'reversible',
+  };
+}
+
+test('validateManifest preserves strict migration descriptors', () => {
+  const descriptor = migrationDescriptor();
+  const manifest = validateManifest({
+    protocolVersion: 'v1', deploymentId: 'migration_manifest',
+    schema: { tables: [{ tableName: 'users', fields: (descriptor.to as any).shape }] }, migrations: [descriptor],
+  });
+  assert.deepStrictEqual(manifest.migrations, [descriptor]);
+  assert.throws(() => validateManifest({
+    protocolVersion: 'v1', deploymentId: 'migration_unknown',
+    schema: { tables: [{ tableName: 'users', fields: (descriptor.to as any).shape }] },
+    migrations: [{ ...descriptor, unexpected: true }],
+  }), /unknown fields/);
+});
+
+test('validateManifest rejects duplicate, unsorted, and invalid migrations', () => {
+  const manifest = (migrations: unknown[]) => ({
+    protocolVersion: 'v1', deploymentId: 'bad_migrations', migrations,
+    schema: { tables: [{ tableName: 'users', fields: (migrationDescriptor().to as any).shape }] },
+  });
+  assert.throws(() => validateManifest(manifest([migrationDescriptor(), migrationDescriptor()])), /duplicated/);
+  assert.throws(() => validateManifest(manifest([
+    migrationDescriptor('b_second'), migrationDescriptor('a_first'),
+  ])), /sorted/);
+  for (const descriptor of [
+    { ...migrationDescriptor(), id: '../bad' },
+    { ...migrationDescriptor(), from: { type: 'bogus' } },
+    { ...migrationDescriptor(), from: { type: 'string' } },
+    { ...migrationDescriptor(), modulePath: 'pbvex/users.ts' },
+    { ...migrationDescriptor(), checksum: 'ABC' },
+    { ...migrationDescriptor(), mode: 'background' },
+  ]) assert.throws(() => validateManifest(manifest([descriptor])));
+});
+
+test('validateActivateResponse preserves bounded Go migration warnings', () => {
+  const warning = {
+    code: 'transactional_migration_utilization', rows: 8000, rowLimit: 10000,
+    estimatedBytes: 1024, byteLimit: 64 << 20, utilizationPercent: 80,
+  } as const;
+  const response = validateActivateResponse({
+    deploymentId: 'dep_warning', activatedAt: '2026-07-18T12:00:00Z', warnings: [warning],
+  });
+  assert.deepStrictEqual(response.warnings, [warning]);
+  for (const invalid of [
+    { ...warning, extra: true },
+    { ...warning, code: 'other' },
+    { ...warning, rows: -1 },
+    { ...warning, rowLimit: 10001 },
+    { ...warning, estimatedBytes: (64 << 20) + 1 },
+    { ...warning, utilizationPercent: 101 },
+  ]) {
+    assert.throws(() => validateActivateResponse({
+      deploymentId: 'dep_warning', activatedAt: '2026-07-18T12:00:00Z', warnings: [invalid],
+    }));
+  }
+  assert.throws(() => validateActivateResponse({
+    deploymentId: 'dep_warning', activatedAt: '2026-07-18T12:00:00Z', warnings: [warning, warning],
+  }));
 });
 
 test('validateManifest reserves generated component physical table names', () => {

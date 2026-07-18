@@ -12,6 +12,8 @@ PBVex has strong package and backend test coverage, but it does not currently sh
 | Backend | Activation, runtime/database bridge, auth, realtime, scheduler, and storage | Go tests under `backend/`. |
 | Integration | Your actual functions, schema migrations, auth, and client calls | Start a disposable PBVex binary/data directory, deploy, and call it through the SDK or HTTP API. |
 
+For a PBVex migration, test `up` by deploying over a representative copy of the previous data, then call the authenticated deployment rollback API to exercise `down` and verify the old document shape. Include cases that invoke defaults and `ctx.fail`, and test near the 10,000-document/64-MiB activation ceilings when relevant. `pbvex migrations plan` verifies structural chains only; it cannot replace activation against representative data. Test PocketBase host migrations separately on backend startup because PBVex deployment rollback does not reverse them.
+
 ## Test an application through a deployed backend
 
 Use a temporary data directory and a test-only superuser. After deployment, exercise public functions through the same generated references used in production:

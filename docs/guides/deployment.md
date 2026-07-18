@@ -67,9 +67,9 @@ pbvex build -t production
 PBVEX_PRODUCTION_TOKEN='<superuser-token>' pbvex deploy -t production
 ```
 
-`build` generates references and writes `.pbvex/dist/artifact.json` plus `build-metadata.json`. The artifact contains the v1 manifest, base64 executable bundle, lowercase SHA-256, and decoded byte count. `deploy` bundles again, uploads to `/api/pbvex/deployments`, and activates the returned ID with `{ "atomic": true }`.
+`build` generates references and writes `.pbvex/dist/artifact.json` plus `build-metadata.json`. The artifact contains the v1 manifest, base64 executable bundle, lowercase SHA-256, decoded byte count, and any first-class definitions discovered in `pbvex/migrations/*.ts`. `deploy` bundles again, uploads to `/api/pbvex/deployments`, and activates the returned ID with `{ "atomic": true }`. PocketBase host files under `pbvex/pocketbaseMigrations/` are not part of this artifact.
 
-Activation verifies/compiles the complete bundle and applies schema and component materialization transactionally before switching the active deployment. If it fails, the existing active deployment remains active. Keep the build artifact as a release record, but do not treat it as a secret store.
+Activation verifies/compiles the complete bundle, runs applicable PBVex migration `up` handlers, and applies schema and component materialization transactionally before switching the active deployment. If any transformation, validation, limit check, or materialization fails, the existing active deployment and documents remain unchanged. Use `pbvex migrations plan -t production` for a structural comparison before deployment; it does not estimate rows or bytes. Keep the build artifact as a release record, but do not treat it as a secret store.
 
 ## Roll back an application release
 
@@ -81,7 +81,7 @@ curl -X POST http://127.0.0.1:8090/api/pbvex/deployments/<active-id>/rollback \
   -H 'Content-Type: application/json'
 ```
 
-Rollback restores the active deployment's recorded previous deployment atomically. It is not a binary downgrade and it does not restore deleted external data. If no previous deployment is recorded, the operation cannot select one for you. Back up before schema-changing releases and verify the representative call, subscription, scheduled job, and storage path after either direction of rollout.
+Rollback runs the applicable PBVex migration `down` handlers in reverse order, validates/materializes the previous schema, and restores the recorded previous deployment atomically. If `down` or validation fails, the current deployment and documents remain active and unchanged. It is not a binary downgrade, does not restore deleted external data, and does not roll back PocketBase host migrations. If no previous deployment is recorded, the operation cannot select one for you. Back up before schema-changing releases and verify the representative call, subscription, scheduled job, and storage path after either direction of rollout.
 
 ## Application environment variables
 

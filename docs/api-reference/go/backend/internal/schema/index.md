@@ -48,14 +48,15 @@ Package schema manages the PBVex reserved system collections and bootstrap state
 
 ```go
 const (
-    CollectionDeployments    = "_pbvex_deployments"
-    CollectionFunctions      = "_pbvex_functions"
-    CollectionSchemaState    = "_pbvex_schemaState"
-    CollectionJobs           = "_pbvex_jobs"
-    CollectionComponents     = "_pbvex_components"
-    CollectionStorageFiles   = "_pbvex_storage_files"
-    CollectionStorageTokens  = "_pbvex_storage_tokens"
-    CollectionStorageKeyring = "_pbvex_storage_keyring"
+    CollectionDeployments      = "_pbvex_deployments"
+    CollectionFunctions        = "_pbvex_functions"
+    CollectionSchemaState      = "_pbvex_schemaState"
+    CollectionJobs             = "_pbvex_jobs"
+    CollectionComponents       = "_pbvex_components"
+    CollectionStorageFiles     = "_pbvex_storage_files"
+    CollectionStorageTokens    = "_pbvex_storage_tokens"
+    CollectionStorageKeyring   = "_pbvex_storage_keyring"
+    CollectionMigrationHistory = "_pbvex_migration_history"
 
     StateKeyActive = "active"
 
@@ -109,6 +110,12 @@ const (
     FieldAttempts       = "attempts"
     FieldCreated        = "created"
     FieldUpdated        = "updated"
+    FieldMigrationID    = "migrationId"
+    FieldChecksum       = "checksum"
+    FieldSourceHash     = "sourceSchemaHash"
+    FieldTargetHash     = "targetSchemaHash"
+    FieldDirection      = "direction"
+    FieldAppliedAt      = "appliedAt"
 
     FieldStorageID          = "storageId"
     FieldStorageSha256      = "sha256"
@@ -172,7 +179,7 @@ var InternalContextKey = internalKey{}
 ```
 
 <a name="AppFromContext"></a>
-## func [AppFromContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L453>)
+## func [AppFromContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L465>)
 
 ```go
 func AppFromContext(ctx context.Context) (core.App, bool)
@@ -181,7 +188,7 @@ func AppFromContext(ctx context.Context) (core.App, bool)
 AppFromContext returns the PocketBase app stored in the context.
 
 <a name="Bootstrap"></a>
-## func [Bootstrap](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L128>)
+## func [Bootstrap](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L136>)
 
 ```go
 func Bootstrap(app core.App) error
@@ -235,7 +242,7 @@ func IndexableValidator(validator any) bool
 IndexableValidator reports whether a manifest validator has a stable, materializable scalar sort key. This is deliberately conservative: a SQLite index over an arbitrary union/object/array would have semantics that differ from the protocol evaluator.
 
 <a name="IsBackingCollection"></a>
-## func [IsBackingCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L423>)
+## func [IsBackingCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L435>)
 
 ```go
 func IsBackingCollection(c *core.Collection) bool
@@ -244,7 +251,7 @@ func IsBackingCollection(c *core.Collection) bool
 IsBackingCollection reports whether a collection has the PBVex backing storage fingerprint. It deliberately recognizes the internal fields even if an operator has drifted a rule/hidden flag: those fields must never become a raw PocketBase API escape hatch while activation is rejecting that drift. A non\-PBVex collection which deliberately adopts this private ABI is also protected, which is the safe failure mode for reserved storage names.
 
 <a name="IsReservedCollection"></a>
-## func [IsReservedCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L405>)
+## func [IsReservedCollection](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L417>)
 
 ```go
 func IsReservedCollection(name string) bool
@@ -397,7 +404,7 @@ func VerifyOpaqueID(value, namespace string, identityRoot, legacyRoot []byte, cu
 VerifyOpaqueID authenticates a PBVex capability against the persisted namespace identity root. legacyRoot is a durable, one\-time migration verifier for ids written by the historical cursor\-key scheme. It is kept independently of cursor current/previous so those old ids survive arbitrary future cursor rotations and restarts. current/previous remain a short compatibility path for a rolling upgrade that has not yet persisted the anchor.
 
 <a name="WithApp"></a>
-## func [WithApp](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L447>)
+## func [WithApp](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L459>)
 
 ```go
 func WithApp(ctx context.Context, app core.App) context.Context
@@ -406,7 +413,7 @@ func WithApp(ctx context.Context, app core.App) context.Context
 WithApp returns a context carrying the given PocketBase app and marked as internal.
 
 <a name="WithInternalContext"></a>
-## func [WithInternalContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L437>)
+## func [WithInternalContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/schema/schema.go#L449>)
 
 ```go
 func WithInternalContext(ctx context.Context) context.Context

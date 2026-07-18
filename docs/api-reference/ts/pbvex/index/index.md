@@ -125,6 +125,12 @@ Re-exports [defineComponentFns](../server/functions/defineComponentFns.md)
 
 ***
 
+### defineMigration
+
+Re-exports [defineMigration](../server/functions/defineMigration.md)
+
+***
+
 ### DocumentByName
 
 Re-exports [DocumentByName](../server/type-aliases/DocumentByName.md)
@@ -341,6 +347,12 @@ Re-exports [isFunctionDefinition](../server/functions/isFunctionDefinition.md)
 
 ***
 
+### isMigrationDefinition
+
+Re-exports [isMigrationDefinition](../server/functions/isMigrationDefinition.md)
+
+***
+
 ### isValidator
 
 Re-exports [isValidator](../values/functions/isValidator.md)
@@ -362,6 +374,24 @@ Re-exports [JobID](../server/type-aliases/JobID-1.md)
 ### LowerBoundIndexRangeBuilder
 
 Re-exports [LowerBoundIndexRangeBuilder](../server/interfaces/LowerBoundIndexRangeBuilder.md)
+
+***
+
+### MigrationContext
+
+Re-exports [MigrationContext](../server/interfaces/MigrationContext.md)
+
+***
+
+### MigrationDefinition
+
+Re-exports [MigrationDefinition](../server/interfaces/MigrationDefinition.md)
+
+***
+
+### MigrationOptions
+
+Re-exports [MigrationOptions](../server/interfaces/MigrationOptions.md)
 
 ***
 

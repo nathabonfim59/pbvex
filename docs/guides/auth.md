@@ -29,6 +29,27 @@ PBVex supports every OAuth2 provider exposed by its bundled PocketBase version, 
 
 OAuth2 is supported for application auth collections, but PocketBase does **not** support OAuth2 for the `_superusers` collection. Use a superuser password or another PocketBase-supported superuser method for deployment credentials.
 
+### Create an account
+
+Create the auth record through the same collection client used for sign-in. The auth collection must already exist and its create rule must permit the intended signup policy. Record creation does not sign the user in, so explicitly authenticate afterward when the product should start a session immediately:
+
+```ts
+const users = client.auth.collection('users');
+const password = 'correct horse battery staple';
+
+await users.create({
+  email: 'person@example.com',
+  password,
+  passwordConfirm: password,
+  name: 'Person',
+});
+await users.authWithPassword('person@example.com', password);
+```
+
+Additional fields such as `name` must be declared on the PocketBase auth collection. Validation failures are exposed as `AuthApiError`, including PocketBase's field-level error data. Do not bypass the client with a raw request; doing so duplicates URL normalization and structured error handling and can accidentally suggest that record creation also populated `client.authStore`.
+
+For reproducible application setup, declare auth-collection changes in the project's [`pbvex/pocketbaseMigrations/`](./migrations.md#advanced-pocketbase-host-migrations) directory rather than relying on local dashboard state. These are advanced PocketBase host migrations, not first-class PBVex document migrations. Create typed scaffolds with the nested command `pbvex migrations pocketbase create <name>`. `pbvex dev` and `pbvex serve` load that directory at backend startup; a custom location requires an explicit `--pocketbaseMigrationsDir` override.
+
 ## Sign in with the PBVex client
 
 Install the PBVex client:

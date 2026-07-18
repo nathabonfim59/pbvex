@@ -89,6 +89,31 @@ describe('deploy client', () => {
     expect(JSON.parse(activate!.body)).toEqual({ atomic: true });
   });
 
+  it('returns migration warnings from activation', async () => {
+    const warning = {
+      code: 'transactional_migration_utilization', rows: 8000, rowLimit: 10000,
+      estimatedBytes: 1024, byteLimit: 64 << 20, utilizationPercent: 80,
+    };
+    const mockFetch = async () => ({
+      ok: true, status: 200, json: async () => ({ ...createActivateResponse(), warnings: [warning] }),
+    } as Response);
+    const client = new DeployClient({ url: 'http://localhost:8090', fetch: mockFetch as any } as any);
+    expect((await client.activate(VALID_DEPLOYMENT_ID)).warnings).toEqual([warning]);
+  });
+
+  it('preserves migration warnings in the deploy result', async () => {
+    const artifact = createArtifact();
+    const warning = {
+      code: 'transactional_migration_utilization', rows: 8000, rowLimit: 10000,
+      estimatedBytes: 1024, byteLimit: 64 << 20, utilizationPercent: 80,
+    };
+    const mockFetch = async (url: string) => url.endsWith('/activate')
+      ? ({ ok: true, status: 200, json: async () => ({ ...createActivateResponse(), warnings: [warning] }) } as Response)
+      : ({ ok: true, status: 200, json: async () => createUploadResponse(artifact.sha256) } as Response);
+    const client = new DeployClient({ url: 'http://localhost:8090', fetch: mockFetch as any } as any);
+    expect((await client.deploy(artifact)).warnings).toEqual([warning]);
+  });
+
   it('returns an error if the server responds with a structured error', async () => {
     const mockFetch = async () =>
       ({

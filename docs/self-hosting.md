@@ -241,7 +241,10 @@ root-only migration compatibility path and are never valid inside components.
 
 To downgrade, restore both the old executable and the matching backup. An
 application deployment rollback is separate and uses
-`POST /api/pbvex/deployments/{id}/rollback`; it does not replace the binary.
+`POST /api/pbvex/deployments/{id}/rollback`; it runs applicable first-class
+PBVex migration `down` handlers atomically before restoring the previous
+deployment, but does not replace the binary or roll back PocketBase host
+migrations. A failed `down` leaves the current deployment active.
 
 PBVex intentionally has no self-update command. Only install artifacts from
 the PBVex release pipeline.
@@ -255,7 +258,7 @@ the PBVex release pipeline.
   disabled by default.
 - `--publicDir <path>` and `--indexFallback`: static application files.
 - `--hooksDir`, `--hooksWatch`, `--hooksPool`: PocketBase JS hooks.
-- `--migrationsDir`, `--automigrate`: user migrations.
+- `--migrationsDir`, `--automigrate`: PocketBase host migrations discovered at backend startup. The npm `pbvex` CLI maps `--pocketbaseMigrationsDir` to the backend flag and defaults only to `pbvex/pocketbaseMigrations/`; pass `--migrationsDir` when invoking the backend binary directly. These flags do not configure bundled `pbvex/migrations/*.ts`, which run during application activation under fixed safety limits.
 - `--dev`: development logging.
 - `--version`: binary version.
 

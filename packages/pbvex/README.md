@@ -25,6 +25,10 @@ explicitly replaces only those managed scaffold files.
 
 - `pbvex init`: create a project scaffold.
 - `pbvex codegen`: generate `pbvex/_generated/{api,dataModel,server}.ts`.
+- `pbvex migrations create <name> --table <table>`: create a typed PBVex schema migration under `pbvex/migrations/`.
+- `pbvex migrations plan`: compare the local candidate with the active deployment schema.
+- `pbvex migrations pocketbase create <name>`: create a typed PocketBase migration under
+  `pbvex/pocketbaseMigrations/` and generate matching PocketBase declarations.
 - `pbvex typecheck`: regenerate types and run `tsc --noEmit`.
 - `pbvex build`: write `.pbvex/dist/artifact.json` and build metadata.
 - `pbvex build --check`: validate without writing deployment output.
@@ -35,11 +39,45 @@ explicitly replaces only those managed scaffold files.
   backend, perform the first deployment, then watch `pbvex/**/*.ts`,
   regenerate, and redeploy. Use `--no-backend` for an externally managed
   server, `--no-admin-ui` to omit the development dashboard, or `--debug` to
-  include verbose PocketBase and SQL logs.
+  include verbose PocketBase and SQL logs. PocketBase host migrations load at
+  startup from `pbvex/pocketbaseMigrations/`; `--pocketbaseMigrationsDir` is an
+  advanced explicit override.
 
 `pbvex init` adds `pbvex:dev`, `pbvex:serve`, `pbvex:deploy`, and
 `pbvex:typecheck` package scripts by default. Interactive runs prompt with yes
 as the default; `--no-scripts` opts out.
+
+## PBVex and PocketBase migrations
+
+First-class PBVex document migrations live in `pbvex/migrations/*.ts` and are
+the default migration system for tables declared in `pbvex/schema.ts`:
+
+```bash
+pbvex migrations plan
+pbvex migrations create add_account_status --table accounts
+```
+
+The generator scaffolds a typed `defineMigration` with object `from`/`to`
+validators and required synchronous `up`/`down` handlers. Definitions target
+one root PBVex table, are bundled into `.pbvex/dist/artifact.json`, and run
+during atomic deployment activation. The handler context is pure and has no
+database or side-effect APIs. Deployment rollback runs `down` in reverse order;
+a failure in either direction leaves the current documents and active
+deployment unchanged. Applied IDs are protected by checksums and schema hashes,
+so never reuse or edit an applied migration ID.
+
+Activation enforces fixed hard limits of 10,000 processed documents and 64 MiB
+of encoded work and returns a structured warning at 80% utilization. There is
+no force bypass or maintenance mode. `pbvex migrations plan` is structural
+only: it reports schema changes and matching migration chains, not row/byte
+estimates. Use `--active-artifact <path>` for a validated offline source.
+
+Direct PocketBase host state uses the separate nested command
+`pbvex migrations pocketbase create <name>` and
+`pbvex/pocketbaseMigrations/`. Those JavaScript files run at backend startup,
+are not bundled in the PBVex artifact, and are not reversed by PBVex deployment
+rollback. Use host migrations for auth collections/rules, never for a table
+owned by `pbvex/schema.ts`.
 
 ## Configuration and credentials
 

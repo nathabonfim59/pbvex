@@ -15,10 +15,10 @@ This page records limits implemented by PBVex v1 source. A deployment manifest c
 | Wire codec | Depth 128; 16,384 nodes; 4 MiB internal wire-byte budget; 1,024 array entries/object fields | No application configuration. |
 | Query `take`, `collect`, and page size | At most 1,024 documents | No application configuration. Use pagination. |
 | Schema | 64 tables, 256 fields per table, 64 indexes per table, 16 fields per index | No application configuration. |
-| Schema activation migration | 10,000 rows and 64 MiB of encoded migration data | No application configuration. |
+| Transactional schema activation | 10,000 processed documents and 64 MiB of encoded migration work; structured warning at 80% utilization | No application configuration or force bypass. |
 | Deployment history | 10 retained entries by default | Go embedding configuration only. |
 
-The deploy HTTP endpoint accepts a larger base64 JSON envelope so that a maximum decoded bundle fits; the decoded-bundle limit above is the meaningful artifact limit. Schema and descriptor validation also imposes identifier, path, field-name, and value-depth rules; see the [protocol ADR](../adr/001-protocol-v1.md) rather than copying protocol grammar into application code.
+The schema-activation byte budget includes source values, explicit migration outputs, normalized documents, and retained order/index projections; it is not database size. `pbvex migrations plan` reports structural changes and matching chains but does not inspect rows or estimate this work. The deploy HTTP endpoint accepts a larger base64 JSON envelope so that a maximum decoded bundle fits; the decoded-bundle limit above is the meaningful artifact limit. Schema and descriptor validation also imposes identifier, path, field-name, and value-depth rules; see the [protocol ADR](../adr/001-protocol-v1.md) rather than copying protocol grammar into application code.
 
 ## Realtime and HTTP actions
 

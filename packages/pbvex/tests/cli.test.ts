@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -21,7 +21,7 @@ describe('cli', () => {
     );
     await writeFile(
       path.join(pbvexDir, 'schema.ts'),
-      `import { defineSchema, defineTable } from 'pbvex/server';\nimport { v } from 'pbvex/values';\nexport default defineSchema({\n  messages: defineTable({ body: v.string(), channel: v.optional(v.string()) }),\n});\n`,
+      `import { defineSchema, defineTable } from 'pbvex/server';\nimport { v } from 'pbvex/values';\nexport default defineSchema({\n  messages: defineTable({ body: v.string() }),\n});\n`,
       'utf-8',
     );
     await writeFile(
@@ -36,6 +36,8 @@ describe('cli', () => {
     const artifactPath = path.join(tempDir, '.pbvex', 'dist', 'artifact.json');
     const metadataPath = path.join(tempDir, '.pbvex', 'dist', 'build-metadata.json');
     const artifactRaw = await readFile(artifactPath, 'utf-8');
+    const activeArtifactPath = path.join(tempDir, 'active-artifact.json');
+    await writeFile(activeArtifactPath, artifactRaw, 'utf-8');
     const artifact = JSON.parse(artifactRaw);
     expect(artifact.manifest.protocolVersion).toBe('v1');
     expect(artifact.project).toBeUndefined();
@@ -65,6 +67,37 @@ describe('cli', () => {
     expect(generatedDataModel).toContain("export type TableNames = 'messages'");
     expect(generatedDataModel).toContain('"_id": Id<"messages">');
     expect(generatedDataModel).toContain('"_creationTime": number');
+
+    const help = execSync(`node ${cliPath} migrations --help`, { cwd: tempDir, encoding: 'utf8' });
+    expect(help).toContain('create');
+    expect(help).toContain('plan');
+    expect(help).toContain('pocketbase');
+    expect(() => execSync(`node ${cliPath} migrate create legacy`, { cwd: tempDir, stdio: 'pipe' })).toThrow();
+
+    await writeFile(
+      path.join(tempDir, 'pbvex', 'schema.ts'),
+      `import { defineSchema, defineTable } from 'pbvex/server';\nimport { v } from 'pbvex/values';\nexport default defineSchema({\n  messages: defineTable({ body: v.string(), channel: v.optional(v.string()) }),\n});\n`,
+      'utf-8',
+    );
+
+    const createOutput = execSync(
+      `node ${cliPath} migrations create add-channel --table messages --active-artifact ${activeArtifactPath}`,
+      { cwd: tempDir, encoding: 'utf8' },
+    );
+    expect(createOutput).toContain('Created pbvex/migrations/');
+    const migrationPath = path.join(tempDir, 'pbvex', 'migrations');
+    const migrationName = (await readdir(migrationPath))[0]!;
+    expect(await readFile(path.join(migrationPath, migrationName), 'utf8')).toContain('defineMigration');
+
+    execSync(`node ${cliPath} build`, { cwd: tempDir, stdio: 'pipe' });
+    const plan = execSync(
+      `node ${cliPath} migrations plan --active-artifact ${activeArtifactPath}`,
+      { cwd: tempDir, encoding: 'utf8' },
+    );
+    expect(plan).toContain('Source deployment: dep_');
+    expect(plan).toContain('Discovered migration matches:');
+    expect(plan).toContain('_add_channel (messages, transactional)');
+    expect(plan).not.toMatch(/count|estimate/i);
 
     await rm(tempDir, { recursive: true, force: true });
   });

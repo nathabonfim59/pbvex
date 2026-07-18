@@ -44,6 +44,8 @@
 - [IndexDescriptor](type-aliases/IndexDescriptor.md)
 - [JSONObject](type-aliases/JSONObject.md)
 - [JSONValue](type-aliases/JSONValue.md)
+- [MigrationDescriptor](type-aliases/MigrationDescriptor.md)
+- [MigrationWarning](type-aliases/MigrationWarning.md)
 - [ModuleSource](type-aliases/ModuleSource.md)
 - [OptionalRestArgs](type-aliases/OptionalRestArgs.md)
 - [PbvexValue](type-aliases/PbvexValue.md)
@@ -61,6 +63,7 @@
 
 - [DEFAULT\_CONFIG](variables/DEFAULT_CONFIG.md)
 - [ERROR\_CODES](variables/ERROR_CODES.md)
+- [MAX\_ACTIVATION\_WARNINGS](variables/MAX_ACTIVATION_WARNINGS.md)
 - [MAX\_ARRAY\_SIZE](variables/MAX_ARRAY_SIZE.md)
 - [MAX\_BUDGET\_BYTES](variables/MAX_BUDGET_BYTES.md)
 - [MAX\_BUDGET\_NODES](variables/MAX_BUDGET_NODES.md)

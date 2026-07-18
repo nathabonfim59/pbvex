@@ -171,7 +171,15 @@ func NewService(app core.App, repo *Repo, invoker RuntimeInvoker, config Config)
 	}
 }
 
-func verifyRuntime(invoker any, ctx context.Context, deploymentID, bundle string, descriptors []FunctionDescriptor) error {
+func verifyRuntime(invoker any, ctx context.Context, deploymentID, bundle string, descriptors []FunctionDescriptor, migrations []MigrationDescriptor) error {
+	if v, ok := invoker.(interface {
+		VerifyDeployment(context.Context, string, string, []FunctionDescriptor, []MigrationDescriptor) error
+	}); ok {
+		return v.VerifyDeployment(ctx, deploymentID, bundle, descriptors, migrations)
+	}
+	if len(migrations) != 0 {
+		return fmt.Errorf("runtime migration verifier is not configured")
+	}
 	v, ok := invoker.(interface {
 		Verify(context.Context, string, string, []FunctionDescriptor) error
 	})
@@ -181,7 +189,15 @@ func verifyRuntime(invoker any, ctx context.Context, deploymentID, bundle string
 	return v.Verify(ctx, deploymentID, bundle, descriptors)
 }
 
-func compileRuntime(invoker any, deploymentID, bundle string, descriptors []FunctionDescriptor, cfg DeploymentConfig) error {
+func compileRuntime(invoker any, deploymentID, bundle string, descriptors []FunctionDescriptor, migrations []MigrationDescriptor, cfg DeploymentConfig) error {
+	if v, ok := invoker.(interface {
+		CompileDeployment(string, string, []FunctionDescriptor, []MigrationDescriptor, ...DeploymentConfig) error
+	}); ok {
+		return v.CompileDeployment(deploymentID, bundle, descriptors, migrations, cfg)
+	}
+	if len(migrations) != 0 {
+		return fmt.Errorf("runtime migration compiler is not configured")
+	}
 	switch v := invoker.(type) {
 	case interface {
 		Compile(string, string, []FunctionDescriptor, ...DeploymentConfig) error
@@ -277,7 +293,7 @@ func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUpload
 	}
 	bundleJS := string(bundleBytes)
 
-	if err := verifyRuntime(s.invoker, ctx, manifest.DeploymentID, bundleJS, manifest.Functions); err != nil {
+	if err := verifyRuntime(s.invoker, ctx, manifest.DeploymentID, bundleJS, manifest.Functions, manifest.Migrations); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidBundle, err)
 	}
 
@@ -302,7 +318,7 @@ func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUpload
 	}
 
 	deploymentID := record.GetString(schema.FieldDeploymentID)
-	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, NormalizeConfig(manifest.Config)); err != nil {
+	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidBundle, err)
 	}
 
@@ -330,7 +346,7 @@ func (s *Service) resumeUpload(record *core.Record, manifest DeploymentManifest,
 	}
 
 	deploymentID := record.GetString(schema.FieldDeploymentID)
-	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, NormalizeConfig(manifest.Config)); err != nil {
+	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidBundle, err)
 	}
 
@@ -421,24 +437,19 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 	}
 
 	deploymentID := record.GetString(schema.FieldDeploymentID)
-	if err := verifyRuntime(s.invoker, ctx, deploymentID, bundleJS, manifest.Functions); err != nil {
+	if err := verifyRuntime(s.invoker, ctx, deploymentID, bundleJS, manifest.Functions, manifest.Migrations); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
 	}
-	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, NormalizeConfig(manifest.Config)); err != nil {
+	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
 	}
 
 	now := types.NowDateTime()
 	var previousID string
+	var warning *MigrationWarning
 	if err := s.app.RunInTransaction(func(txApp core.App) error {
 		internalCtx := s.internalCtxFrom(ctx)
 		if err := internalCtx.Err(); err != nil {
-			return err
-		}
-		if err := authenticateComponentMountArgs(internalCtx, txApp, manifest); err != nil {
-			return err
-		}
-		if err := materializeSchema(internalCtx, txApp, manifest); err != nil {
 			return err
 		}
 		state, err := s.repo.GetState(internalCtx, txApp)
@@ -449,6 +460,54 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 		currentActiveID := state.GetString(schema.FieldActiveID)
 		if currentActiveID == id {
 			return ErrAlreadyActive
+		}
+		sourceManifest := DeploymentManifest{Schema: map[string]any{"tables": []any{}}}
+		if currentActiveID != "" {
+			sourceRecord, err := s.repo.GetDeployment(internalCtx, txApp, currentActiveID)
+			if err != nil {
+				return err
+			}
+			sourceManifest, err = s.recordManifest(sourceRecord)
+			if err != nil {
+				return err
+			}
+		}
+		plans, err := planMigrations(sourceManifest, manifest)
+		if err != nil {
+			return fmt.Errorf("%w: migration planning failed: %v", ErrActivationFailed, err)
+		}
+		if err := preflightMigrationHistory(internalCtx, txApp, manifest.Migrations); err != nil {
+			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		}
+		if err := authenticateComponentMountArgs(internalCtx, txApp, manifest); err != nil {
+			return err
+		}
+		if err := preflightMaterializeSchema(internalCtx, txApp, manifest); err != nil {
+			return err
+		}
+		work, skipMaterialization, err := schemaMigrationWork(sourceManifest, manifest, plans)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		}
+		rows, estimatedBytes, err := preflightMigrationPlans(internalCtx, txApp, work)
+		if err != nil {
+			return err
+		}
+		if len(work) > 0 {
+			warning = migrationWarning(rows, estimatedBytes)
+		}
+		budget := &migrationBudget{}
+		if err := s.applyMigrationPlans(internalCtx, txApp, deploymentID, "up", manifest, plans, now, budget); err != nil {
+			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		}
+		materializeCtx := withMigrationMaterialization(internalCtx, budget, skipMaterialization)
+		if err := materializeSchema(materializeCtx, txApp, manifest); err != nil {
+			return err
+		}
+		if len(work) > 0 {
+			if actualWarning := migrationWarning(budget.rows, budget.bytes); actualWarning != nil {
+				warning = actualWarning
+			}
 		}
 
 		if currentActiveID != "" {
@@ -484,6 +543,9 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 	}
 	if previousID != "" {
 		resp.PreviousDeploymentID = &previousID
+	}
+	if warning != nil {
+		resp.Warnings = []MigrationWarning{*warning}
 	}
 
 	if s.invalidator != nil {
@@ -618,6 +680,9 @@ func missingComponentMountArgState(descriptor any) (any, bool, bool) {
 // Existing user collections are checked for the PBVex backing fields instead
 // of being silently reshaped while a function is running.
 func materializeSchema(ctx context.Context, app core.App, manifest DeploymentManifest) error {
+	if err := preflightMaterializeSchema(ctx, app, manifest); err != nil {
+		return err
+	}
 	namespaces, err := ComponentNamespaces(manifest.Components)
 	if err != nil {
 		return err
@@ -627,21 +692,6 @@ func materializeSchema(ctx context.Context, app core.App, manifest DeploymentMan
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	if err := preflightPhysicalIdentities(manifest, namespaces); err != nil {
-		return err
-	}
-	// Validate every namespace against the current database before mutating the
-	// first collection. Service.Activate still wraps the whole operation in a
-	// transaction; this preflight also makes failure ordering deterministic.
-	if err := preflightNamespaceSchema(ctx, app, manifest.Schema, RootNamespace, nil); err != nil {
-		return err
-	}
-	for _, path := range paths {
-		namespace := namespaces[path]
-		if err := preflightNamespaceSchema(ctx, app, namespace.Schema, namespace.ID, namespace.PhysicalByTable); err != nil {
-			return fmt.Errorf("component %q schema: %w", path, err)
-		}
-	}
 	if err := materializeNamespaceSchema(ctx, app, manifest.Schema, RootNamespace, nil); err != nil {
 		return err
 	}
@@ -652,6 +702,31 @@ func materializeSchema(ctx context.Context, app core.App, manifest DeploymentMan
 		}
 	}
 	return reconcileComponentCatalog(ctx, app, manifest, namespaces)
+}
+
+func preflightMaterializeSchema(ctx context.Context, app core.App, manifest DeploymentManifest) error {
+	namespaces, err := ComponentNamespaces(manifest.Components)
+	if err != nil {
+		return err
+	}
+	if err := preflightPhysicalIdentities(manifest, namespaces); err != nil {
+		return err
+	}
+	if err := preflightNamespaceSchema(ctx, app, manifest.Schema, RootNamespace, nil); err != nil {
+		return err
+	}
+	paths := make([]string, 0, len(namespaces))
+	for path := range namespaces {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		namespace := namespaces[path]
+		if err := preflightNamespaceSchema(ctx, app, namespace.Schema, namespace.ID, namespace.PhysicalByTable); err != nil {
+			return fmt.Errorf("component %q schema: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // preflightPhysicalIdentities rejects every manifest-wide collection or SQL
@@ -1141,8 +1216,14 @@ func materializeDocuments(ctx context.Context, app core.App, table string, field
 	if !isIdentifier(table) {
 		return fmt.Errorf("schema materialization failed")
 	}
+	if migrated, _ := ctx.Value(migratedTablesContextKey{}).(map[string]bool); migrated[table] {
+		return nil
+	}
 	lastID := ""
-	processed, usedBytes := 0, int64(0)
+	budget, _ := ctx.Value(migrationBudgetContextKey{}).(*migrationBudget)
+	if budget == nil {
+		budget = &migrationBudget{}
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1159,8 +1240,8 @@ func materializeDocuments(ctx context.Context, app core.App, table string, field
 			return nil
 		}
 		for _, row := range rows {
-			processed++
-			if processed > maxSchemaMigrationRows {
+			budget.rows++
+			if budget.rows > maxSchemaMigrationRows {
 				return fmt.Errorf("schema migration exceeds limit")
 			}
 			data := map[string]any{}
@@ -1190,7 +1271,7 @@ func materializeDocuments(ctx context.Context, app core.App, table string, field
 			// legacy document substantially and the order projection is retained
 			// alongside it, so counting only the old JSON was not a memory/work
 			// budget.
-			if err := chargeMigrationBytes(&usedBytes, before); err != nil {
+			if err := chargeMigrationBytes(&budget.bytes, before); err != nil {
 				return err
 			}
 			normalized, err := schema.NormalizeDocument(fields, data, false, true, idCheck)
@@ -1209,10 +1290,10 @@ func materializeDocuments(ctx context.Context, app core.App, table string, field
 			if err != nil {
 				return fmt.Errorf("schema materialization failed")
 			}
-			if err := chargeMigrationBytes(&usedBytes, after); err != nil {
+			if err := chargeMigrationBytes(&budget.bytes, after); err != nil {
 				return err
 			}
-			if err := chargeMigrationBytes(&usedBytes, projectionJSON); err != nil {
+			if err := chargeMigrationBytes(&budget.bytes, projectionJSON); err != nil {
 				return err
 			}
 			if before != after {
@@ -1264,17 +1345,88 @@ func (s *Service) RollbackContext(ctx context.Context, id string) (*DeploymentRo
 		return nil, ErrActiveNotFound
 	}
 
-	activateResp, err := s.ActivateContext(ctx, restoredID, true)
+	currentManifest, currentBundle, err := s.recordManifestAndBundle(record)
 	if err != nil {
+		return nil, err
+	}
+	restoredRecord, err := s.repo.GetDeployment(ctx, s.app, restoredID)
+	if err != nil {
+		return nil, err
+	}
+	restoredManifest, err := s.recordManifest(restoredRecord)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyRuntime(s.invoker, ctx, id, currentBundle, currentManifest.Functions, currentManifest.Migrations); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
+	}
+	if err := compileRuntime(s.invoker, id, currentBundle, currentManifest.Functions, currentManifest.Migrations, NormalizeConfig(currentManifest.Config)); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
+	}
+	now := types.NowDateTime()
+	if err := s.app.RunInTransaction(func(txApp core.App) error {
+		internalCtx := s.internalCtxFrom(ctx)
+		state, err := s.repo.GetState(internalCtx, txApp)
+		if err != nil {
+			return err
+		}
+		if state.GetString(schema.FieldActiveID) != id || state.GetString(schema.FieldPreviousID) != restoredID {
+			return fmt.Errorf("%w: active deployment changed", ErrActivationFailed)
+		}
+		plans, err := planMigrations(restoredManifest, currentManifest)
+		if err != nil {
+			return fmt.Errorf("%w: migration planning failed: %v", ErrActivationFailed, err)
+		}
+		if err := preflightMigrationHistory(internalCtx, txApp, currentManifest.Migrations); err != nil {
+			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		}
+		plans = reverseMigrationPlans(plans)
+		if err := authenticateComponentMountArgs(internalCtx, txApp, restoredManifest); err != nil {
+			return err
+		}
+		if err := preflightMaterializeSchema(internalCtx, txApp, restoredManifest); err != nil {
+			return err
+		}
+		work, skipMaterialization, err := schemaMigrationWork(currentManifest, restoredManifest, plans)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		}
+		if _, _, err := preflightMigrationPlans(internalCtx, txApp, work); err != nil {
+			return err
+		}
+		budget := &migrationBudget{}
+		if err := s.applyMigrationPlans(internalCtx, txApp, id, "down", restoredManifest, plans, now, budget); err != nil {
+			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		}
+		if err := materializeSchema(withMigrationMaterialization(internalCtx, budget, skipMaterialization), txApp, restoredManifest); err != nil {
+			return err
+		}
+		if err := s.repo.SetDeploymentActive(internalCtx, txApp, id, false); err != nil {
+			return err
+		}
+		if err := s.repo.SetDeploymentActive(internalCtx, txApp, restoredID, true); err != nil {
+			return err
+		}
+		if err := s.repo.SetDeploymentActivatedAt(internalCtx, txApp, restoredID, now); err != nil {
+			return err
+		}
+		state.Set(schema.FieldActiveID, restoredID)
+		state.Set(schema.FieldPreviousID, id)
+		return s.repo.SaveState(internalCtx, txApp, state)
+	}); err != nil {
 		return nil, err
 	}
 
 	resp := &DeploymentRollbackResponse{
 		DeploymentID: id,
-		RolledBackAt: activateResp.ActivatedAt,
+		RolledBackAt: responseTimestamp(now),
 	}
-	if activateResp.DeploymentID != "" {
-		resp.RestoredDeploymentID = &activateResp.DeploymentID
+	resp.RestoredDeploymentID = &restoredID
+	if s.invalidator != nil {
+		s.invalidator.ReconnectAll()
+	}
+	if s.activationObserver != nil {
+		s.activationObserver.ActiveDeploymentChanged(restoredID, restoredManifest)
 	}
 	return resp, nil
 }
@@ -1295,7 +1447,7 @@ func (s *Service) Invoke(ctx context.Context, deploymentID, functionName string,
 		return nil, err
 	}
 	deploymentID = record.GetString(schema.FieldDeploymentID)
-	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, NormalizeConfig(manifest.Config)); err != nil {
+	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
 		return nil, err
 	}
 	return s.invokeWithLimits(ctx, deploymentID, functionName, args, NormalizeConfig(manifest.Config), manifest)
@@ -1368,7 +1520,7 @@ func (s *Service) Call(ctx context.Context, functionName string, args any, authA
 	if err != nil {
 		return nil, err
 	}
-	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Config); err != nil {
+	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Manifest.Migrations, snap.Config); err != nil {
 		return nil, err
 	}
 	return s.invokeWithLimits(ctx, snap.DeploymentID, functionName, args, snap.Config, snap.Manifest)
@@ -1380,7 +1532,7 @@ func (s *Service) CallQuery(ctx context.Context, functionName string, args any) 
 	if err != nil {
 		return nil, err
 	}
-	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Config); err != nil {
+	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Manifest.Migrations, snap.Config); err != nil {
 		return nil, err
 	}
 	return s.invokeWithLimits(ctx, snap.DeploymentID, functionName, args, snap.Config, snap.Manifest)
@@ -1391,7 +1543,7 @@ func (s *Service) CallQuery(ctx context.Context, functionName string, args any) 
 // runs against the exact deployment that was active at admission time, even
 // if a new deployment is activated mid-connection.
 func (s *Service) InvokeSnapshot(ctx context.Context, snap *CallSnapshot, args any) (any, error) {
-	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Config); err != nil {
+	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Manifest.Migrations, snap.Config); err != nil {
 		return nil, err
 	}
 	return s.invokeWithLimits(ctx, snap.DeploymentID, snap.Descriptor.Name, args, snap.Config, snap.Manifest)
@@ -1424,7 +1576,7 @@ func (s *Service) HTTPAction(ctx context.Context, method, path string, envelope 
 		return nil, &ValueSizeError{Label: "httpAction request body", Limit: cfg.MaxFunctionArgsBytes}
 	}
 	deploymentID := record.GetString(schema.FieldDeploymentID)
-	if err := compileRuntime(s.invoker, deploymentID, record.GetString(schema.FieldBundle), manifest.Functions, cfg); err != nil {
+	if err := compileRuntime(s.invoker, deploymentID, record.GetString(schema.FieldBundle), manifest.Functions, manifest.Migrations, cfg); err != nil {
 		return nil, err
 	}
 	metadata := auth.InvocationMetadataFromContext(ctx)
@@ -1571,7 +1723,7 @@ func (s *Service) InvokeDeploymentSnapshot(ctx context.Context, deploymentID, bu
 		return nil, err
 	}
 	realDeploymentID := record.GetString(schema.FieldDeploymentID)
-	if err := compileRuntime(s.invoker, realDeploymentID, record.GetString(schema.FieldBundle), manifest.Functions, NormalizeConfig(manifest.Config)); err != nil {
+	if err := compileRuntime(s.invoker, realDeploymentID, record.GetString(schema.FieldBundle), manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
 		return nil, err
 	}
 	return s.invokeWithLimits(ctx, realDeploymentID, functionName, args, NormalizeConfig(manifest.Config), manifest)
@@ -1682,10 +1834,10 @@ func (s *Service) WarmActive() error {
 		return err
 	}
 	deploymentID := record.GetString(schema.FieldDeploymentID)
-	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, NormalizeConfig(manifest.Config)); err != nil {
+	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
 		return fmt.Errorf("%w: %v", ErrActivationFailed, err)
 	}
-	if err := verifyRuntime(s.invoker, context.Background(), deploymentID, bundleJS, manifest.Functions); err != nil {
+	if err := verifyRuntime(s.invoker, context.Background(), deploymentID, bundleJS, manifest.Functions, manifest.Migrations); err != nil {
 		return fmt.Errorf("%w: %v", ErrActivationFailed, err)
 	}
 	if s.activationObserver != nil {

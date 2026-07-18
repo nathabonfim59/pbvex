@@ -4,12 +4,12 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { createContext, runInNewContext } from 'node:vm';
 import type { DeploymentArtifact, ModuleEntry } from './manifest.js';
-import { createArtifact } from './manifest.js';
+import { createArtifact, createMigrationDescriptors } from './manifest.js';
 import { validateImports, resolveRelativeModule } from './importValidator.js';
 import { resolveRuntimePath } from './runtimeResolver.js';
 import { DERIVE_FUNCTION_NAME_JS } from './functionName.js';
-import type { CronJobsDefinition, FunctionDefinition, SchemaDefinition } from '../runtime/server.js';
-import { isCronJobsDefinition, isFunctionDefinition, isSchemaDefinition } from '../runtime/server.js';
+import type { CronJobsDefinition, FunctionDefinition, MigrationDefinition, SchemaDefinition } from '../runtime/server.js';
+import { isCronJobsDefinition, isFunctionDefinition, isMigrationDefinition, isSchemaDefinition } from '../runtime/server.js';
 import type { ComponentDefinitionWithKind, ComponentMountDefinition, AppDefinition } from '../runtime/component.js';
 import { isComponentDefinition, isAppDefinition, buildComponentGraph } from '../runtime/component.js';
 import { discoverEmailTemplates } from './emailTemplates.js';
@@ -28,6 +28,7 @@ export interface BundleResult {
   app: AppDefinition | undefined;
   schema: SchemaDefinition | undefined;
   cronJobs: CronJobsDefinition | undefined;
+  migrations: MigrationDefinition[];
   diagnostics: string[];
 }
 
@@ -46,10 +47,32 @@ export async function discoverModules(rootDir: string, entryDir = 'pbvex'): Prom
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         if (entry.name === '_generated' || entry.name === 'node_modules') continue;
+        if (!prefix && (entry.name === 'migrations' || entry.name === 'pocketbaseMigrations')) continue;
         await walk(fullPath, relativePath);
       } else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
         if (relativePath === 'pbvex.config.ts') continue;
         files.push(path.join(entryDir, relativePath).replace(/\\/g, '/'));
+      }
+    }
+  }
+  await walk(dir, '');
+  return files.sort();
+}
+
+export async function discoverMigrationModules(rootDir: string, entryDir = 'pbvex'): Promise<string[]> {
+  const dir = path.join(rootDir, entryDir, 'migrations');
+  if (!existsSync(dir)) return [];
+  const files: string[] = [];
+  async function walk(current: string, prefix: string) {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (entry.name === '_generated' || entry.name === 'node_modules' || entry.name === 'pocketbaseMigrations') continue;
+        await walk(fullPath, relativePath);
+      } else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
+        files.push(path.join(entryDir, 'migrations', relativePath).replace(/\\/g, '/'));
       }
     }
   }
@@ -62,13 +85,14 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
   try { emailTemplates = await discoverEmailTemplates(options.rootDir, options.entryDir); }
   catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { artifact: await createArtifact(options.project, options.target, [], [], undefined, undefined, [], ''), functions: [], components: [], app: undefined, schema: undefined, cronJobs: undefined, diagnostics: [message] };
+    return { artifact: await createArtifact(options.project, options.target, [], [], undefined, undefined, [], ''), functions: [], components: [], app: undefined, schema: undefined, cronJobs: undefined, migrations: [], diagnostics: [message] };
   }
   const modulePaths = await discoverModules(options.rootDir, options.entryDir);
+  const migrationModulePaths = await discoverMigrationModules(options.rootDir, options.entryDir);
   const diagnostics: string[] = [];
   const modules: ModuleEntry[] = [];
 
-  for (const modulePath of modulePaths) {
+  for (const modulePath of [...modulePaths, ...migrationModulePaths]) {
     const absolutePath = path.join(options.rootDir, modulePath);
     const sourceText = await readFile(absolutePath, 'utf-8');
     const sourceFile = ts.createSourceFile(absolutePath, sourceText, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
@@ -112,18 +136,25 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
       app: undefined,
       schema: undefined,
       cronJobs: undefined,
+      migrations: [],
       diagnostics,
     };
   }
 
   try {
-    const { moduleBundle, modules: evaluatedModules } = await buildBundle(options.rootDir, options.entryDir ?? 'pbvex', modulePaths);
+    const { moduleBundle, modules: evaluatedModules } = await buildBundle(options.rootDir, modulePaths, 'PBVEX_MODULES');
+    const { moduleBundle: migrationBundle, modules: evaluatedMigrationModules } = await buildBundle(
+      options.rootDir,
+      migrationModulePaths,
+      'PBVEX_MIGRATION_MODULES',
+    );
 
     const functions: FunctionDefinition<any, any, any>[] = [];
     const componentSources = new Map<ComponentDefinitionWithKind, string>();
     let app: AppDefinition | undefined;
     let schema: SchemaDefinition | undefined;
     let cronJobsDefinition: CronJobsDefinition | undefined;
+    const migrations: MigrationDefinition[] = [];
 
     for (const [modulePath, exports] of Object.entries(evaluatedModules)) {
       for (const [exportName, value] of Object.entries(exports)) {
@@ -150,6 +181,13 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
           if (cronJobsDefinition) throw new Error('Only one pbvex/crons.ts definition is allowed');
           cronJobsDefinition = value;
         }
+      }
+    }
+
+    for (const [modulePath, exports] of Object.entries(evaluatedMigrationModules)) {
+      for (const [exportName, value] of Object.entries(exports)) {
+        if (!isMigrationDefinition(value)) continue;
+        migrations.push({ ...value, modulePath, exportName });
       }
     }
 
@@ -196,7 +234,9 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
     }
 
     const materialized = materializeMountedComponents(functions, components, app, modules);
-    const bundleCode = moduleBundle + '\n' + buildRegistrationCode(materialized.registrations);
+    const migrationDescriptors = await createMigrationDescriptors(migrations, modules);
+    const bundleCode = moduleBundle + '\n' + buildRegistrationCode(materialized.registrations) +
+      (migrationDescriptors.length ? `\n${migrationBundle}\n${buildMigrationRegistrationCode(migrationDescriptors)}` : '');
     const componentSourceFunctionPaths = functions
       .filter((fn) => fn.component)
       .map((fn) => fn.modulePath);
@@ -213,8 +253,9 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
       modules,
       emailTemplates,
       cronJobsDefinition,
+      migrationDescriptors,
     );
-    return { artifact, functions: materialized.functions, components, app, schema, cronJobs: cronJobsDefinition, diagnostics };
+    return { artifact, functions: materialized.functions, components, app, schema, cronJobs: cronJobsDefinition, migrations, diagnostics };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -224,6 +265,7 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
       app: undefined,
       schema: undefined,
       cronJobs: undefined,
+      migrations: [],
       diagnostics: [message],
     };
   }
@@ -396,10 +438,27 @@ function buildRegistrationCode(registrations: FunctionRegistration[]): string {
 `;
 }
 
+function buildMigrationRegistrationCode(descriptors: import('@pbvex/protocol').MigrationDescriptor[]): string {
+  return `
+(function(__pbvex) {
+  if (!__pbvex || typeof __pbvex.registerMigration !== 'function') return;
+  var modules = (typeof globalThis !== 'undefined' && globalThis.PBVEX_MIGRATION_MODULES) ? globalThis.PBVEX_MIGRATION_MODULES : {};
+  var descriptors = ${JSON.stringify(descriptors)};
+  for (var i = 0; i < descriptors.length; i++) {
+    var descriptor = descriptors[i];
+    var mod = modules[descriptor.modulePath];
+    var migration = mod && mod[descriptor.exportName];
+    if (!migration || typeof migration.up !== 'function' || typeof migration.down !== 'function') continue;
+    __pbvex.registerMigration(descriptor, migration.up, migration.down);
+  }
+})(globalThis.__pbvex);
+`;
+}
+
 async function buildBundle(
   rootDir: string,
-  _entryDir: string,
   modulePaths: string[],
+  globalName: string,
 ): Promise<{ moduleBundle: string; modules: Record<string, Record<string, unknown>> }> {
   if (modulePaths.length === 0) {
     return { moduleBundle: '', modules: {} };
@@ -415,7 +474,7 @@ async function buildBundle(
     entries.push(`  '${modulePath}': __mod_${i},`);
   }
 
-  const entryCode = `${imports.join('\n')}\n\nconst __PBVEX_MODULES = {\n${entries.join('\n')}\n};\n\nglobalThis.PBVEX_MODULES = __PBVEX_MODULES;\n`;
+  const entryCode = `${imports.join('\n')}\n\nconst __PBVEX_MODULES = {\n${entries.join('\n')}\n};\n\nglobalThis.${globalName} = __PBVEX_MODULES;\n`;
 
   const result = await build({
     stdin: {
@@ -451,7 +510,7 @@ async function buildBundle(
   const moduleBundle = result.outputFiles[0].text;
   const context = createContext({ console });
   runInNewContext(moduleBundle, context);
-  const modules = (context.PBVEX_MODULES as Record<string, Record<string, unknown>>) ?? {};
+  const modules = (context[globalName] as Record<string, Record<string, unknown>>) ?? {};
 
   return { moduleBundle, modules };
 }

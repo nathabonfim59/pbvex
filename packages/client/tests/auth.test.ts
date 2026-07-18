@@ -25,6 +25,32 @@ function token(exp = Math.floor(Date.now() / 1000) + 3600): string {
 }
 
 describe('native PocketBase authentication', () => {
+  it('creates an auth record without changing the auth store', async () => {
+    const fetch = makeMockFetch(async (request) => {
+      expect(request.url).toBe('http://localhost:8090/api/collections/users/records');
+      expect(request.method).toBe('POST');
+      expect(await request.json()).toEqual({
+        email: 'person@example.com',
+        password: 'correct horse battery staple',
+        passwordConfirm: 'correct horse battery staple',
+        name: 'Person',
+      });
+      return json({ id: 'user-1', collectionId: 'users-id', name: 'Person' });
+    });
+    const store = new AuthStore();
+    const client = new Client('http://localhost:8090', { fetch, authStore: store });
+
+    const record = await client.auth.collection('users').create({
+      email: 'person@example.com',
+      password: 'correct horse battery staple',
+      passwordConfirm: 'correct horse battery staple',
+      name: 'Person',
+    });
+
+    expect(record).toMatchObject({ id: 'user-1', name: 'Person' });
+    expect(store.isValid).toBe(false);
+  });
+
   it('authenticates with password, saves the record, and authenticates PBVex calls', async () => {
     const authToken = token();
     const fetch = makeMockFetch(async (request) => {

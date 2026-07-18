@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,86 @@ func TestSchemaValidatorDescriptorSurface(t *testing.T) {
 	for _, value := range invalid {
 		if validateValidatorDescriptor(value) {
 			t.Fatalf("expected invalid descriptor %#v", value)
+		}
+	}
+}
+
+func TestMigrationManifestContract(t *testing.T) {
+	from := map[string]any{"type": "object", "shape": map[string]any{"name": map[string]any{"type": "string"}}}
+	to := map[string]any{"type": "object", "shape": map[string]any{"name": map[string]any{"type": "string"}, "active": map[string]any{"type": "boolean"}}}
+	fromHash, _ := CanonicalHash(from)
+	toHash, _ := CanonicalHash(to)
+	descriptor := map[string]any{
+		"id": "20260718_add_active", "table": "users", "mode": "transactional",
+		"from": from, "to": to, "sourceSchemaHash": fromHash, "targetSchemaHash": toHash,
+		"checksum": strings.Repeat("a", 64), "modulePath": "pbvex/migrations/add_active.ts",
+		"exportName": "addActive", "reversibility": "reversible",
+	}
+	manifest := func(entries []any) map[string]any {
+		return map[string]any{
+			"protocolVersion": "v1", "deploymentId": "migration_manifest", "migrations": entries,
+			"schema": map[string]any{"tables": []any{map[string]any{"tableName": "users", "fields": to["shape"]}}},
+		}
+	}
+	parsed, err := ValidateManifest(manifest([]any{descriptor}))
+	if err != nil || len(parsed.Migrations) != 1 || parsed.Migrations[0].ID != descriptor["id"] {
+		t.Fatalf("valid migration rejected: %#v, %v", parsed.Migrations, err)
+	}
+	for _, mutate := range []func(map[string]any){
+		func(m map[string]any) { m["unexpected"] = true },
+		func(m map[string]any) { m["modulePath"] = "pbvex/ordinary.ts" },
+		func(m map[string]any) { m["sourceSchemaHash"] = strings.Repeat("0", 64) },
+		func(m map[string]any) { m["from"] = map[string]any{"type": "unknown"} },
+		func(m map[string]any) { m["from"] = map[string]any{"type": "string"} },
+		func(m map[string]any) { m["table"] = "missing" },
+	} {
+		copy := map[string]any{}
+		for key, value := range descriptor {
+			copy[key] = value
+		}
+		mutate(copy)
+		if _, err := ValidateManifest(manifest([]any{copy})); err == nil {
+			t.Fatalf("invalid migration accepted: %#v", copy)
+		}
+	}
+	duplicate := []any{descriptor, descriptor}
+	if _, err := ValidateManifest(manifest(duplicate)); err == nil {
+		t.Fatal("duplicate migration accepted")
+	}
+	second := map[string]any{}
+	for key, value := range descriptor {
+		second[key] = value
+	}
+	second["id"] = "100_before"
+	if _, err := ValidateManifest(manifest([]any{descriptor, second})); err == nil {
+		t.Fatal("unsorted migrations accepted")
+	}
+}
+
+func TestDeploymentActivateResponseMigrationWarningJSONParity(t *testing.T) {
+	response := DeploymentActivateResponse{
+		DeploymentID: "dep_warning", ActivatedAt: "2026-07-18T12:00:00Z",
+		Warnings: []MigrationWarning{{
+			Code: "transactional_migration_utilization", Rows: 8000, RowLimit: 10000,
+			EstimatedBytes: 1024, ByteLimit: 64 << 20, UtilizationPercent: 80,
+		}},
+	}
+	raw, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	warnings, ok := got["warnings"].([]any)
+	if !ok || len(warnings) != 1 {
+		t.Fatalf("warnings JSON = %#v", got["warnings"])
+	}
+	warning := warnings[0].(map[string]any)
+	for _, key := range []string{"code", "rows", "rowLimit", "estimatedBytes", "byteLimit", "utilizationPercent"} {
+		if _, ok := warning[key]; !ok {
+			t.Fatalf("warning JSON missing %q: %#v", key, warning)
 		}
 	}
 }

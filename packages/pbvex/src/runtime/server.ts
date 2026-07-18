@@ -1,6 +1,6 @@
-import { encodeValue, isCronExpression } from '@pbvex/protocol';
+import { encodeValue, isCronExpression, isIdentifier } from '@pbvex/protocol';
 import type { JSONValue, PbvexValue, StorageId } from '@pbvex/protocol';
-import type { Validator } from './values.js';
+import type { ObjectValidator, Validator } from './values.js';
 import { v, isValidator } from './values.js';
 
 export type { StorageId } from '@pbvex/protocol';
@@ -38,6 +38,80 @@ export type Id<TableName extends string = string> = GenericId<TableName>;
 
 export type Value = any;
 export type NumericValue = number | bigint;
+
+type ValidatorOutput<T extends Validator<any, any>> = T extends Validator<infer Output, any> ? Output : never;
+type ValidatorInput<T extends Validator<any, any>> = T extends Validator<any, infer Input> ? Input : never;
+type MigrationOutput<T> = T & { readonly _id?: never; readonly _creationTime?: never };
+type MigrationDocument<T, Table extends string> = T & Readonly<{
+  _id: GenericId<Table>;
+  _creationTime: number;
+}>;
+
+export interface MigrationContext {
+  readonly migrationId: string;
+  readonly activationTime: number;
+  fail(message: string): never;
+}
+
+export interface MigrationDefinition<
+  From extends ObjectValidator<any, any> = ObjectValidator<any, any>,
+  To extends ObjectValidator<any, any> = ObjectValidator<any, any>,
+  Table extends string = string,
+> {
+  readonly kind: 'pbvex.migration';
+  readonly id: string;
+  readonly table: Table;
+  readonly mode: 'transactional';
+  readonly from: From;
+  readonly to: To;
+  readonly up: (oldDoc: MigrationDocument<ValidatorOutput<From>, Table>, ctx: MigrationContext) => MigrationOutput<ValidatorInput<To>>;
+  readonly down: (newDoc: MigrationDocument<ValidatorOutput<To>, Table>, ctx: MigrationContext) => MigrationOutput<ValidatorInput<From>>;
+  /** @internal Populated by artifact discovery. */
+  modulePath?: string;
+  /** @internal Populated by artifact discovery. */
+  exportName?: string;
+}
+
+export interface MigrationOptions<
+  From extends ObjectValidator<any, any>,
+  To extends ObjectValidator<any, any>,
+  Table extends string,
+> {
+  id: string;
+  table: Table;
+  from: From;
+  to: To;
+  mode: 'transactional';
+  up: (oldDoc: MigrationDocument<ValidatorOutput<From>, Table>, ctx: MigrationContext) => MigrationOutput<ValidatorInput<To>>;
+  down: (newDoc: MigrationDocument<ValidatorOutput<To>, Table>, ctx: MigrationContext) => MigrationOutput<ValidatorInput<From>>;
+}
+
+/** Defines a pure synchronous, reversible transactional document migration. */
+export function defineMigration<From extends ObjectValidator<any, any>, To extends ObjectValidator<any, any>, Table extends string>(
+  options: MigrationOptions<From, To, Table>,
+): MigrationDefinition<From, To, Table> {
+  if (typeof options.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(options.id)) {
+    throw new Error('Migration id must match [A-Za-z0-9][A-Za-z0-9._-]{0,127}');
+  }
+  if (!isIdentifier(options.table) || options.table.toLowerCase().startsWith('pbvex_cmp_')) {
+    throw new Error('Migration table must be a valid user table identifier');
+  }
+  if (options.mode !== 'transactional') throw new Error('Migration mode must be transactional');
+  if (!isValidator(options.from) || options.from.kind !== 'object' || !isValidator(options.to) || options.to.kind !== 'object') {
+    throw new Error('Migration from and to must be object validators');
+  }
+  if (typeof options.up !== 'function' || typeof options.down !== 'function') throw new Error('Migration up and down must be functions');
+  return Object.freeze({ kind: 'pbvex.migration', ...options });
+}
+
+export function isMigrationDefinition(value: unknown): value is MigrationDefinition {
+  if (!value || typeof value !== 'object') return false;
+  const migration = value as Partial<MigrationDefinition>;
+  return migration.kind === 'pbvex.migration' && migration.mode === 'transactional' &&
+    isValidator(migration.from) && migration.from.kind === 'object' &&
+    isValidator(migration.to) && migration.to.kind === 'object' &&
+    typeof migration.up === 'function' && typeof migration.down === 'function';
+}
 
 /** One second expressed in milliseconds. */
 export const SECOND_MS = 1_000;

@@ -5,9 +5,12 @@ import type {
   SchemaDescriptor,
   ComponentGraph,
   ModuleSource,
+  MigrationDescriptor,
+  JSONValue,
 } from '@pbvex/protocol';
 import { DEFAULT_CONFIG as ProtocolDefaultConfig, canonicalHash, hashSha256Bytes, hashSha256 } from '@pbvex/protocol';
 import type { FunctionDefinition } from '../runtime/server.js';
+import type { MigrationDefinition } from '../runtime/server.js';
 import type { CronJobsDefinition } from '../runtime/server.js';
 import type { SchemaDefinition } from '../schema/schema.js';
 import { deriveFunctionName } from './functionName.js';
@@ -50,6 +53,65 @@ export interface BuildMetadata {
   diagnostics: string[];
 }
 
+/** Hashes canonical schema JSON; an absent schema is exactly `{ tables: [] }`. */
+export async function canonicalSchemaHash(schema?: SchemaDescriptor): Promise<string> {
+  const jsonSchema = JSON.parse(JSON.stringify(schema ?? { tables: [] })) as JSONValue;
+  return canonicalHash(jsonSchema);
+}
+
+export async function createMigrationDescriptors(
+  migrations: MigrationDefinition[],
+  modules: ModuleEntry[],
+): Promise<MigrationDescriptor[]> {
+  const modulesByPath = new Map(modules.map((module) => [module.path, module]));
+  const ids = new Set<string>();
+  const descriptors = await Promise.all(migrations.map(async (migration) => {
+    if (!migration.modulePath || !migration.exportName) throw new Error(`Migration ${migration.id} has no source binding`);
+    if (ids.has(migration.id)) throw new Error(`Duplicate migration id: ${migration.id}`);
+    ids.add(migration.id);
+    const from = migration.from.toJSON() as JSONValue;
+    const to = migration.to.toJSON() as JSONValue;
+    const sourceSchemaHash = await canonicalHash(from);
+    const targetSchemaHash = await canonicalHash(to);
+    const module = modulesByPath.get(migration.modulePath);
+    if (!module) throw new Error(`Migration module not found: ${migration.modulePath}`);
+    const closure = new Map<string, ModuleEntry>();
+    const visit = (entry: ModuleEntry): void => {
+      if (closure.has(entry.path)) return;
+      closure.set(entry.path, entry);
+      for (const imported of entry.imports) {
+        if (!imported.resolvedSpecifier) continue;
+        const dependency = modulesByPath.get(imported.resolvedSpecifier);
+        if (dependency) visit(dependency);
+      }
+    };
+    visit(module);
+    const moduleHashes = await Promise.all(
+      Array.from(closure.values())
+        .sort((a, b) => codeUnitCompare(a.path, b.path))
+        .map(async (entry) => ({ path: entry.path, sha256: await hashSha256(entry.code) })),
+    );
+    const metadata = {
+      id: migration.id,
+      table: migration.table,
+      mode: 'transactional' as const,
+      from,
+      to,
+      sourceSchemaHash,
+      targetSchemaHash,
+      modulePath: migration.modulePath,
+      exportName: migration.exportName,
+      reversibility: 'reversible' as const,
+    };
+    const checksum = await canonicalHash({
+      ...metadata,
+      modules: moduleHashes,
+    } as unknown as JSONValue);
+    return { ...metadata, checksum };
+  }));
+  return descriptors.sort((a, b) => codeUnitCompare(a.id, b.id));
+}
+
 function codeUnitCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -75,6 +137,7 @@ export async function createArtifact(
   componentSourceModules?: ModuleEntry[],
   emailTemplates: import('@pbvex/protocol').EmailTemplate[] = [],
   cronJobs?: CronJobsDefinition,
+  migrations: MigrationDescriptor[] = [],
 ): Promise<DeploymentArtifact> {
   const encoder = new TextEncoder();
   const bundleBytes = encoder.encode(bundle);
@@ -84,7 +147,10 @@ export async function createArtifact(
     entries: emailTemplates,
     sha256: await canonicalHash({ bundleSha256: sha256, entries: emailTemplates }),
   } : undefined;
-  const deploymentIdentity = `${project ?? ''}|${target}|${sha256}` + (emailTemplateManifest ? `|${emailTemplateManifest.sha256}` : '');
+  const migrationIdentity = migrations.length ? await canonicalHash(migrations as unknown as JSONValue) : '';
+  const deploymentIdentity = `${project ?? ''}|${target}|${sha256}` +
+    (emailTemplateManifest ? `|${emailTemplateManifest.sha256}` : '') +
+    (migrationIdentity ? `|${migrationIdentity}` : '');
   const deploymentId = 'dep_' + (await hashSha256(deploymentIdentity));
 
   const functionManifest: FunctionDescriptor[] = functions
@@ -137,6 +203,7 @@ export async function createArtifact(
     schema: schemaDescriptor,
     emailTemplates: emailTemplateManifest,
     cronJobs: cronJobManifest?.length ? cronJobManifest : undefined,
+    migrations: migrations.length ? migrations : undefined,
   };
 
   return {

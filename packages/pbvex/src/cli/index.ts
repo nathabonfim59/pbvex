@@ -12,7 +12,10 @@ import { artifactToJson, buildMetadataToJson } from '../bundler/manifest.js';
 import { generateCodegenFiles } from '../codegen/codegen.js';
 import { DeployClient } from '../deploy/client.js';
 import { watchPbvex } from '../watch/watch.js';
-import { shouldManageBackend, startManagedBackend } from '../dev/backend.js';
+import { applicationPocketBaseMigrationsDir, shouldManageBackend, startManagedBackend } from '../dev/backend.js';
+import { createPocketBaseMigrationScaffold, generatePocketBaseTypes } from '../migrations/pocketbaseScaffold.js';
+import { createSchemaMigrationScaffold } from '../migrations/schemaScaffold.js';
+import { activeDeployment, formatMigrationPlan, readActiveArtifact } from '../migrations/plan.js';
 
 const program = new Command();
 const require = createRequire(import.meta.url);
@@ -240,6 +243,77 @@ program
     console.log('Generated pbvex/_generated files');
   });
 
+const migrationsCommand = program
+  .command('migrations')
+  .description('Create and plan PBVex schema migrations');
+
+migrationsCommand
+  .command('create')
+  .description('Create a typed PBVex migration in pbvex/migrations')
+  .argument('<name>', 'Migration name')
+  .requiredOption('--table <table>', 'PBVex table to migrate')
+  .option('-t, --target <target>', 'Target name', 'local')
+  .option('--url <url>', 'Override target URL')
+  .option('--token <token>', 'API token')
+  .option('--active-artifact <path>', 'Validated deployment artifact to use as the offline source')
+  .action(async (name: string, options: { table: string; target?: string; url?: string; token?: string; activeArtifact?: string }) => {
+    const config = await loadCliConfig(options);
+    const candidate = await bundle({ rootDir: config.rootDir, project: config.project, target: config.target });
+    if (candidate.diagnostics.length > 0) throw new Error(candidate.diagnostics.join('\n'));
+    const targetTable = candidate.artifact.manifest.schema?.tables.find((table) => table.tableName === options.table);
+    if (!targetTable) throw new Error(`Table ${JSON.stringify(options.table)} is not present in the local schema`);
+    let source = options.activeArtifact
+      ? await readActiveArtifact(path.resolve(config.rootDir, options.activeArtifact))
+      : undefined;
+    if (!source) {
+      try { source = activeDeployment((await new DeployClient({ url: config.url, token: config.token }).list()).deployments); }
+      catch { /* Scaffolding remains usable when the selected target is offline. */ }
+    }
+    const sourceTable = source?.manifest.schema?.tables.find((table) => table.tableName === options.table);
+    const result = await createSchemaMigrationScaffold({
+      rootDir: config.rootDir,
+      name,
+      table: options.table,
+      sourceTable,
+      targetTable,
+    });
+    console.log(`Created ${path.relative(config.rootDir, result.migrationPath)}`);
+    if (result.usedEmptySource) console.log('No active source table found; review the scaffolded from validator before deploying.');
+  });
+
+migrationsCommand
+  .command('plan')
+  .description('Compare the local candidate with the active source schema')
+  .option('-t, --target <target>', 'Target name', 'local')
+  .option('--url <url>', 'Override target URL')
+  .option('--token <token>', 'API token')
+  .option('--active-artifact <path>', 'Validated deployment artifact to use as the offline source')
+  .action(async (options: { target?: string; url?: string; token?: string; activeArtifact?: string }) => {
+    const config = await loadCliConfig(options);
+    const candidate = await bundle({ rootDir: config.rootDir, project: config.project, target: config.target });
+    if (candidate.diagnostics.length > 0) throw new Error(candidate.diagnostics.join('\n'));
+    const source = options.activeArtifact
+      ? await readActiveArtifact(path.resolve(config.rootDir, options.activeArtifact))
+      : activeDeployment((await new DeployClient({ url: config.url, token: config.token }).list()).deployments);
+    console.log(await formatMigrationPlan(candidate.artifact, source));
+  });
+
+const pocketBaseMigrationsCommand = migrationsCommand
+  .command('pocketbase')
+  .description('Manage direct PocketBase host migrations');
+
+pocketBaseMigrationsCommand
+  .command('create')
+  .description('Create a typed PocketBase migration in pbvex/pocketbaseMigrations')
+  .argument('<name>', 'Migration name')
+  .action(async (name: string) => {
+    const rootDir = process.cwd();
+    const pocketBaseTypes = await generatePocketBaseTypes();
+    const result = await createPocketBaseMigrationScaffold({ rootDir, name, pocketBaseTypes });
+    console.log(`Created ${path.relative(rootDir, result.migrationPath)}`);
+    console.log(`Generated ${path.relative(rootDir, result.typesPath)}`);
+  });
+
 program
   .command('typecheck')
   .description('Run TypeScript typecheck on the project')
@@ -256,6 +330,13 @@ program
     await generateCodegen(config, result);
     try {
       execFileSync(process.execPath, [typescriptCli, '--noEmit'], { cwd: config.rootDir, stdio: 'inherit' });
+      const migrationsTsconfig = path.join(config.rootDir, 'pbvex', 'pocketbaseMigrations', 'tsconfig.json');
+      if (existsSync(migrationsTsconfig)) {
+        execFileSync(process.execPath, [typescriptCli, '--noEmit', '--project', migrationsTsconfig], {
+          cwd: config.rootDir,
+          stdio: 'inherit',
+        });
+      }
     } catch {
       process.exit(1);
     }
@@ -304,9 +385,19 @@ program
   .description('Run the bundled PBVex backend server')
   .helpOption(false)
   .allowUnknownOption(true)
+  .option('--pocketbaseMigrationsDir <path>', 'Override the pbvex/pocketbaseMigrations directory')
   .argument('[serverArgs...]')
-  .action(async (serverArgs: string[]) => {
-    const child = spawnServer(['serve', ...serverArgs], { stdio: 'inherit' });
+  .action(async (serverArgs: string[], options: { pocketbaseMigrationsDir?: string }) => {
+    if (serverArgs.some((arg) => arg === '--migrationsDir' || arg.startsWith('--migrationsDir='))) {
+      throw new Error('pbvex serve uses --pocketbaseMigrationsDir; --migrationsDir is only a direct backend flag');
+    }
+    const args = [
+      '--migrationsDir',
+      applicationPocketBaseMigrationsDir(process.cwd(), options.pocketbaseMigrationsDir),
+      'serve',
+      ...serverArgs,
+    ];
+    const child = spawnServer(args, { stdio: 'inherit' });
     const exitCode = await new Promise<number>((resolve, reject) => {
       child.once('error', reject);
       child.once('exit', (code, signal) => {
@@ -329,10 +420,15 @@ program
   .option('--no-backend', 'Do not start a managed backend for a loopback local target')
   .option('--no-admin-ui', 'Disable the PocketBase admin dashboard for the managed backend')
   .option('--debug', 'Enable verbose PocketBase and SQL logging for the managed backend')
-  .action(async (options: { target?: string; url?: string; token?: string; backend?: boolean; adminUi?: boolean; debug?: boolean }) => {
+  .option('--pocketbaseMigrationsDir <path>', 'Override the pbvex/pocketbaseMigrations directory for the managed backend')
+  .action(async (options: { target?: string; url?: string; token?: string; backend?: boolean; adminUi?: boolean; debug?: boolean; pocketbaseMigrationsDir?: string }) => {
     let config = await loadCliConfig(options);
     const managedBackend = options.backend !== false && shouldManageBackend(config)
-      ? await startManagedBackend(config, { debug: options.debug, adminUI: options.adminUi })
+      ? await startManagedBackend(config, {
+          debug: options.debug,
+          adminUI: options.adminUi,
+          pocketbaseMigrationsDir: options.pocketbaseMigrationsDir,
+        })
       : undefined;
     if (managedBackend) config = { ...config, token: managedBackend.token };
     const build = () => bundle({ rootDir: config.rootDir, project: config.project, target: config.target });

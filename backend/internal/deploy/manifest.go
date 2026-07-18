@@ -45,6 +45,7 @@ const (
 	maxCronJobs         = 64
 	maxCronNameLength   = 64
 	maxCronExprLength   = 128
+	maxMigrations       = 256
 	maxSchemaNodes      = 16 * 1024
 	// MaxDeploymentUploadBytes is the accepted v1 deployment upload contract
 	// from ADR 001: a 64 MiB decoded bundle. PocketBase's global body limit is
@@ -74,11 +75,12 @@ func UploadEnvelopeBytes(decodedLimit int64) int64 {
 }
 
 var (
-	identifierRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
-	cronNameRe   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	modulePathRe = regexp.MustCompile(`^[a-zA-Z0-9._/\-]+$`)
-	sha256HexRe  = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	reservedKeys = map[string]struct{}{
+	identifierRe  = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
+	cronNameRe    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	modulePathRe  = regexp.MustCompile(`^[a-zA-Z0-9._/\-]+$`)
+	sha256HexRe   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	migrationIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	reservedKeys  = map[string]struct{}{
 		"__proto__":   {},
 		"constructor": {},
 		"prototype":   {},
@@ -187,6 +189,23 @@ type DeploymentManifest struct {
 	Schema          JSONValue              `json:"schema,omitempty"`
 	EmailTemplates  *EmailTemplateManifest `json:"emailTemplates,omitempty"`
 	CronJobs        []CronJobDescriptor    `json:"cronJobs,omitempty"`
+	Migrations      []MigrationDescriptor  `json:"migrations,omitempty"`
+}
+
+// MigrationDescriptor is a pure, reversible document transform registered by
+// the deployment bundle.
+type MigrationDescriptor struct {
+	ID               string    `json:"id"`
+	Table            string    `json:"table"`
+	Mode             string    `json:"mode"`
+	From             JSONValue `json:"from"`
+	To               JSONValue `json:"to"`
+	SourceSchemaHash string    `json:"sourceSchemaHash"`
+	TargetSchemaHash string    `json:"targetSchemaHash"`
+	Checksum         string    `json:"checksum"`
+	ModulePath       string    `json:"modulePath"`
+	ExportName       string    `json:"exportName"`
+	Reversibility    string    `json:"reversibility"`
 }
 
 // CronJobDescriptor is a recurring PocketBase cron tick that enqueues a
@@ -262,9 +281,19 @@ type DeploymentActivateRequest struct {
 
 // DeploymentActivateResponse is the activate API response.
 type DeploymentActivateResponse struct {
-	DeploymentID         string  `json:"deploymentId"`
-	ActivatedAt          string  `json:"activatedAt"`
-	PreviousDeploymentID *string `json:"previousDeploymentId,omitempty"`
+	DeploymentID         string             `json:"deploymentId"`
+	ActivatedAt          string             `json:"activatedAt"`
+	PreviousDeploymentID *string            `json:"previousDeploymentId,omitempty"`
+	Warnings             []MigrationWarning `json:"warnings,omitempty"`
+}
+
+type MigrationWarning struct {
+	Code               string `json:"code"`
+	Rows               int    `json:"rows"`
+	RowLimit           int    `json:"rowLimit"`
+	EstimatedBytes     int64  `json:"estimatedBytes"`
+	ByteLimit          int64  `json:"byteLimit"`
+	UtilizationPercent int    `json:"utilizationPercent"`
 }
 
 // DeploymentRollbackResponse is the rollback API response.
@@ -352,6 +381,10 @@ func ValidateManifest(value any) (DeploymentManifest, error) {
 			return DeploymentManifest{}, fmt.Errorf("schema is invalid: %w", err)
 		}
 	}
+	migrations, err := validateMigrations(o["migrations"], schema)
+	if err != nil {
+		return DeploymentManifest{}, err
+	}
 	// Function v.id descriptors must always be tied to a declared deployment
 	// schema. A schema-less manifest has no table authority to validate a
 	// capability target against, so accepting one would defer an invalid public
@@ -368,7 +401,88 @@ func ValidateManifest(value any) (DeploymentManifest, error) {
 		Schema:          schema,
 		EmailTemplates:  emailTemplates,
 		CronJobs:        cronJobs,
+		Migrations:      migrations,
 	}, nil
+}
+
+func validateMigrations(value, targetSchema any) ([]MigrationDescriptor, error) {
+	if value == nil {
+		return nil, nil
+	}
+	entries, ok := value.([]any)
+	if !ok || len(entries) > maxMigrations {
+		return nil, fmt.Errorf("migrations must be an array with at most %d entries", maxMigrations)
+	}
+	tables := schemaTableNames(targetSchema)
+	seen := make(map[string]bool, len(entries))
+	out := make([]MigrationDescriptor, len(entries))
+	for i, raw := range entries {
+		o, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("migration[%d] must be an object", i)
+		}
+		if !onlyKeys(o, "id", "table", "mode", "from", "to", "sourceSchemaHash", "targetSchemaHash", "checksum", "modulePath", "exportName", "reversibility") || len(o) != 11 {
+			return nil, fmt.Errorf("migration[%d] has unknown or missing fields", i)
+		}
+		m := MigrationDescriptor{}
+		m.ID, _ = o["id"].(string)
+		m.Table, _ = o["table"].(string)
+		m.Mode, _ = o["mode"].(string)
+		m.From, m.To = o["from"], o["to"]
+		m.SourceSchemaHash, _ = o["sourceSchemaHash"].(string)
+		m.TargetSchemaHash, _ = o["targetSchemaHash"].(string)
+		m.Checksum, _ = o["checksum"].(string)
+		m.ModulePath, _ = o["modulePath"].(string)
+		m.ExportName, _ = o["exportName"].(string)
+		m.Reversibility, _ = o["reversibility"].(string)
+		if !migrationIDRe.MatchString(m.ID) {
+			return nil, fmt.Errorf("migration[%d] id is invalid", i)
+		}
+		if seen[m.ID] {
+			return nil, fmt.Errorf("migration[%d] id is duplicated", i)
+		}
+		if !isIdentifier(m.Table) || strings.HasPrefix(strings.ToLower(m.Table), "pbvex_cmp_") || !tables[m.Table] {
+			return nil, fmt.Errorf("migration[%d] table is invalid", i)
+		}
+		if m.Mode != "transactional" || m.Reversibility != "reversible" {
+			return nil, fmt.Errorf("migration[%d] mode or reversibility is invalid", i)
+		}
+		fromObject, fromOK := m.From.(map[string]any)
+		toObject, toOK := m.To.(map[string]any)
+		if !fromOK || fromObject["type"] != "object" || !validateValidatorDescriptor(m.From) ||
+			!toOK || toObject["type"] != "object" || !validateValidatorDescriptor(m.To) {
+			return nil, fmt.Errorf("migration[%d] from and to must be object validators", i)
+		}
+		fromHash, fromErr := CanonicalHash(m.From)
+		toHash, toErr := CanonicalHash(m.To)
+		if fromErr != nil || toErr != nil || !IsSha256Hex(m.SourceSchemaHash) || !IsSha256Hex(m.TargetSchemaHash) || fromHash != m.SourceSchemaHash || toHash != m.TargetSchemaHash {
+			return nil, fmt.Errorf("migration[%d] schema hash is invalid", i)
+		}
+		if !IsSha256Hex(m.Checksum) || !isModulePath(m.ModulePath) || !strings.HasPrefix(m.ModulePath, "pbvex/migrations/") || !strings.HasSuffix(m.ModulePath, ".ts") || !isExportName(m.ExportName) {
+			return nil, fmt.Errorf("migration[%d] source binding or checksum is invalid", i)
+		}
+		seen[m.ID] = true
+		out[i] = m
+	}
+	for i := 1; i < len(out); i++ {
+		if out[i-1].ID >= out[i].ID {
+			return nil, fmt.Errorf("migrations entries must be sorted by id")
+		}
+	}
+	return out, nil
+}
+
+func schemaTableNames(raw any) map[string]bool {
+	out := map[string]bool{}
+	o, _ := raw.(map[string]any)
+	for _, entry := range listJSON(o["tables"]) {
+		if table, ok := entry.(map[string]any); ok {
+			if name, ok := table["tableName"].(string); ok {
+				out[name] = true
+			}
+		}
+	}
+	return out
 }
 
 func validateCronJobs(value any, functions []FunctionDescriptor, config DeploymentConfig) ([]CronJobDescriptor, error) {

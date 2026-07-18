@@ -21,6 +21,15 @@ func TestProtocolStorageBounds(t *testing.T) {
 			t.Fatalf("%s deploymentId bound", col.Name)
 		}
 	}
+	history := migrationHistoryCollection()
+	if !history.System || history.ListRule != nil || history.ViewRule != nil || history.CreateRule != nil || history.UpdateRule != nil || history.DeleteRule != nil {
+		t.Fatal("migration history collection is not reserved")
+	}
+	for _, field := range []string{FieldMigrationID, FieldChecksum, FieldSourceHash, FieldTargetHash, FieldDeploymentID, FieldDirection, FieldAppliedAt} {
+		if history.Fields.GetByName(field) == nil {
+			t.Fatalf("migration history field %q missing", field)
+		}
+	}
 }
 
 func TestComponentCatalogStoresMaximumCanonicalMountPath(t *testing.T) {

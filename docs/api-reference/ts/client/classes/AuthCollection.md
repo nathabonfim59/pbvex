@@ -226,6 +226,26 @@
 
 ***
 
+### create()
+
+> **create**(`data`, `options?`): `Promise`\<`T`\>
+
+#### Parameters
+
+##### data
+
+`Record`\<`string`, `unknown`\>
+
+##### options?
+
+[`AuthRequestOptions`](../interfaces/AuthRequestOptions.md)
+
+#### Returns
+
+`Promise`\<`T`\>
+
+***
+
 ### impersonate()
 
 > **impersonate**(`recordId`, `duration?`, `options?`): `Promise`\<[`AuthResponse`](../interfaces/AuthResponse.md)\<`T`\>\>

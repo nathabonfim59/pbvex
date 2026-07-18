@@ -120,7 +120,7 @@ an independently managed backend requires a PocketBase superuser token:
 PBVEX_TOKEN='<superuser-token>' pbvex deploy --url http://127.0.0.1:8090
 ```
 
-The CLI uploads the artifact and requests atomic activation. A failed activation leaves the previous deployment active.
+The CLI uploads the artifact and requests atomic activation. Compatible schema changes and any typed `pbvex/migrations/*.ts` transformations run in that transaction; a failed activation leaves the previous deployment and documents unchanged. Before an incompatible schema change, use `pbvex migrations plan` and `pbvex migrations create <name> --table <table>` as described in the [migration guide](./guides/migrations.md).
 
 ## Connect a client and verify it
 
@@ -155,4 +155,5 @@ curl -f http://127.0.0.1:8090/api/health
 - Learn access paths and pagination in [Querying data and designing indexes](./guides/querying-and-indexes.md), model references with [Relationships and joins](./guides/relationships-and-joins.md), then review every supported validator in [Data types and validation](./guides/data-types-and-validation.md).
 - Add authentication with [Authentication](./guides/auth.md), and realtime UI updates with the [client guides](./guides/client/index.md).
 - Configure application secrets through explicit component bindings with [Environment variables and secrets](./guides/environment-variables.md).
+- Transform existing PBVex documents safely and keep PocketBase host changes separate with [Migrations](./guides/migrations.md).
 - For a deployed server, the one-application deployment model, admin dashboard, backups, TLS, and storage configuration, read the [self-hosting guide](./self-hosting.md).

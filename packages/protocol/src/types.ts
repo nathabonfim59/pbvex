@@ -141,6 +141,20 @@ export type IndexDescriptor = Readonly<{
 
 export type ValidatorDescriptor = JSONValue;
 
+export type MigrationDescriptor = Readonly<{
+  id: string;
+  table: string;
+  mode: 'transactional';
+  from: ValidatorDescriptor;
+  to: ValidatorDescriptor;
+  sourceSchemaHash: string;
+  targetSchemaHash: string;
+  checksum: string;
+  modulePath: string;
+  exportName: 'default' | string;
+  reversibility: 'reversible';
+}>;
+
 export type EnvArgDescriptor = Readonly<{
   type: 'value' | 'envVar';
   value?: string;
@@ -178,6 +192,7 @@ export type DeploymentManifest = Readonly<{
   schema?: SchemaDescriptor;
   emailTemplates?: EmailTemplateManifest;
   cronJobs?: CronJobDescriptor[];
+  migrations?: MigrationDescriptor[];
 }>;
 
 export type CronJobDescriptor = Readonly<{
@@ -235,10 +250,20 @@ export type DeploymentActivateRequest = Readonly<{
   atomic: boolean;
 }>;
 
+export type MigrationWarning = Readonly<{
+  code: 'transactional_migration_utilization';
+  rows: number;
+  rowLimit: number;
+  estimatedBytes: number;
+  byteLimit: number;
+  utilizationPercent: number;
+}>;
+
 export type DeploymentActivateResponse = Readonly<{
   deploymentId: string;
   activatedAt: string;
   previousDeploymentId?: string;
+  warnings?: MigrationWarning[];
 }>;
 
 export type DeploymentRollbackResponse = Readonly<{
