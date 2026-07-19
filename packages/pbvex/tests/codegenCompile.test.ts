@@ -144,6 +144,36 @@ export { first, grandchild, bad };
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  it('compiles a generated query with a schema-derived pagination result validator', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-pagination-'));
+    const pbvexDir = path.join(tempDir, 'pbvex');
+    const generatedDir = path.join(pbvexDir, '_generated');
+    await mkdir(generatedDir, { recursive: true });
+
+    const schema = defineSchema({ photos: defineTable({ url: v.string() }) });
+    await writeFile(path.join(generatedDir, 'dataModel.ts'), generateDataModelTs(schema), 'utf-8');
+    await writeFile(path.join(generatedDir, 'server.ts'), generateServerTs(), 'utf-8');
+    await writeFile(path.join(pbvexDir, 'schema.ts'), `import { defineSchema, defineTable } from 'pbvex/server';
+import { v } from 'pbvex/values';
+export default defineSchema({ photos: defineTable({ url: v.string() }) });
+`, 'utf-8');
+    await writeFile(path.join(pbvexDir, 'photos.ts'), `import { paginationResultValidator } from 'pbvex/server';
+import { v } from 'pbvex/values';
+import { query } from './_generated/server.js';
+import schema from './schema.js';
+
+export const list = query({
+  args: { cursor: v.optional(v.string()) },
+  returns: paginationResultValidator(schema.tables.photos.documentValidator),
+  handler: (ctx, { cursor }) => ctx.db.query('photos').fullTableScan().paginate({ cursor: cursor ?? null, numItems: 20 }),
+});
+`, 'utf-8');
+
+    const tsconfigPath = await writeTsconfig(tempDir);
+    expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
   it('scopes same recursive name with different shapes across tables', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-scope-'));
     const generatedDir = path.join(tempDir, 'pbvex', '_generated');

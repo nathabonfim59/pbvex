@@ -316,6 +316,7 @@ const (
 	ErrorCodeNotFound           ErrorCode = "not_found"
 	ErrorCodeUnauthorized       ErrorCode = "unauthorized"
 	ErrorCodeForbidden          ErrorCode = "forbidden"
+	ErrorCodeConflict           ErrorCode = "conflict"
 	ErrorCodeInternal           ErrorCode = "internal"
 	ErrorCodeUploadExpired      ErrorCode = "upload_expired"
 	ErrorCodeUploadConsumed     ErrorCode = "upload_consumed"
@@ -331,7 +332,38 @@ type StructuredError struct {
 	Code      ErrorCode `json:"code"`
 	Message   string    `json:"message"`
 	Details   []any     `json:"details,omitempty"`
+	Data      *any      `json:"data,omitempty"`
 	RequestID string    `json:"requestId,omitempty"`
+}
+
+// ApplicationErrorCategory is a handler-selected, status-mapped error category.
+type ApplicationErrorCategory string
+
+const (
+	ApplicationErrorBadRequest   ApplicationErrorCategory = "bad_request"
+	ApplicationErrorUnauthorized ApplicationErrorCategory = "unauthorized"
+	ApplicationErrorForbidden    ApplicationErrorCategory = "forbidden"
+	ApplicationErrorNotFound     ApplicationErrorCategory = "not_found"
+	ApplicationErrorConflict     ApplicationErrorCategory = "conflict"
+)
+
+// ApplicationError carries validated PBVex wire data from a handler failure.
+type ApplicationError struct {
+	Category ApplicationErrorCategory
+	Data     any
+	HasData  bool
+}
+
+func (e *ApplicationError) Error() string { return "application error: " + string(e.Category) }
+
+// IsApplicationErrorCategory reports whether category has a defined HTTP mapping.
+func IsApplicationErrorCategory(category ApplicationErrorCategory) bool {
+	switch category {
+	case ApplicationErrorBadRequest, ApplicationErrorUnauthorized, ApplicationErrorForbidden, ApplicationErrorNotFound, ApplicationErrorConflict:
+		return true
+	default:
+		return false
+	}
 }
 
 // ValidateManifest validates the manifest per protocol v1.

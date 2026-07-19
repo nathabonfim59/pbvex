@@ -190,13 +190,13 @@
 
 ### object
 
-> **object**: \<`T`\>(`shape`) => [`ObjectValidator`](../type-aliases/ObjectValidator.md)\<`ObjectOutput`\<`T`\>, `ObjectInput`\<`T`\>\>
+> **object**: \<`T`\>(`shape`) => [`ObjectValidatorFor`](../type-aliases/ObjectValidatorFor.md)\<`T`\>
 
 #### Type Parameters
 
 ##### T
 
-`T` *extends* `Record`\<`string`, [`Validator`](../type-aliases/Validator.md)\<`any`, `any`\>\>
+`T` *extends* `ValidatorShape`
 
 #### Parameters
 
@@ -206,7 +206,7 @@
 
 #### Returns
 
-[`ObjectValidator`](../type-aliases/ObjectValidator.md)\<`ObjectOutput`\<`T`\>, `ObjectInput`\<`T`\>\>
+[`ObjectValidatorFor`](../type-aliases/ObjectValidatorFor.md)\<`T`\>
 
 ### optional
 

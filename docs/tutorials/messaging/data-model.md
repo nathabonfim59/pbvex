@@ -10,7 +10,7 @@ Create `pbvex/schema.ts`:
 import { defineSchema, defineTable } from 'pbvex/server';
 import { v } from 'pbvex/values';
 
-export default defineSchema({
+export const schema = defineSchema({
   profiles: defineTable({
     authUser: v.string(),
     handle: v.string(),
@@ -69,7 +69,57 @@ export default defineSchema({
     .index('by_owner', ['owner'])
     .index('by_storage', ['storageId']),
 });
+
+export default schema;
 ```
+
+Keeping the schema in a named value makes each table's generated `documentValidator` reusable in deployed return contracts. Define the public DTOs once:
+
+```ts
+// pbvex/lib/validators.ts
+import { paginationResultValidator } from 'pbvex/server';
+import { v } from 'pbvex/values';
+import { schema } from '../schema';
+
+export const publicProfileValidator = schema.tables.profiles.documentValidator
+  .pick('_id', 'handle', 'displayName', 'avatarStorageId');
+
+export const maybePublicProfileValidator = v.union(
+  publicProfileValidator,
+  v.null(),
+);
+
+export const contactCardValidator = v.object({
+  contactId: v.id('contacts'),
+  nickname: v.optional(v.string()),
+  profile: publicProfileValidator,
+});
+
+export const conversationValidator =
+  schema.tables.conversations.documentValidator.omit('createdBy');
+
+export const conversationListItemValidator = v.object({
+  conversation: conversationValidator,
+  role: v.union(v.literal('member'), v.literal('admin')),
+});
+
+export const publicMessageValidator =
+  schema.tables.messages.documentValidator.omit('sender');
+
+export const messageListItemValidator = v.object({
+  message: publicMessageValidator,
+  sender: maybePublicProfileValidator,
+});
+
+export const messagePageValidator =
+  paginationResultValidator(messageListItemValidator);
+
+export const attachmentValidator =
+  schema.tables.messageAttachments.documentValidator
+    .omit('owner', 'storageId');
+```
+
+These validators start from stored document contracts, then use fluent `pick` and `omit` composition to exclude auth identities, owners, and raw storage IDs. A function returning one of these narrower DTOs must map a full database document into that exact shape; the validator is a boundary check, not a field-selection mechanism.
 
 Then generate the data model and server factories:
 

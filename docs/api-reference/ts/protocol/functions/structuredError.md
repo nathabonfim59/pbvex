@@ -16,6 +16,10 @@
 
 ### options?
 
+#### data?
+
+[`JSONValue`](../type-aliases/JSONValue.md)
+
 #### details?
 
 `unknown`[]

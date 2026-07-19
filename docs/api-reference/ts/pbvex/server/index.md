@@ -4,6 +4,7 @@
 
 ## Classes
 
+- [ApplicationError](classes/ApplicationError.md)
 - [CronJobs](classes/CronJobs.md)
 - [Expression](classes/Expression.md)
 - [IndexRange](classes/IndexRange.md)
@@ -62,6 +63,7 @@
 
 ## Type Aliases
 
+- [ApplicationErrorCategory](type-aliases/ApplicationErrorCategory.md)
 - [ArgDefinition](type-aliases/ArgDefinition.md)
 - [BodyInit](type-aliases/BodyInit.md)
 - [DocumentByName](type-aliases/DocumentByName.md)
@@ -121,6 +123,7 @@
 - [mutation](functions/mutation.md)
 - [normalizeArgs](functions/normalizeArgs.md)
 - [normalizeReturns](functions/normalizeReturns.md)
+- [paginationResultValidator](functions/paginationResultValidator.md)
 - [query](functions/query.md)
 
 ## References
@@ -236,6 +239,12 @@ Re-exports [OptionalRestArgs](../index/type-aliases/OptionalRestArgs.md)
 ### SchemaDefinition
 
 Re-exports [SchemaDefinition](../index/interfaces/SchemaDefinition.md)
+
+***
+
+### SchemaTableDefinition
+
+Re-exports [SchemaTableDefinition](../index/type-aliases/SchemaTableDefinition.md)
 
 ***
 

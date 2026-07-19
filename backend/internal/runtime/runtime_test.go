@@ -175,6 +175,59 @@ func TestManagerInvokeFastFunction(t *testing.T) {
 	}
 }
 
+func TestApplicationErrorsPreserveSyncAsyncNestedAndHTTPFailures(t *testing.T) {
+	descriptor := func(name string, kind deploy.FunctionType) deploy.FunctionDescriptor {
+		return deploy.FunctionDescriptor{Name: name, Type: kind, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: name}
+	}
+	descriptors := []deploy.FunctionDescriptor{
+		descriptor("sync", deploy.FunctionTypeQuery), descriptor("async", deploy.FunctionTypeQuery),
+		descriptor("ordinary", deploy.FunctionTypeQuery), descriptor("forged", deploy.FunctionTypeQuery),
+		descriptor("malformed", deploy.FunctionTypeQuery), descriptor("nested", deploy.FunctionTypeAction),
+		descriptor("http", deploy.FunctionTypeHTTPAction),
+	}
+	descriptors[6].Route = &deploy.FunctionRoute{Method: "GET", Path: "http"}
+	bundle := `
+function applicationError(category,data){return __pbvex.createApplicationError(category,data,arguments.length>=2,ApplicationError.prototype);}
+class ApplicationError extends Error {}
+__pbvex.registerFunction({name:"sync",type:"query",visibility:"public",modulePath:"x",exportName:"sync"},function(){throw applicationError("conflict",{retry:1n});});
+__pbvex.registerFunction({name:"async",type:"query",visibility:"public",modulePath:"x",exportName:"async"},async function(){throw applicationError("unauthorized",{reason:"expired"});});
+__pbvex.registerFunction({name:"ordinary",type:"query",visibility:"public",modulePath:"x",exportName:"ordinary"},function(){throw new Error("secret");});
+__pbvex.registerFunction({name:"forged",type:"query",visibility:"public",modulePath:"x",exportName:"forged"},function(){const error=new Error("forged");error.name="ApplicationError";error.category="forbidden";error.data={leak:true};throw error;});
+__pbvex.registerFunction({name:"malformed",type:"query",visibility:"public",modulePath:"x",exportName:"malformed"},function(){throw applicationError("bad_request",function(){});});
+__pbvex.registerFunction({name:"nested",type:"action",visibility:"public",modulePath:"x",exportName:"nested"},async function(ctx){return await ctx.runQuery("sync",{});});
+__pbvex.registerFunction({name:"http",type:"httpAction",visibility:"public",modulePath:"x",exportName:"http",route:{method:"GET",path:"http"}},function(){throw applicationError("not_found",null);});`
+	manager := NewManager(Config{PoolSize: 1, Timeout: time.Second})
+	if err := manager.Compile("application-errors", bundle, descriptors); err != nil {
+		t.Fatal(err)
+	}
+	assertApplicationError := func(name string, category deploy.ApplicationErrorCategory) *deploy.ApplicationError {
+		t.Helper()
+		_, err := manager.Invoke(context.Background(), "application-errors", name, map[string]any{})
+		var applicationErr *deploy.ApplicationError
+		if !errors.As(err, &applicationErr) || applicationErr.Category != category {
+			t.Fatalf("%s: expected %s application error, got %v", name, category, err)
+		}
+		return applicationErr
+	}
+	if data := assertApplicationError("sync", deploy.ApplicationErrorConflict).Data.(map[string]any); data["retry"].(map[string]any)["$integer"] != "AQAAAAAAAAA=" {
+		t.Fatalf("sync data %#v", data)
+	}
+	assertApplicationError("async", deploy.ApplicationErrorUnauthorized)
+	assertApplicationError("nested", deploy.ApplicationErrorConflict)
+	for _, name := range []string{"ordinary", "forged", "malformed"} {
+		_, err := manager.Invoke(context.Background(), "application-errors", name, map[string]any{})
+		var applicationErr *deploy.ApplicationError
+		if err == nil || errors.As(err, &applicationErr) {
+			t.Fatalf("%s was classified as an application error: %v", name, err)
+		}
+	}
+	_, err := manager.InvokeHTTP(context.Background(), "application-errors", "http", &deploy.HTTPRequestEnvelope{Method: "GET", URL: "http://localhost/http"}, nil, "rid")
+	var applicationErr *deploy.ApplicationError
+	if !errors.As(err, &applicationErr) || applicationErr.Category != deploy.ApplicationErrorNotFound || !applicationErr.HasData || applicationErr.Data != nil {
+		t.Fatalf("HTTP application error: %#v, %v", applicationErr, err)
+	}
+}
+
 func TestManagerInvokeDoesNotShareModuleState(t *testing.T) {
 	bundle := `let calls = 0;
 __pbvex.registerFunction({name:"count",type:"query",visibility:"public",modulePath:"count",exportName:"default"}, function(ctx,args) { calls += 1; return calls; });`

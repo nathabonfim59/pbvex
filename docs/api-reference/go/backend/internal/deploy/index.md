@@ -18,14 +18,21 @@ import "github.com/nathabonfim59/pbvex/backend/internal/deploy"
 - [func ComponentNamespaces\(graph \*ComponentGraph\) \(map\[string\]ComponentNamespace, error\)](<#ComponentNamespaces>)
 - [func ComputeComponentID\(def ComponentDefinition, bundleSha string\) string](<#ComputeComponentID>)
 - [func HashSha256Bytes\(b \[\]byte\) string](<#HashSha256Bytes>)
+- [func IsApplicationErrorCategory\(category ApplicationErrorCategory\) bool](<#IsApplicationErrorCategory>)
+- [func IsExpectedApplicationError\(err error\) bool](<#IsExpectedApplicationError>)
 - [func IsIdentifier\(s string\) bool](<#IsIdentifier>)
 - [func IsSha256Hex\(value any\) bool](<#IsSha256Hex>)
+- [func LogUnexpectedHandlerFailure\(app core.App, err error, fields HandlerFailureContext\) bool](<#LogUnexpectedHandlerFailure>)
 - [func UploadEnvelopeBytes\(decodedLimit int64\) int64](<#UploadEnvelopeBytes>)
 - [func ValidateHTTPHeaderName\(name string\) error](<#ValidateHTTPHeaderName>)
 - [func ValidateHTTPHeaderValue\(value string\) error](<#ValidateHTTPHeaderValue>)
 - [func ValidateHTTPHeaders\(headers map\[string\]\[\]string\) error](<#ValidateHTTPHeaders>)
 - [func VerifyModuleSources\(modules \[\]ModuleSource, manifest DeploymentManifest\) error](<#VerifyModuleSources>)
+- [func WrapFunctionFailure\(err error, name string, functionType FunctionType, phase FailurePhase\) error](<#WrapFunctionFailure>)
 - [type ActivationObserver](<#ActivationObserver>)
+- [type ApplicationError](<#ApplicationError>)
+  - [func \(e \*ApplicationError\) Error\(\) string](<#ApplicationError.Error>)
+- [type ApplicationErrorCategory](<#ApplicationErrorCategory>)
 - [type CallSnapshot](<#CallSnapshot>)
 - [type ComponentDefinition](<#ComponentDefinition>)
 - [type ComponentGraph](<#ComponentGraph>)
@@ -61,12 +68,18 @@ import "github.com/nathabonfim59/pbvex/backend/internal/deploy"
 - [type EmailTemplateManifest](<#EmailTemplateManifest>)
 - [type EnvArgDescriptor](<#EnvArgDescriptor>)
 - [type ErrorCode](<#ErrorCode>)
+- [type FailurePhase](<#FailurePhase>)
+  - [func FailurePhaseFor\(err error\) FailurePhase](<#FailurePhaseFor>)
 - [type FunctionDescriptor](<#FunctionDescriptor>)
+- [type FunctionFailure](<#FunctionFailure>)
+  - [func \(e \*FunctionFailure\) Error\(\) string](<#FunctionFailure.Error>)
+  - [func \(e \*FunctionFailure\) Unwrap\(\) error](<#FunctionFailure.Unwrap>)
 - [type FunctionRoute](<#FunctionRoute>)
 - [type FunctionType](<#FunctionType>)
 - [type FunctionVisibility](<#FunctionVisibility>)
 - [type HTTPRequestEnvelope](<#HTTPRequestEnvelope>)
 - [type HTTPResponseEnvelope](<#HTTPResponseEnvelope>)
+- [type HandlerFailureContext](<#HandlerFailureContext>)
 - [type Invalidator](<#Invalidator>)
 - [type JSONValue](<#JSONValue>)
 - [type MigrationDescriptor](<#MigrationDescriptor>)
@@ -102,6 +115,7 @@ import "github.com/nathabonfim59/pbvex/backend/internal/deploy"
   - [func \(s \*Service\) InvokeSnapshot\(ctx context.Context, snap \*CallSnapshot, args any\) \(any, error\)](<#Service.InvokeSnapshot>)
   - [func \(s \*Service\) List\(\) \(\*DeploymentListResponse, error\)](<#Service.List>)
   - [func \(s \*Service\) ListContext\(ctx context.Context\) \(\*DeploymentListResponse, error\)](<#Service.ListContext>)
+  - [func \(s \*Service\) LogUnexpectedHandlerFailure\(err error, fields HandlerFailureContext\) bool](<#Service.LogUnexpectedHandlerFailure>)
   - [func \(s \*Service\) MatchHTTPRoute\(method, path string\) \(string, string, bool\)](<#Service.MatchHTTPRoute>)
   - [func \(s \*Service\) MatchHTTPRouteContext\(ctx context.Context, method, path string\) \(string, string, bool\)](<#Service.MatchHTTPRouteContext>)
   - [func \(s \*Service\) MaxFunctionArgsBytes\(\) int64](<#Service.MaxFunctionArgsBytes>)
@@ -235,7 +249,7 @@ func AuthenticateComponentIDs(manifest DeploymentManifest, bundleSha string) err
 AuthenticateComponentIDs verifies every declared componentId is the canonical content\-addressed hash of its definition, including the verified bundleSha. This binds componentId to the exact executable bundle bytes. It mirrors deploy.authenticateComponentID and the TS authenticateComponentIds.
 
 <a name="CanonicalHash"></a>
-## func [CanonicalHash](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1094>)
+## func [CanonicalHash](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1126>)
 
 ```go
 func CanonicalHash(value JSONValue) (string, error)
@@ -244,7 +258,7 @@ func CanonicalHash(value JSONValue) (string, error)
 CanonicalHash returns the SHA\-256 of the canonical JSON of a value.
 
 <a name="CanonicalJSON"></a>
-## func [CanonicalJSON](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1085>)
+## func [CanonicalJSON](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1117>)
 
 ```go
 func CanonicalJSON(value JSONValue) (string, error)
@@ -289,7 +303,7 @@ func ComputeComponentID(def ComponentDefinition, bundleSha string) string
 ComputeComponentID returns the canonical content\-addressed componentId for a component definition. bundleSha is the verified SHA\-256 hex of the executable bundle; including it in the hash input binds the componentId to the exact bytes the runtime will execute, not just the declared module sources. It mirrors the TS bundler's buildComponentGraph hash so Go\-generated and TS\-generated ids are byte\-identical.
 
 <a name="HashSha256Bytes"></a>
-## func [HashSha256Bytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1103>)
+## func [HashSha256Bytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1135>)
 
 ```go
 func HashSha256Bytes(b []byte) string
@@ -297,8 +311,26 @@ func HashSha256Bytes(b []byte) string
 
 HashSha256Bytes returns the SHA\-256 hex of bytes.
 
+<a name="IsApplicationErrorCategory"></a>
+## func [IsApplicationErrorCategory](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L360>)
+
+```go
+func IsApplicationErrorCategory(category ApplicationErrorCategory) bool
+```
+
+IsApplicationErrorCategory reports whether category has a defined HTTP mapping.
+
+<a name="IsExpectedApplicationError"></a>
+## func [IsExpectedApplicationError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L171>)
+
+```go
+func IsExpectedApplicationError(err error) bool
+```
+
+IsExpectedApplicationError reports whether err is a handler\-authored normal outcome.
+
 <a name="IsIdentifier"></a>
-## func [IsIdentifier](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1406>)
+## func [IsIdentifier](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1438>)
 
 ```go
 func IsIdentifier(s string) bool
@@ -307,13 +339,22 @@ func IsIdentifier(s string) bool
 IsIdentifier reports whether s is a valid protocol identifier.
 
 <a name="IsSha256Hex"></a>
-## func [IsSha256Hex](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1442>)
+## func [IsSha256Hex](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1474>)
 
 ```go
 func IsSha256Hex(value any) bool
 ```
 
 
+
+<a name="LogUnexpectedHandlerFailure"></a>
+## func [LogUnexpectedHandlerFailure](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L90>)
+
+```go
+func LogUnexpectedHandlerFailure(app core.App, err error, fields HandlerFailureContext) bool
+```
+
+LogUnexpectedHandlerFailure records an unexpected function failure once at an outward execution boundary. ApplicationError and caller cancellation are normal outcomes and are deliberately excluded.
 
 <a name="UploadEnvelopeBytes"></a>
 ## func [UploadEnvelopeBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L73>)
@@ -360,6 +401,15 @@ func VerifyModuleSources(modules []ModuleSource, manifest DeploymentManifest) er
 
 VerifyModuleSources recomputes the canonical SHA\-256 of each uploaded module from its actual bytes and rejects missing/extra/mismatched module paths for the component graph. This ties the manifest's declared moduleHashes \(and therefore the content\-addressed componentId\) to the actual uploaded executable module bytes, not client\-declared hashes.
 
+<a name="WrapFunctionFailure"></a>
+## func [WrapFunctionFailure](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L40>)
+
+```go
+func WrapFunctionFailure(err error, name string, functionType FunctionType, phase FailurePhase) error
+```
+
+WrapFunctionFailure adds function context unless an inner invocation already did.
+
 <a name="ActivationObserver"></a>
 ## type [ActivationObserver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L57-L59>)
 
@@ -369,6 +419,49 @@ ActivationObserver is notified after a new active deployment commits and when th
 type ActivationObserver interface {
     ActiveDeploymentChanged(deploymentID string, manifest DeploymentManifest)
 }
+```
+
+<a name="ApplicationError"></a>
+## type [ApplicationError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L351-L355>)
+
+ApplicationError carries validated PBVex wire data from a handler failure.
+
+```go
+type ApplicationError struct {
+    Category ApplicationErrorCategory
+    Data     any
+    HasData  bool
+}
+```
+
+<a name="ApplicationError.Error"></a>
+### func \(\*ApplicationError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L357>)
+
+```go
+func (e *ApplicationError) Error() string
+```
+
+
+
+<a name="ApplicationErrorCategory"></a>
+## type [ApplicationErrorCategory](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L340>)
+
+ApplicationErrorCategory is a handler\-selected, status\-mapped error category.
+
+```go
+type ApplicationErrorCategory string
+```
+
+<a name="ApplicationErrorBadRequest"></a>
+
+```go
+const (
+    ApplicationErrorBadRequest   ApplicationErrorCategory = "bad_request"
+    ApplicationErrorUnauthorized ApplicationErrorCategory = "unauthorized"
+    ApplicationErrorForbidden    ApplicationErrorCategory = "forbidden"
+    ApplicationErrorNotFound     ApplicationErrorCategory = "not_found"
+    ApplicationErrorConflict     ApplicationErrorCategory = "conflict"
+)
 ```
 
 <a name="CallSnapshot"></a>
@@ -564,7 +657,7 @@ type Deployment struct {
 ```
 
 <a name="ValidateDeployment"></a>
-### func [ValidateDeployment](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L995>)
+### func [ValidateDeployment](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1027>)
 
 ```go
 func ValidateDeployment(value any) (Deployment, error)
@@ -584,7 +677,7 @@ type DeploymentActivateRequest struct {
 ```
 
 <a name="ValidateActivateRequest"></a>
-### func [ValidateActivateRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1069>)
+### func [ValidateActivateRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1101>)
 
 ```go
 func ValidateActivateRequest(value any) (DeploymentActivateRequest, error)
@@ -657,7 +750,7 @@ type DeploymentListResponse struct {
 ```
 
 <a name="ValidateDeploymentListResponse"></a>
-### func [ValidateDeploymentListResponse](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1045>)
+### func [ValidateDeploymentListResponse](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1077>)
 
 ```go
 func ValidateDeploymentListResponse(value any) (DeploymentListResponse, error)
@@ -685,7 +778,7 @@ type DeploymentManifest struct {
 ```
 
 <a name="ValidateManifest"></a>
-### func [ValidateManifest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L338>)
+### func [ValidateManifest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L370>)
 
 ```go
 func ValidateManifest(value any) (DeploymentManifest, error)
@@ -722,7 +815,7 @@ type DeploymentUploadRequest struct {
 ```
 
 <a name="ValidateUploadRequest"></a>
-### func [ValidateUploadRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L894>)
+### func [ValidateUploadRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L926>)
 
 ```go
 func ValidateUploadRequest(value any) (DeploymentUploadRequest, []byte, error)
@@ -804,6 +897,7 @@ const (
     ErrorCodeNotFound           ErrorCode = "not_found"
     ErrorCodeUnauthorized       ErrorCode = "unauthorized"
     ErrorCodeForbidden          ErrorCode = "forbidden"
+    ErrorCodeConflict           ErrorCode = "conflict"
     ErrorCodeInternal           ErrorCode = "internal"
     ErrorCodeUploadExpired      ErrorCode = "upload_expired"
     ErrorCodeUploadConsumed     ErrorCode = "upload_consumed"
@@ -813,6 +907,38 @@ const (
     ErrorCodeStorageFull        ErrorCode = "storage_full"
 )
 ```
+
+<a name="FailurePhase"></a>
+## type [FailurePhase](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L16>)
+
+FailurePhase identifies the stage at which a function invocation failed.
+
+```go
+type FailurePhase string
+```
+
+<a name="FailurePhaseHandlerExecution"></a>
+
+```go
+const (
+    FailurePhaseHandlerExecution   FailurePhase = "handler_execution"
+    FailurePhaseArgumentValidation FailurePhase = "argument_validation"
+    FailurePhaseReturnValidation   FailurePhase = "return_validation"
+    FailurePhaseTimeout            FailurePhase = "timeout"
+    FailurePhaseArgumentLimit      FailurePhase = "argument_limit"
+    FailurePhaseReturnLimit        FailurePhase = "return_limit"
+    FailurePhaseRuntimeSetup       FailurePhase = "runtime_setup"
+)
+```
+
+<a name="FailurePhaseFor"></a>
+### func [FailurePhaseFor](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L55>)
+
+```go
+func FailurePhaseFor(err error) FailurePhase
+```
+
+FailurePhaseFor classifies failures without inspecting or logging invocation values.
 
 <a name="FunctionDescriptor"></a>
 ## type [FunctionDescriptor](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L119-L128>)
@@ -831,6 +957,38 @@ type FunctionDescriptor struct {
     Route      *FunctionRoute     `json:"route,omitempty"`
 }
 ```
+
+<a name="FunctionFailure"></a>
+## type [FunctionFailure](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L29-L34>)
+
+FunctionFailure adds safe invocation metadata while retaining the original error.
+
+```go
+type FunctionFailure struct {
+    FunctionName string
+    FunctionType FunctionType
+    Phase        FailurePhase
+    Err          error
+}
+```
+
+<a name="FunctionFailure.Error"></a>
+### func \(\*FunctionFailure\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L36>)
+
+```go
+func (e *FunctionFailure) Error() string
+```
+
+
+
+<a name="FunctionFailure.Unwrap"></a>
+### func \(\*FunctionFailure\) [Unwrap](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L37>)
+
+```go
+func (e *FunctionFailure) Unwrap() error
+```
+
+
 
 <a name="FunctionRoute"></a>
 ## type [FunctionRoute](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L112-L116>)
@@ -907,6 +1065,22 @@ type HTTPResponseEnvelope struct {
     Status  int                 `json:"status"`
     Headers map[string][]string `json:"headers,omitempty"`
     Body    []byte              `json:"body,omitempty"`
+}
+```
+
+<a name="HandlerFailureContext"></a>
+## type [HandlerFailureContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L78-L85>)
+
+HandlerFailureContext contains only bounded, non\-value invocation identifiers.
+
+```go
+type HandlerFailureContext struct {
+    RequestID      string
+    SubscriptionID string
+    JobID          string
+    FunctionName   string
+    FunctionType   FunctionType
+    Phase          FailurePhase
 }
 ```
 
@@ -1160,7 +1334,7 @@ func (s *Service) ActiveContext(ctx context.Context) (*Deployment, error)
 
 
 <a name="Service.ActiveUploadEnvelopeBytes"></a>
-### func \(\*Service\) [ActiveUploadEnvelopeBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1681>)
+### func \(\*Service\) [ActiveUploadEnvelopeBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1683>)
 
 ```go
 func (s *Service) ActiveUploadEnvelopeBytes() int64
@@ -1223,7 +1397,7 @@ func (s *Service) Invoke(ctx context.Context, deploymentID, functionName string,
 Invoke loads a deployment bundle and calls a registered function.
 
 <a name="Service.InvokeDeploymentSnapshot"></a>
-### func \(\*Service\) [InvokeDeploymentSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1709>)
+### func \(\*Service\) [InvokeDeploymentSnapshot](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1711>)
 
 ```go
 func (s *Service) InvokeDeploymentSnapshot(ctx context.Context, deploymentID, bundleHash, functionName string, args any) (any, error)
@@ -1258,8 +1432,17 @@ func (s *Service) ListContext(ctx context.Context) (*DeploymentListResponse, err
 
 
 
+<a name="Service.LogUnexpectedHandlerFailure"></a>
+### func \(\*Service\) [LogUnexpectedHandlerFailure](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L113>)
+
+```go
+func (s *Service) LogUnexpectedHandlerFailure(err error, fields HandlerFailureContext) bool
+```
+
+LogUnexpectedHandlerFailure records a failure through the service's app logger.
+
 <a name="Service.MatchHTTPRoute"></a>
-### func \(\*Service\) [MatchHTTPRoute](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1618>)
+### func \(\*Service\) [MatchHTTPRoute](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1620>)
 
 ```go
 func (s *Service) MatchHTTPRoute(method, path string) (string, string, bool)
@@ -1268,7 +1451,7 @@ func (s *Service) MatchHTTPRoute(method, path string) (string, string, bool)
 
 
 <a name="Service.MatchHTTPRouteContext"></a>
-### func \(\*Service\) [MatchHTTPRouteContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1601>)
+### func \(\*Service\) [MatchHTTPRouteContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1603>)
 
 ```go
 func (s *Service) MatchHTTPRouteContext(ctx context.Context, method, path string) (string, string, bool)
@@ -1277,7 +1460,7 @@ func (s *Service) MatchHTTPRouteContext(ctx context.Context, method, path string
 
 
 <a name="Service.MaxFunctionArgsBytes"></a>
-### func \(\*Service\) [MaxFunctionArgsBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1665>)
+### func \(\*Service\) [MaxFunctionArgsBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1667>)
 
 ```go
 func (s *Service) MaxFunctionArgsBytes() int64
@@ -1286,7 +1469,7 @@ func (s *Service) MaxFunctionArgsBytes() int64
 
 
 <a name="Service.MaxUploadBytes"></a>
-### func \(\*Service\) [MaxUploadBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1673>)
+### func \(\*Service\) [MaxUploadBytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1675>)
 
 ```go
 func (s *Service) MaxUploadBytes() int64
@@ -1295,7 +1478,7 @@ func (s *Service) MaxUploadBytes() int64
 
 
 <a name="Service.Pin"></a>
-### func \(\*Service\) [Pin](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1733>)
+### func \(\*Service\) [Pin](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1735>)
 
 ```go
 func (s *Service) Pin(ctx context.Context, deploymentID string, delta int) error
@@ -1304,7 +1487,7 @@ func (s *Service) Pin(ctx context.Context, deploymentID string, delta int) error
 Pin atomically adjusts the deployment's durable scheduler reference count.
 
 <a name="Service.Resolve"></a>
-### func \(\*Service\) [Resolve](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1691>)
+### func \(\*Service\) [Resolve](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1693>)
 
 ```go
 func (s *Service) Resolve(ctx context.Context, deploymentID string) (DeploymentManifest, string, string, error)
@@ -1385,7 +1568,7 @@ func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUpload
 UploadContext is the request\-aware form used by the HTTP API. The legacy Upload method remains for embedders, but lifecycle work must otherwise keep the caller's cancellation/deadline all the way through verification and DB writes.
 
 <a name="Service.WarmActive"></a>
-### func \(\*Service\) [WarmActive](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1823>)
+### func \(\*Service\) [WarmActive](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/service.go#L1837>)
 
 ```go
 func (s *Service) WarmActive() error
@@ -1394,7 +1577,7 @@ func (s *Service) WarmActive() error
 WarmActive loads and verifies the currently active deployment runtime.
 
 <a name="StructuredError"></a>
-## type [StructuredError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L329-L335>)
+## type [StructuredError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L330-L337>)
 
 StructuredError is the protocol error envelope.
 
@@ -1404,6 +1587,7 @@ type StructuredError struct {
     Code      ErrorCode `json:"code"`
     Message   string    `json:"message"`
     Details   []any     `json:"details,omitempty"`
+    Data      *any      `json:"data,omitempty"`
     RequestID string    `json:"requestId,omitempty"`
 }
 ```

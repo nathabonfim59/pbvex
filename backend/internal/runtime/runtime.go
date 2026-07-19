@@ -496,18 +496,25 @@ func (p *Pool) verify(ctx context.Context, descriptors []deploy.FunctionDescript
 }
 
 type entry struct {
-	loop           *eventloop.EventLoop
-	vm             *goja.Runtime
-	bridge         *Bridge
-	loaded         bool
-	program        *goja.Program
-	invocation     *Invocation
-	promiseResolve goja.Callable
-	promiseCtor    *goja.Object
-	uint8ArrayCtor goja.Constructor
-	scheduler      Scheduler
-	deploymentID   string
-	extenders      []ContextExtender
+	loop              *eventloop.EventLoop
+	vm                *goja.Runtime
+	bridge            *Bridge
+	loaded            bool
+	program           *goja.Program
+	invocation        *Invocation
+	promiseResolve    goja.Callable
+	promiseCtor       *goja.Object
+	uint8ArrayCtor    goja.Constructor
+	scheduler         Scheduler
+	deploymentID      string
+	extenders         []ContextExtender
+	applicationErrors map[*goja.Object]registeredApplicationError
+}
+
+type registeredApplicationError struct {
+	category deploy.ApplicationErrorCategory
+	data     goja.Value
+	hasData  bool
 }
 
 func newEntry(program *goja.Program, descriptors []deploy.FunctionDescriptor, args ...any) *entry {
@@ -530,10 +537,11 @@ func newEntry(program *goja.Program, descriptors []deploy.FunctionDescriptor, ar
 		manifestMigrations:   migrations,
 	}
 	e := &entry{
-		loop:    loop,
-		vm:      goja.New(),
-		bridge:  bridge,
-		program: program,
+		loop:              loop,
+		vm:                goja.New(),
+		bridge:            bridge,
+		program:           program,
+		applicationErrors: make(map[*goja.Object]registeredApplicationError),
 	}
 	if len(extra) >= 4 {
 		e.scheduler, _ = extra[1].(Scheduler)
@@ -595,8 +603,9 @@ func (e *entry) loadInLoop(vm *goja.Runtime, program *goja.Program) error {
 	e.promiseCtor = promiseObj
 
 	_ = vm.Set("__pbvex", map[string]any{
-		"registerFunction":  e.bridge.RegisterFunction,
-		"registerMigration": e.bridge.RegisterMigration,
+		"registerFunction":       e.bridge.RegisterFunction,
+		"registerMigration":      e.bridge.RegisterMigration,
+		"createApplicationError": e.createApplicationError,
 	})
 
 	if _, err := vm.RunProgram(program); err != nil {
@@ -649,6 +658,9 @@ func (e *entry) invokeHTTP(invocation *Invocation, functionName string, httpEnve
 		return nil, invocation.Ctx.Err()
 	}
 	if err != nil {
+		if applicationErr := e.applicationErrorFromThrown(err, invocation); applicationErr != nil {
+			return nil, applicationErr
+		}
 		return nil, err
 	}
 	return e.toHTTPResponse(raw, invocation)
@@ -773,6 +785,9 @@ func (e *entry) invokeRaw(invocation *Invocation, functionName string, args any)
 	}
 	val, err := fn(goja.Undefined(), ctx, jsArgs)
 	if err != nil {
+		if applicationErr := e.applicationErrorFromThrown(err, invocation); applicationErr != nil {
+			return nil, applicationErr
+		}
 		return nil, err
 	}
 	return val, nil
@@ -812,6 +827,69 @@ func (e *entry) invokeHTTPRaw(invocation *Invocation, functionName string, httpE
 		return nil, err
 	}
 	return fn(goja.Undefined(), ctx, request)
+}
+
+func (e *entry) createApplicationError(call goja.FunctionCall) goja.Value {
+	category := deploy.ApplicationErrorCategory(call.Argument(0).String())
+	if !deploy.IsApplicationErrorCategory(category) {
+		return e.vm.NewGoError(fmt.Errorf("invalid application error category"))
+	}
+	obj := e.vm.NewGoError(fmt.Errorf("application error: %s", category))
+	_ = obj.Set("name", "ApplicationError")
+	_ = obj.Set("category", string(category))
+	_ = obj.Set("data", call.Argument(1))
+	if prototype, ok := call.Argument(3).(*goja.Object); ok {
+		_ = obj.SetPrototype(prototype)
+	}
+	registered := registeredApplicationError{category: category}
+	if call.Argument(2).ToBoolean() {
+		registered.data = call.Argument(1)
+		registered.hasData = true
+	}
+	e.applicationErrors[obj] = registered
+	return obj
+}
+
+func (e *entry) applicationErrorFromThrown(thrown any, invocation *Invocation) *deploy.ApplicationError {
+	var value goja.Value
+	switch typed := thrown.(type) {
+	case goja.Value:
+		value = typed
+	case interface{ Value() goja.Value }:
+		value = typed.Value()
+	}
+	obj, ok := value.(*goja.Object)
+	if !ok {
+		return nil
+	}
+	registered, ok := e.applicationErrors[obj]
+	if !ok || !deploy.IsApplicationErrorCategory(registered.category) {
+		return nil
+	}
+	result := &deploy.ApplicationError{Category: registered.category, HasData: registered.hasData}
+	if registered.hasData {
+		encoded, err := encodeWire(e.vm, registered.data)
+		if err != nil || checkWireSize(encoded, invocation.MaxReturnBytes, "application error data") != nil {
+			return nil
+		}
+		result.Data = encoded
+	}
+	return result
+}
+
+func (e *entry) throwApplicationError(applicationErr *deploy.ApplicationError) {
+	obj := e.vm.NewGoError(applicationErr)
+	registered := registeredApplicationError{category: applicationErr.Category, hasData: applicationErr.HasData}
+	if applicationErr.HasData {
+		data, err := decodeWire(e.vm, applicationErr.Data)
+		if err == nil {
+			registered.data = data
+		} else {
+			panic(e.vm.NewGoError(fmt.Errorf("invalid nested application error")))
+		}
+	}
+	e.applicationErrors[obj] = registered
+	panic(obj)
 }
 
 func (e *entry) buildInvocationContext(invocation *Invocation, descriptor deploy.FunctionDescriptor, functionName string, normalizedArgs any, jsArgs goja.Value) (*goja.Object, error) {
@@ -917,12 +995,26 @@ func (e *entry) resolveValue(val goja.Value, ctx context.Context) (goja.Value, e
 		case goja.PromiseStateFulfilled:
 			val = p.Result()
 		case goja.PromiseStateRejected:
-			return nil, fmt.Errorf("function rejected: %v", p.Result())
+			if applicationErr := e.applicationErrorFromThrown(p.Result(), e.invocation); applicationErr != nil {
+				return nil, applicationErr
+			}
+			return nil, fmt.Errorf("function rejected: %s", rejectionDetails(p.Result()))
 		default:
 			<-ctx.Done()
 			return nil, ctx.Err()
 		}
 	}
+}
+
+func rejectionDetails(value goja.Value) string {
+	if obj, ok := value.(*goja.Object); ok {
+		if stack := obj.Get("stack"); stack != nil && !goja.IsUndefined(stack) && !goja.IsNull(stack) {
+			if text := stack.String(); text != "" {
+				return text
+			}
+		}
+	}
+	return value.String()
 }
 
 func (e *entry) toHTTPResponse(v goja.Value, invocation *Invocation) (*deploy.HTTPResponseEnvelope, error) {

@@ -1,4 +1,4 @@
-import { decodeId, encodeValue, isIdentifier, isSafeFieldName } from '@pbvex/protocol';
+import { decodeId, encodeValue, isIdentifier, isPlainObject, isSafeFieldName } from '@pbvex/protocol';
 import type { JSONValue, PbvexValue } from '@pbvex/protocol';
 import type { StorageId } from '@pbvex/protocol';
 
@@ -19,8 +19,19 @@ export type Validator<Out = any, In = Out> = {
   toJSON(): unknown;
 };
 
-export type ObjectValidator<Out extends Record<string, any> = Record<string, any>, In extends Record<string, any> = Out> =
-  Validator<Out, In> & { readonly kind: 'object' };
+type ValidatorShape = Record<string, Validator<any, any>>;
+
+export type ObjectValidator<
+  Out extends Record<string, any> = Record<string, any>,
+  In extends Record<string, any> = Out,
+  Shape extends ValidatorShape = ValidatorShape,
+> = Validator<Out, In> & {
+  readonly kind: 'object';
+  extend<Fields extends ValidatorShape>(fields: Fields): ObjectValidatorFor<MergeShapes<Shape, Fields>>;
+  pick<const Keys extends readonly (keyof Shape & string)[]>(...keys: Keys): ObjectValidatorFor<Pick<Shape, Keys[number]>>;
+  omit<const Keys extends readonly (keyof Shape & string)[]>(...keys: Keys): ObjectValidatorFor<Omit<Shape, Keys[number]>>;
+  partial(): ObjectValidatorFor<PartialShape<Shape>>;
+};
 
 export type ValidatorKind =
   | 'id'
@@ -235,31 +246,62 @@ export function literal<T extends string | number | bigint | boolean>(value: T):
 
 type OutputOf<V> = V extends Validator<infer Out, any> ? Out : never;
 type InputOf<V> = V extends Validator<any, infer In> ? In : never;
-type ObjectOutput<T extends Record<string, Validator<any, any>>> = { [K in keyof T]: OutputOf<T[K]> };
-type ObjectInput<T extends Record<string, Validator<any, any>>> = {
+type ObjectOutput<T extends ValidatorShape> = { [K in keyof T]: OutputOf<T[K]> };
+type ObjectInput<T extends ValidatorShape> = {
   [K in keyof T as undefined extends InputOf<T[K]> ? never : K]: InputOf<T[K]>;
 } & {
   [K in keyof T as undefined extends InputOf<T[K]> ? K : never]?: Exclude<InputOf<T[K]>, undefined>;
 };
+type MergeShapes<Shape extends ValidatorShape, Fields extends ValidatorShape> = Omit<Shape, keyof Fields> & Fields;
+type PartialShape<Shape extends ValidatorShape> = {
+  [K in keyof Shape]: Validator<OutputOf<Shape[K]> | undefined, InputOf<Shape[K]> | undefined>;
+};
+export type ObjectValidatorFor<Shape extends ValidatorShape> = ObjectValidator<ObjectOutput<Shape>, ObjectInput<Shape>, Shape>;
 
-export function object<T extends Record<string, Validator<any, any>>>(
+export function object<T extends ValidatorShape>(
   shape: T,
-): ObjectValidator<ObjectOutput<T>, ObjectInput<T>> {
-  return new V(
+): ObjectValidatorFor<T> {
+  if (!isPlainObject(shape)) throw new ValidationError('Object validator shape must be a plain object');
+  for (const [key, field] of Object.entries(shape)) {
+    if (!isSafeFieldName(key)) throw new ValidationError(`Invalid object field name: ${JSON.stringify(key)}`);
+    if (!isValidator(field)) throw new ValidationError(`Invalid validator for object field: ${JSON.stringify(key)}`);
+  }
+  const snapshot = { ...shape };
+  const validator = new V(
     'object',
     (value) => {
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      if (!isPlainObject(value)) {
         throw new ValidationError('Expected object');
       }
+      const unknownKey = Object.keys(value).sort().find((key) => !Object.prototype.hasOwnProperty.call(snapshot, key));
+      if (unknownKey !== undefined) {
+        throw new UnknownFieldValidationError([unknownKey]);
+      }
       const result: any = {};
-      for (const key of Object.keys(shape)) {
-        result[key] = shape[key].validate((value as any)[key]);
+      for (const key of Object.keys(snapshot)) {
+        result[key] = validateAtPath(snapshot[key], (value as any)[key], key);
       }
       return result;
     },
     false,
-    () => ({ type: 'object', shape: Object.fromEntries(Object.entries(shape).map(([k, v]) => [k, v.toJSON()])) }),
-  ) as ObjectValidator<ObjectOutput<T>, ObjectInput<T>>;
+    () => ({ type: 'object', shape: Object.fromEntries(Object.entries(snapshot).map(([k, v]) => [k, v.toJSON()])) }),
+  ) as unknown as ObjectValidatorFor<T>;
+
+  validator.extend = (fields) => object({ ...snapshot, ...fields }) as any;
+  validator.pick = (...keys) => {
+    const picked: ValidatorShape = {};
+    for (const key of keys) picked[key] = snapshot[key];
+    return object(picked) as any;
+  };
+  validator.omit = (...keys) => {
+    const omitted = new Set<string>(keys);
+    return object(Object.fromEntries(Object.entries(snapshot).filter(([key]) => !omitted.has(key)))) as any;
+  };
+  validator.partial = () => object(Object.fromEntries(
+    Object.entries(snapshot).map(([key, field]) => [key, field.optional ? field : optional(field)]),
+  )) as any;
+
+  return validator;
 }
 
 export function array<T extends Validator<any, any>>(item: T): Validator<OutputOf<T>[], Array<Exclude<InputOf<T>, undefined>>> {
@@ -267,7 +309,7 @@ export function array<T extends Validator<any, any>>(item: T): Validator<OutputO
     'array',
     (value) => {
       if (!Array.isArray(value)) throw new ValidationError('Expected array');
-      return value.map((v) => item.validate(v));
+      return value.map((v, index) => validateAtPath(item, v, index));
     },
     false,
     () => ({ type: 'array', item: item.toJSON() }),
@@ -286,7 +328,7 @@ export function record<KOut extends string, KIn extends string, Value extends Va
 		for (const rawKey of Object.keys(v)) {
 			const normalizedKey = key.validate(rawKey);
 			if (typeof normalizedKey !== 'string') throw new ValidationError('Record keys must normalize to strings');
-			result[normalizedKey] = value.validate((v as any)[rawKey]);
+			result[normalizedKey] = validateAtPath(value, (v as any)[rawKey], rawKey);
       }
       return result;
     },
@@ -405,6 +447,29 @@ export class ValidationError extends Error {
     super(message);
     this.name = 'ValidationError';
   }
+}
+
+type ValidationPathSegment = string | number;
+
+class UnknownFieldValidationError extends ValidationError {
+  constructor(readonly path: readonly ValidationPathSegment[]) {
+    super(`Unknown field at ${formatValidationPath(path)}`);
+  }
+}
+
+function validateAtPath<T>(validator: Validator<T, any>, value: unknown, segment: ValidationPathSegment): T {
+  try {
+    return validator.validate(value);
+  } catch (err) {
+    if (err instanceof UnknownFieldValidationError) {
+      throw new UnknownFieldValidationError([segment, ...err.path]);
+    }
+    throw err;
+  }
+}
+
+function formatValidationPath(path: readonly ValidationPathSegment[]): string {
+  return `$${path.map((segment) => typeof segment === 'number' ? `[${segment}]` : `[${JSON.stringify(segment)}]`).join('')}`;
 }
 
 export function isValidator<T>(value: unknown): value is Validator<T> {

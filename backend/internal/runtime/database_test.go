@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -70,6 +71,7 @@ func TestDatabaseMutationAndQueryAreRequestScoped(t *testing.T) {
 		{Name: "deleteDoc", Type: deploy.FunctionTypeMutation, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "deleteDoc"},
 		{Name: "bad", Type: deploy.FunctionTypeMutation, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "bad"},
 		{Name: "reject", Type: deploy.FunctionTypeMutation, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "reject"},
+		{Name: "applicationReject", Type: deploy.FunctionTypeMutation, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "applicationReject"},
 		{Name: "badDocument", Type: deploy.FunctionTypeMutation, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "badDocument"},
 		{Name: "readOnly", Type: deploy.FunctionTypeQuery, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "readOnly"},
 		{Name: "action", Type: deploy.FunctionTypeAction, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "action"},
@@ -98,6 +100,7 @@ __pbvex.registerFunction({name:"replaceDoc",type:"mutation",visibility:"public",
 __pbvex.registerFunction({name:"deleteDoc",type:"mutation",visibility:"public",modulePath:"x",exportName:"deleteDoc"}, function(ctx,args) { ctx.db.delete(args.id); return ctx.db.get(args.id); });
 __pbvex.registerFunction({name:"bad",type:"mutation",visibility:"public",modulePath:"x",exportName:"bad"}, function(ctx) { ctx.db.insert("messages", {body:"rollback",n:2}); throw new Error("no"); });
 __pbvex.registerFunction({name:"reject",type:"mutation",visibility:"public",modulePath:"x",exportName:"reject"}, function(ctx) { ctx.db.insert("messages", {body:"rejected",n:2}); return Promise.reject(new Error("no")); });
+__pbvex.registerFunction({name:"applicationReject",type:"mutation",visibility:"public",modulePath:"x",exportName:"applicationReject"}, function(ctx) { ctx.db.insert("messages", {body:"application rollback",n:2}); throw __pbvex.createApplicationError("conflict",{reason:"duplicate"},true); });
 __pbvex.registerFunction({name:"badDocument",type:"mutation",visibility:"public",modulePath:"x",exportName:"badDocument"}, function(ctx) { ctx.db.insert("messages", {body:"host rollback",n:2}); return ctx.db.insert("messages", {body:1,n:2}); });
 __pbvex.registerFunction({name:"readOnly",type:"query",visibility:"public",modulePath:"x",exportName:"readOnly"}, function(ctx) { return typeof ctx.db.insert; });
 __pbvex.registerFunction({name:"action",type:"action",visibility:"public",modulePath:"x",exportName:"action"}, function(ctx) { return typeof ctx.db; });`
@@ -221,6 +224,14 @@ __pbvex.registerFunction({name:"action",type:"action",visibility:"public",module
 	if _, err := m.InvokeWithDatabase(context.Background(), "d", "reject", nil, nil, "", app, manifest); err == nil {
 		t.Fatal("expected rejected promise")
 	}
+	if _, err := m.InvokeWithDatabase(context.Background(), "d", "applicationReject", nil, nil, "", app, manifest); err == nil {
+		t.Fatal("expected application error")
+	} else {
+		var applicationErr *deploy.ApplicationError
+		if !errors.As(err, &applicationErr) || applicationErr.Category != deploy.ApplicationErrorConflict {
+			t.Fatalf("application error was flattened: %v", err)
+		}
+	}
 	if _, err := m.InvokeWithDatabase(context.Background(), "d", "badDocument", nil, nil, "", app, manifest); err == nil {
 		t.Fatal("expected host validation failure")
 	}
@@ -231,6 +242,10 @@ __pbvex.registerFunction({name:"action",type:"action",visibility:"public",module
 	items = got.([]any)
 	if len(items) != 1 {
 		t.Fatalf("rollback failed: %#v", got)
+	}
+	rows, err := app.FindRecordsByFilter("messages", "", "", 10, 0)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("mutation rollback left records: %d, %v", len(rows), err)
 	}
 	got, err = m.InvokeWithDatabase(context.Background(), "d", "readOnly", nil, nil, "", app, manifest)
 	if err != nil || got != "undefined" {

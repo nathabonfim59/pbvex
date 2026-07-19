@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
-import { applicationPocketBaseMigrationsDir, managedBackendArgs } from '../src/dev/backend.js';
+import { applicationPocketBaseMigrationsDir, managedBackendArgs, managedBackendEnv } from '../src/dev/backend.js';
 
 describe('managed development backend arguments', () => {
+  it('enables concise PBVex handler logs without enabling PocketBase debug mode', () => {
+    expect(managedBackendEnv('token', { PATH: '/bin' })).toEqual({
+      PATH: '/bin',
+      PBVEX_DEV_DEPLOY_TOKEN: 'token',
+      PBVEX_HANDLER_LOG_STDERR: '1',
+    });
+    expect(managedBackendArgs('/tmp/data', '127.0.0.1:8090')).not.toContain('--dev=true');
+  });
+
   it('enables the admin UI by default after the serve subcommand', () => {
     expect(managedBackendArgs('/tmp/data', '127.0.0.1:8090')).toEqual([
       '--dir',

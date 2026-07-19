@@ -21,4 +21,26 @@ PocketBase tokens are stateless: logout is `client.authStore.clear()`, not a ser
 
 `ctx.auth.getUserIdentity()` returns `null` or portable record identity. Store `identity.tokenIdentifier` as the durable application ownership key; do not key ownership by editable email or optional profile claims. Authentication method does not change authorization semantics. Every sensitive public function must verify ownership, membership, tenant, or role from durable data; hiding UI or possessing a valid ID/token is insufficient.
 
+Use `ApplicationError` from `pbvex/server` for expected authentication and authorization failures rather than an ordinary `Error`. `unauthorized` deterministically means HTTP 401 because authentication is required or invalid; `forbidden` means HTTP 403 because an authenticated caller is not allowed. Keep error data safe for clients:
+
+```ts
+import { ApplicationError, type AuthContext, type UserIdentity } from 'pbvex/server';
+
+export async function requireIdentity(auth: AuthContext): Promise<UserIdentity> {
+  const identity = await auth.getUserIdentity();
+  if (!identity) {
+    throw new ApplicationError('unauthorized', { reason: 'authentication_required' });
+  }
+  return identity;
+}
+
+export function requireAdmin(membership: { allowsAdmin: boolean }): void {
+  if (!membership.allowsAdmin) {
+    throw new ApplicationError('forbidden', { reason: 'admin_role_required' });
+  }
+}
+```
+
+This helper is ordinary TypeScript and needs no validator. Each exported deployed function still declares its own `args` and `returns` and performs the operation-specific durable permission check. Use the `pbvex-backend` skill for the complete application-error contract, rollback, masking, and realtime behavior.
+
 Use `docs/guides/auth.md` and PocketBase's version-matched authentication docs for complete method setup. Test auth-store persistence/clear/change behavior, failure data, token propagation, and realtime reconnection without logging tokens or secrets.

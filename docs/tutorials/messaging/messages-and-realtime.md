@@ -7,9 +7,11 @@ Messages combine three rules: only current conversation members may read or send
 ```ts
 // pbvex/messages.ts
 import { mutation, query } from './_generated/server';
+import { ApplicationError } from 'pbvex/server';
 import { v } from 'pbvex/values';
 import { requireIdentity } from './lib/identity';
 import { requireMembership } from './lib/membership';
+import { messagePageValidator } from './lib/validators';
 
 export const send = mutation({
   args: {
@@ -27,7 +29,11 @@ export const send = mutation({
 
     const normalizedBody = body.trim();
     if (!normalizedBody || normalizedBody.length > 4_000) {
-      throw new Error('invalid message body');
+      throw new ApplicationError('bad_request', {
+        field: 'body',
+        reason: 'invalid_length',
+        maxLength: 4_000,
+      });
     }
 
     return ctx.db.insert('messages', {
@@ -52,6 +58,7 @@ export const list = query({
     conversationId: v.id('conversations'),
     cursor: v.optional(v.string()),
   },
+  returns: messagePageValidator,
   handler: async (ctx, { conversationId, cursor }) => {
     const user = await requireIdentity(ctx.auth);
     await requireMembership(ctx, conversationId, user.tokenIdentifier);
@@ -82,7 +89,14 @@ export const list = query({
       page: result.page.map((message) => {
         const profile = profileById.get(message.senderProfileId);
         return {
-          message,
+          message: {
+            _id: message._id,
+            _creationTime: message._creationTime,
+            conversationId: message.conversationId,
+            senderProfileId: message.senderProfileId,
+            body: message.body,
+            editedAt: message.editedAt,
+          },
           sender: profile
             ? {
                 _id: profile._id,
@@ -125,7 +139,11 @@ export const edit = mutation({
 
     const normalizedBody = body.trim();
     if (!normalizedBody || normalizedBody.length > 4_000) {
-      throw new Error('invalid message body');
+      throw new ApplicationError('bad_request', {
+        field: 'body',
+        reason: 'invalid_length',
+        maxLength: 4_000,
+      });
     }
 
     await ctx.db.patch(messageId, {
@@ -144,13 +162,37 @@ A delete mutation uses the same sender and current-membership checks before `ctx
 Use the same authorized query for the initial result and subsequent updates:
 
 ```ts
+import { PBVexError } from '@pbvex/client';
+
+const applicationStatuses = {
+  bad_request: 400,
+  unauthorized: 401,
+  forbidden: 403,
+  not_found: 404,
+  conflict: 409,
+} as const;
+
 const unsubscribe = client.watch(
   api.messages.list,
   { conversationId },
   {
     onUpdate(result) {
       if (result.error) {
-        showConversationUnavailable();
+        if (result.error instanceof PBVexError) {
+          const category = result.error.code;
+          const status = category in applicationStatuses
+            ? applicationStatuses[
+                category as keyof typeof applicationStatuses
+              ]
+            : undefined;
+          showConversationUnavailable({
+            category,
+            status,
+            data: result.error.data,
+          });
+        } else {
+          showConversationUnavailable();
+        }
         return;
       }
       if (!result.isLoading) {
@@ -163,6 +205,8 @@ const unsubscribe = client.watch(
   },
 );
 ```
+
+For an `ApplicationError`, `PBVexError.code` is the category and `.data` is the deliberately safe payload supplied by the backend. The status above is the deterministic HTTP status for an ordinary call; a realtime subscription has already opened an HTTP 200 stream, so its failed evaluation carries the category and data in an event instead. Treat ordinary errors as generic failures rather than displaying their messages.
 
 The authenticated identity is preserved for subscription evaluations. Sending, editing, deleting, or changing membership causes subscribed queries to reevaluate. PBVex sends a new result only when its canonical value changed.
 

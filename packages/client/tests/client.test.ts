@@ -158,6 +158,30 @@ describe('Client', () => {
     }
   });
 
+  it('decodes application error data into PBVex values', async () => {
+    const fetch = makeMockFetch(() =>
+      new Response(
+        JSON.stringify({
+          error: true,
+          code: 'conflict',
+          message: 'Conflict.',
+          data: { resource: 'note', retryAfter: { $integer: 'AQAAAAAAAAA=' } },
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const client = new Client('http://localhost:8090', { fetch });
+    try {
+      await client.mutation('notes:create');
+      throw new Error('expected application error');
+    } catch (error) {
+      expect(error).toBeInstanceOf(PBVexError);
+      expect((error as PBVexError).code).toBe('conflict');
+      expect((error as PBVexError).data).toEqual({ resource: 'note', retryAfter: 1n });
+    }
+  });
+
   it('throws on malformed response without result', async () => {
     const fetch = makeMockFetch(() =>
       new Response(JSON.stringify({ unexpected: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }),

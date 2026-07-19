@@ -172,13 +172,19 @@ Every function context has `ctx.auth.getUserIdentity()`. It resolves to `null` f
 
 ```ts
 import { mutation } from './_generated/server';
+import { ApplicationError } from 'pbvex/server';
 import { v } from 'pbvex/values';
 
 export const createPrivateMessage = mutation({
   args: { body: v.string() },
+  returns: v.id('messages'),
   handler: async (ctx, { body }) => {
     const user = await ctx.auth.getUserIdentity();
-    if (!user) throw new Error('unauthenticated');
+    if (!user) {
+      throw new ApplicationError('unauthorized', {
+        reason: 'authentication_required',
+      });
+    }
     return ctx.db.insert('messages', { body, owner: user.tokenIdentifier });
   },
 });

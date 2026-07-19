@@ -8,6 +8,7 @@ Create a helper that works in queries and mutations:
 
 ```ts
 // pbvex/lib/membership.ts
+import { ApplicationError } from 'pbvex/server';
 import type { MutationCtx, QueryCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 
@@ -23,7 +24,11 @@ export async function requireMembership(
     )
     .unique();
 
-  if (!membership) throw new Error('forbidden');
+  if (!membership) {
+    throw new ApplicationError('forbidden', {
+      reason: 'conversation_membership_required',
+    });
+  }
   return membership;
 }
 ```
@@ -37,8 +42,10 @@ The creator becomes an administrator. Selected participant profiles become membe
 ```ts
 // pbvex/conversations.ts
 import { mutation, query } from './_generated/server';
+import { ApplicationError } from 'pbvex/server';
 import { v } from 'pbvex/values';
 import { requireIdentity } from './lib/identity';
+import { conversationListItemValidator } from './lib/validators';
 
 export const create = mutation({
   args: {
@@ -49,7 +56,13 @@ export const create = mutation({
   handler: async (ctx, { title, participantProfileIds }) => {
     const user = await requireIdentity(ctx.auth);
     const uniqueIds = [...new Set(participantProfileIds)];
-    if (uniqueIds.length > 49) throw new Error('too many participants');
+    if (uniqueIds.length > 49) {
+      throw new ApplicationError('bad_request', {
+        field: 'participantProfileIds',
+        reason: 'too_many_participants',
+        limit: 49,
+      });
+    }
 
     const ownProfile = await ctx.db
       .query('profiles')
@@ -57,13 +70,19 @@ export const create = mutation({
         q.eq('authUser', user.tokenIdentifier),
       )
       .unique();
-    if (!ownProfile) throw new Error('profile required');
+    if (!ownProfile) {
+      throw new ApplicationError('conflict', {
+        reason: 'profile_required',
+      });
+    }
 
     const participantProfiles = await Promise.all(
       uniqueIds.map((profileId) => ctx.db.get(profileId)),
     );
     if (participantProfiles.some((profile) => profile === null)) {
-      throw new Error('participant not found');
+      throw new ApplicationError('not_found', {
+        resource: 'participant_profile',
+      });
     }
 
     const conversationId = await ctx.db.insert('conversations', {
@@ -104,6 +123,7 @@ Start from `by_user_conversation`, bound the result, and hydrate conversation re
 ```ts
 export const listMine = query({
   args: {},
+  returns: v.array(conversationListItemValidator),
   handler: async (ctx) => {
     const user = await requireIdentity(ctx.auth);
 
@@ -123,7 +143,14 @@ export const listMine = query({
     return memberships.flatMap((membership, index) => {
       const conversation = conversations[index];
       return conversation
-        ? [{ conversation, role: membership.role }]
+        ? [{
+            conversation: {
+              _id: conversation._id,
+              _creationTime: conversation._creationTime,
+              title: conversation.title,
+            },
+            role: membership.role,
+          }]
         : [];
     });
   },

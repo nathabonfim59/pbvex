@@ -98,7 +98,7 @@ func AuthFromContext(ctx context.Context) (AuthContext, bool)
 AuthFromContext extracts the auth context, if any.
 
 <a name="Bridge"></a>
-## type [Bridge](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1021-L1030>)
+## type [Bridge](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1113-L1122>)
 
 Bridge is the host bridge exposed to the JS bundle.
 
@@ -109,7 +109,7 @@ type Bridge struct {
 ```
 
 <a name="Bridge.RegisterFunction"></a>
-### func \(\*Bridge\) [RegisterFunction](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1038>)
+### func \(\*Bridge\) [RegisterFunction](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1130>)
 
 ```go
 func (b *Bridge) RegisterFunction(descriptor goja.Value, handler goja.Value) error
@@ -118,7 +118,7 @@ func (b *Bridge) RegisterFunction(descriptor goja.Value, handler goja.Value) err
 RegisterFunction implements globalThis.\_\_pbvex.registerFunction\(descriptor, handler\).
 
 <a name="Bridge.RegisterMigration"></a>
-### func \(\*Bridge\) [RegisterMigration](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1105>)
+### func \(\*Bridge\) [RegisterMigration](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1197>)
 
 ```go
 func (b *Bridge) RegisterMigration(descriptor, up, down goja.Value) error
@@ -127,7 +127,7 @@ func (b *Bridge) RegisterMigration(descriptor, up, down goja.Value) error
 RegisterMigration implements \_\_pbvex.registerMigration\(descriptor, up, down\).
 
 <a name="Bridge.Verify"></a>
-### func \(\*Bridge\) [Verify](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1071>)
+### func \(\*Bridge\) [Verify](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1163>)
 
 ```go
 func (b *Bridge) Verify(descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor) error

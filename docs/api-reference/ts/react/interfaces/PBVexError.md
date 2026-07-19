@@ -14,6 +14,12 @@
 
 ***
 
+### data?
+
+> `readonly` `optional` **data?**: `PbvexValue`
+
+***
+
 ### details?
 
 > `readonly` `optional` **details?**: `unknown`[]

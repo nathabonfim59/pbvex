@@ -154,11 +154,15 @@ const newest = await ctx.db
 Accept a cursor in the query arguments and return PBVex’s pagination result directly:
 
 ```ts
+import { paginationResultValidator } from 'pbvex/server';
+import schema from './schema';
+
 export const listOpen = query({
   args: {
     ownerId: v.id('users'),
     cursor: v.optional(v.string()),
   },
+  returns: paginationResultValidator(schema.tables.tasks.documentValidator),
   handler: (ctx, { ownerId, cursor }) =>
     ctx.db
       .query('tasks')
@@ -172,10 +176,21 @@ export const listOpen = query({
 The result contains:
 
 - `page`: the documents in this page.
-- `isDone`: whether there is another page.
+- `isDone`: whether pagination is complete and there is no next page.
 - `continueCursor`: the opaque cursor for the next request; it is empty when the result is complete.
 
 Treat the cursor as opaque. Do not decode, edit, or reuse it with different query bounds, ordering, or page size. When search or filter arguments change, restart with `cursor: null`.
+
+For a paginated DTO, pass its fluent validator instead. The page item input and output types are inferred from that validator:
+
+```ts
+const taskSummary = v.object({ title: v.string() }).extend({ dueAt: v.number() });
+
+export const listSummaries = query({
+  returns: paginationResultValidator(taskSummary),
+  handler: async () => ({ page: [], isDone: true, continueCursor: '' }),
+});
+```
 
 ## Look up a known ID directly
 
@@ -184,11 +199,11 @@ If you already have a typed ID, use `get` instead of querying `_id`:
 ```ts
 const task = await ctx.db.get(args.taskId);
 if (task === null) {
-  throw new Error('Task not found');
+  throw new ApplicationError('not_found', { resource: 'task' });
 }
 ```
 
-`get` returns the document or `null`. Use `normalizeId(table, rawString)` only at a boundary where an untyped string must be validated. Never cast or manufacture IDs to make a query compile.
+`ApplicationError` is imported from `pbvex/server`; use it when absence is an expected, client-actionable domain result. `get` returns the document or `null`. Use `normalizeId(table, rawString)` only at a boundary where an untyped string must be validated. Never cast or manufacture IDs to make a query compile.
 
 ## Query best practices
 

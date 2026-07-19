@@ -19,6 +19,7 @@ try {
     console.log(error.code);      // e.g. 'not_found'
     console.log(error.message);   // human-readable message
     console.log(error.details);   // optional detail array
+    console.log(error.data);      // optional application-safe data
     console.log(error.requestId); // optional request id
   }
 }
@@ -32,6 +33,7 @@ try {
 | `code` | `ErrorCode` | Structured error code. |
 | `message` | `string` | Human-readable message. |
 | `details` | `unknown[] \| undefined` | Optional details. |
+| `data` | `PbvexValue \| undefined` | Wire-safe data deliberately supplied by an `ApplicationError`. |
 | `requestId` | `string \| undefined` | Optional request id. |
 | `structuredError` | `StructuredError` | Raw structured error object. |
 
@@ -39,13 +41,35 @@ try {
 
 Core codes are:
 
-`bad_request`, `invalid_manifest`, `invalid_function`, `bundle_not_found`, `bundle_hash_mismatch`, `activation_failed`, `not_found`, `unauthorized`, `forbidden`, `internal`.
+`bad_request`, `invalid_manifest`, `invalid_function`, `bundle_not_found`, `bundle_hash_mismatch`, `activation_failed`, `not_found`, `unauthorized`, `forbidden`, `conflict`, `internal`.
 
 Service-specific codes include storage admission states:
 
 `upload_expired`, `upload_consumed`, `upload_pending`, `upload_too_large`, `invalid_content`, `storage_full`.
 
 The SDK accepts the error codes exported by `@pbvex/protocol`. A response with an unknown code is treated as an unstructured HTTP error rather than a `PBVexError`.
+
+## Application errors
+
+Backend code uses `ApplicationError` for expected failures. Its category becomes `PBVexError.code`, and its optional safe payload becomes `.data`:
+
+```ts
+try {
+  await client.mutation(api.messages.send, { conversationId, body });
+} catch (error) {
+  if (error instanceof PBVexError && error.code === 'conflict') {
+    showConflict({
+      category: error.code,
+      status: 409,
+      data: error.data,
+    });
+  } else {
+    showGenericFailure();
+  }
+}
+```
+
+The application-category status mapping for calls is `bad_request` 400, `unauthorized` 401, `forbidden` 403, `not_found` 404, and `conflict` 409. `PBVexError` exposes `code` and does not expose a `status` property, so use this mapping only when the UI needs the corresponding call status. Realtime errors arrive within an already-established HTTP 200 event stream. Never display ordinary error messages as if they were safe application data; unexpected server errors are intentionally generic.
 
 ## Call errors
 
@@ -91,7 +115,7 @@ try {
 
 ## Debugging
 
-- Enable `dev` logging on the backend (`pbvex serve --dev`) to see request details.
+- Managed `pbvex dev` processes print concise handler-failure context by default without enabling PocketBase SQL debug output. Use backend `--dev` only when the additional PocketBase debug diagnostics are intentionally needed.
 - Inspect `client.connectionState` during realtime reconnect loops.
 - Use `response.headers.get('content-type')` to diagnose reverse proxy responses.
 - Keep `PBVEX_TOKEN` out of client code; use client-side auth providers or PocketBase record tokens.

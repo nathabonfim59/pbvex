@@ -316,6 +316,7 @@ export type ErrorCode =
   | 'not_found'
   | 'unauthorized'
   | 'forbidden'
+  | 'conflict'
   | 'upload_expired'
   | 'upload_consumed'
   | 'upload_pending'
@@ -334,6 +335,7 @@ export const ERROR_CODES = [
   'not_found',
   'unauthorized',
   'forbidden',
+  'conflict',
   'upload_expired',
   'upload_consumed',
   'upload_pending',
@@ -377,5 +379,7 @@ export type StructuredError = Readonly<{
   code: ErrorCode;
   message: string;
   details?: unknown[];
+  /** Wire-safe application data supplied by an application error. */
+  data?: JSONValue;
   requestId?: string;
 }>;

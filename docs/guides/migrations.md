@@ -97,7 +97,7 @@ transformations. Their pure context contains only `migrationId`, the stable
 email, scheduler, environment, or arbitrary side-effect capability. Keep shared
 helpers pure and within the migration module tree.
 
-Changing a persisted field from `v.string()` to `v.image()` requires a document migration that validates each existing canonical storage ID. This changes the document type but does not reprocess old generic uploads or invent an image policy for them. Only files uploaded through a schema-bound image upload URL have trusted image metadata and predefined thumbnail variants; migrate or reupload older objects separately when variants are required.
+Changing a persisted field from `v.string()` to `v.image()` requires a document migration that validates each existing canonical storage ID. This syntax check does not verify object existence, image bytes, ownership, or upload provenance, and the type change does not reprocess old generic uploads or invent an image policy for them. Only files uploaded through a schema-bound image upload URL have trusted image metadata and predefined thumbnail variants. PBVex v1 has no storage reprocessing/backfill API; use an application-managed reupload for older objects when variants are required.
 
 ## Activation and rollback lifecycle
 

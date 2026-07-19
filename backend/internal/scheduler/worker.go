@@ -53,6 +53,11 @@ type cancellation struct {
 	cancel context.CancelFunc
 }
 
+type handledHandlerFailure struct{ err error }
+
+func (e *handledHandlerFailure) Error() string { return e.err.Error() }
+func (e *handledHandlerFailure) Unwrap() error { return e.err }
+
 // NewWorker creates a worker bound to the given service.
 func NewWorker(service *Service) *Worker {
 	return &Worker{
@@ -343,6 +348,13 @@ func (w *Worker) runJob(record *core.Record) {
 	renewCancel()
 	renewWg.Wait()
 	if err != nil {
+		if deploy.IsExpectedApplicationError(err) {
+			err = &handledHandlerFailure{err: err}
+		} else if w.service.app != nil && deploy.LogUnexpectedHandlerFailure(w.service.app, err, deploy.HandlerFailureContext{
+			JobID: record.Id, FunctionName: functionName, FunctionType: descriptor.Type,
+		}) {
+			err = &handledHandlerFailure{err: err}
+		}
 		w.handleError(record, err)
 		return
 	}
@@ -407,6 +419,12 @@ func (w *Worker) handleError(record *core.Record, err error) {
 		if w.ctx.Err() != nil {
 			w.release(record)
 		}
+		return
+	}
+
+	var handled *handledHandlerFailure
+	if errors.As(err, &handled) && deploy.IsExpectedApplicationError(err) {
+		w.fail(record, err)
 		return
 	}
 
@@ -477,16 +495,17 @@ func (w *Worker) complete(record *core.Record, result any) {
 func (w *Worker) fail(record *core.Record, err error) {
 	now := w.clock.Now()
 	nowDateTime := dateTime(now)
+	errorMessage := persistedErrorMessage(err)
 	metadata := map[string]any{
 		"errorType":    errorType(err),
-		"errorMessage": truncateError(err),
+		"errorMessage": errorMessage,
 	}
 	metadataJSON, _ := deploy.CanonicalJSON(metadata)
 	res, updateErr := w.service.app.DB().Update(
 		schema.CollectionJobs,
 		dbx.Params{
 			schema.FieldStatus:         JobStatusFailed,
-			schema.FieldError:          truncateError(err),
+			schema.FieldError:          errorMessage,
 			schema.FieldMetadata:       metadataJSON,
 			schema.FieldResult:         "null",
 			schema.FieldFinished:       nowDateTime,
@@ -513,7 +532,24 @@ func (w *Worker) fail(record *core.Record, err error) {
 		w.service.app.Logger().Warn("stale failure ignored", "jobId", record.Id)
 		return
 	}
-	w.service.app.Logger().Warn("job failed", "jobId", record.Id, "errorType", metadata["errorType"], "error", err, "attempts", record.GetInt(schema.FieldAttempts))
+	var handled *handledHandlerFailure
+	if !errors.As(err, &handled) {
+		w.service.app.Logger().Warn("job failed", "jobId", record.Id, "errorType", metadata["errorType"], "error", err, "attempts", record.GetInt(schema.FieldAttempts))
+	}
+}
+
+func persistedErrorMessage(err error) string {
+	var handled *handledHandlerFailure
+	if !errors.As(err, &handled) {
+		return truncateError(err)
+	}
+	if deploy.IsExpectedApplicationError(err) {
+		var applicationErr *deploy.ApplicationError
+		if errors.As(err, &applicationErr) {
+			return "application error: " + string(applicationErr.Category)
+		}
+	}
+	return "Function invocation failed."
 }
 
 func (w *Worker) retry(record *core.Record) {

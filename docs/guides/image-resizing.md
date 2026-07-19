@@ -4,6 +4,16 @@ PBVex can validate uploaded raster images, record trusted metadata, and generate
 
 Use this feature when your application needs image dimensions or predictable display variants. Use the generic [file storage flow](./storage.md) for other files.
 
+## Recommended display workflow
+
+1. Predeclare a small selector set for actual UI slots, such as `96x96` for avatars, `320x240f` for cards, and `640x0` for list/detail previews.
+2. Authorize the caller, then issue `generateUploadUrl({ table, field })` so upload inspection uses that field's schema policy.
+3. Upload once and store the returned `StorageId` on the owning document.
+4. Authorize through that document, call `getUrl`, and set `thumb` to a predeclared selector for normal UI rendering.
+5. Return the original URL without `thumb` only for explicit zoom or download.
+
+This avoids repeatedly serving full-resolution originals. PBVex does not accept arbitrary dimensions or undeclared transformations at download time.
+
 ## Declare an image field
 
 Declare an owning top-level field with `v.image()`:
@@ -35,6 +45,8 @@ Supported MIME values are `image/gif`, `image/jpeg`, `image/png`, and `image/web
 
 The policy belongs to the field. Keep image fields at the top level so `generateUploadUrl` can identify them by table and field name.
 
+Ordinary value validation with `v.image()` checks canonical `pbv_[0-9a-f]{32}` syntax and that the validator's policy descriptor is valid. It does not query storage or inspect bytes, and it proves neither existence, ownership, nor provenance through a schema-bound upload.
+
 ## Generate a policy-bound upload URL
 
 Pass the image field to `generateUploadUrl`:
@@ -42,10 +54,13 @@ Pass the image field to `generateUploadUrl`:
 ```ts
 // pbvex/photos.ts
 import { mutation } from './_generated/server';
+import { ApplicationError } from 'pbvex/server';
 
 export const createImageUpload = mutation({
   handler: async (ctx) => {
-    // Authorize the caller before issuing an upload URL.
+    const user = await ctx.auth.getUserIdentity();
+    if (!user) throw new ApplicationError('unauthorized');
+    await assertCanUploadPhoto(ctx, user.tokenIdentifier);
     return ctx.storage.generateUploadUrl({
       table: 'photos',
       field: 'image',
@@ -54,7 +69,7 @@ export const createImageUpload = mutation({
 });
 ```
 
-PBVex resolves the active schema field and copies its image policy into the single-use upload token. Uploading to a generic URL from `generateUploadUrl()` does not create an image-policy file, even if the bytes happen to be an image.
+The application authorization above must run before URL issuance. PBVex resolves the active schema field and copies its image policy into the single-use upload token. Uploading to a generic URL from `generateUploadUrl()` does not create an image-policy file, even if the bytes happen to be an image.
 
 Upload the file directly to the returned URL:
 
@@ -171,7 +186,7 @@ The URL mode keeps its normal authorization and cache behavior:
 
 | Mode | Thumbnail access |
 | --- | --- |
-| `identity` (default) | Short-lived and requires the same caller bearer token. Usually unsuitable as a plain browser image `src`. |
+| `identity` (default) | Authenticated issuance is short-lived and requires the same caller bearer token, so it is usually unsuitable as a plain browser image `src`. Anonymous issuance works only without an `Authorization` header and possession grants access until expiry. |
 | `capability` | Short-lived bearer URL suitable for an image `src`. Anyone with the URL can access it until expiry. |
 | `public` | Stable bearer URL with shared-cache headers. Use only for intentionally public images. |
 
@@ -189,9 +204,9 @@ Deleting the `StorageId` deletes the original and every generated variant. Publi
 
 ## Schema changes and existing files
 
-The policy stored with an uploaded image is immutable. Changing `thumbs` or `mimeTypes` affects newly generated upload URLs and files uploaded through them; it does not rewrite metadata for existing objects.
+The policy stored with an uploaded image is immutable. Changing `thumbs` or `mimeTypes` affects newly generated upload URLs and files uploaded through them; it does not rewrite metadata for existing objects. Newly declared selectors therefore do not become available for old images, and removing a selector from the schema does not remove it from old policy snapshots.
 
-Changing an existing document field from `v.string()` to `v.image()` validates that its value has `StorageId` syntax, but it does not inspect or reprocess the referenced object. Files previously uploaded through a generic upload URL remain `kind: 'file'` and cannot serve `?thumb=` variants. Reupload or explicitly reprocess those originals through an image-policy upload flow if they need resizing.
+Changing an existing document field from `v.string()` to `v.image()` requires a document migration and validates that its value has canonical `StorageId` syntax, but it does not verify existence, inspect bytes, establish ownership/provenance, or reprocess the referenced object. Files previously uploaded through a generic upload URL remain `kind: 'file'` and cannot serve `?thumb=` variants. PBVex v1 has no reprocessing/backfill API; reupload through a schema-bound image flow if those objects need resizing.
 
 Application code can provide a safe fallback during migration:
 

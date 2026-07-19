@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -129,6 +130,10 @@ func (e *entry) runNested(nameValue goja.Value, argsValue goja.Value, targetType
 	}
 	result, err := inv.NestedInvoke(inv, name, targetType, encoded, depth)
 	if err != nil {
+		var applicationErr *deploy.ApplicationError
+		if errors.As(err, &applicationErr) {
+			e.throwApplicationError(applicationErr)
+		}
 		panic(e.vm.NewGoError(err))
 	}
 	val, err := decodeWire(e.vm, result)

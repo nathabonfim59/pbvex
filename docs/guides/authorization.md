@@ -24,8 +24,14 @@ Authorization applies to reads and writes. Hiding a button, filtering results in
 `ctx.auth.getUserIdentity()` returns the current application identity or `null`. Reject anonymous callers before reading protected state:
 
 ```ts
+import { ApplicationError } from 'pbvex/server';
+
 const user = await ctx.auth.getUserIdentity();
-if (!user) throw new Error('unauthenticated');
+if (!user) {
+  throw new ApplicationError('unauthorized', {
+    reason: 'authentication_required',
+  });
+}
 ```
 
 Use `user.tokenIdentifier` as a durable ownership key. It is stable and globally qualified across auth collections. Do not authorize with an email address, display name, route parameter, or client-provided identity.
@@ -33,13 +39,21 @@ Use `user.tokenIdentifier` as a durable ownership key. It is stable and globally
 You may centralize this first step in a helper:
 
 ```ts
-import type { AuthContext, UserIdentity } from 'pbvex/server';
+import {
+  ApplicationError,
+  type AuthContext,
+  type UserIdentity,
+} from 'pbvex/server';
 
 export async function requireIdentity(
   auth: AuthContext,
 ): Promise<UserIdentity> {
   const user = await auth.getUserIdentity();
-  if (!user) throw new Error('unauthenticated');
+  if (!user) {
+    throw new ApplicationError('unauthorized', {
+      reason: 'authentication_required',
+    });
+  }
   return user;
 }
 ```
@@ -124,7 +138,11 @@ const membership = await ctx.db
   )
   .unique();
 
-if (!membership) throw new Error('forbidden');
+if (!membership) {
+  throw new ApplicationError('forbidden', {
+    reason: 'project_membership_required',
+  });
+}
 ```
 
 For privileged operations, check `membership.role` as well. Store role and membership state on the server; never accept a client claim that the caller is an administrator.
@@ -146,15 +164,26 @@ Verify current tenant membership, then query only that tenant’s range. An inde
 Put authorization inside the query clients subscribe to. Realtime reevaluation invokes the same query with the authenticated identity, so the permission check runs every time:
 
 ```ts
+const publicCommentValidator =
+  schema.tables.comments.documentValidator.omit('owner');
+
 export const listPrivate = query({
+  args: {},
+  returns: v.array(publicCommentValidator),
   handler: async (ctx) => {
     const user = await requireIdentity(ctx.auth);
-    return ctx.db
+    const comments = await ctx.db
       .query('comments')
       .withIndex('by_owner', (q) =>
         q.eq('owner', user.tokenIdentifier),
       )
       .take(100);
+
+    return comments.map((comment) => ({
+      _id: comment._id,
+      _creationTime: comment._creationTime,
+      body: comment.body,
+    }));
   },
 });
 ```

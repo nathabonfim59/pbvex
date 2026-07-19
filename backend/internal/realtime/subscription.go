@@ -81,7 +81,7 @@ func (s *Subscription) runOnce() {
 
 	var payload any
 	if err != nil {
-		payload = s.errorPayload(err)
+		payload = s.executionErrorPayload(err)
 	} else {
 		payload = result
 	}
@@ -98,6 +98,14 @@ func (s *Subscription) runOnce() {
 	s.lastSent = canonical
 
 	s.sendMessage(payload)
+}
+
+func (s *Subscription) executionErrorPayload(err error) map[string]any {
+	s.service.LogUnexpectedHandlerFailure(err, deploy.HandlerFailureContext{
+		RequestID: s.requestID, SubscriptionID: s.id, FunctionName: s.path,
+		FunctionType: deploy.FunctionTypeQuery,
+	})
+	return s.errorPayload(err)
 }
 
 func (s *Subscription) sendMessage(payload any) {
@@ -158,6 +166,14 @@ func (s *Subscription) sendPing() {
 }
 
 func (s *Subscription) errorPayload(err error) map[string]any {
+	var applicationErr *deploy.ApplicationError
+	if errors.As(err, &applicationErr) {
+		payload := structuredErrorPayload(deploy.ErrorCode(applicationErr.Category), applicationErrorMessage(applicationErr.Category), s.requestID)
+		if applicationErr.HasData {
+			payload["data"] = applicationErr.Data
+		}
+		return payload
+	}
 	code := deploy.ErrorCodeInternal
 	message := "Function invocation failed."
 
@@ -180,6 +196,23 @@ func (s *Subscription) errorPayload(err error) map[string]any {
 	}
 
 	return structuredErrorPayload(code, message, s.requestID)
+}
+
+func applicationErrorMessage(category deploy.ApplicationErrorCategory) string {
+	switch category {
+	case deploy.ApplicationErrorBadRequest:
+		return "Bad request."
+	case deploy.ApplicationErrorUnauthorized:
+		return "Unauthorized."
+	case deploy.ApplicationErrorForbidden:
+		return "Forbidden."
+	case deploy.ApplicationErrorNotFound:
+		return "Not found."
+	case deploy.ApplicationErrorConflict:
+		return "Conflict."
+	default:
+		return "Internal server error."
+	}
 }
 
 func (s *Subscription) internalErrorPayload() map[string]any {

@@ -15,7 +15,7 @@ import "github.com/nathabonfim59/pbvex/backend/internal/api"
 
 
 <a name="IsReservedPlatformPath"></a>
-## func [IsReservedPlatformPath](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L704>)
+## func [IsReservedPlatformPath](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/api/api.go#L706>)
 
 ```go
 func IsReservedPlatformPath(path, storageBasePath string) bool

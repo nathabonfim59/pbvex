@@ -38,13 +38,21 @@ Create a small reusable helper:
 
 ```ts
 // pbvex/lib/identity.ts
-import type { AuthContext, UserIdentity } from 'pbvex/server';
+import {
+  ApplicationError,
+  type AuthContext,
+  type UserIdentity,
+} from 'pbvex/server';
 
 export async function requireIdentity(
   auth: AuthContext,
 ): Promise<UserIdentity> {
   const user = await auth.getUserIdentity();
-  if (!user) throw new Error('unauthenticated');
+  if (!user) {
+    throw new ApplicationError('unauthorized', {
+      reason: 'authentication_required',
+    });
+  }
   return user;
 }
 ```
@@ -58,8 +66,12 @@ After first sign-in, call a mutation that creates the profile only when one does
 ```ts
 // pbvex/profiles.ts
 import { mutation, query } from './_generated/server';
+import { ApplicationError } from 'pbvex/server';
 import { v } from 'pbvex/values';
 import { requireIdentity } from './lib/identity';
+import {
+  maybePublicProfileValidator,
+} from './lib/validators';
 
 export const ensure = mutation({
   args: {
@@ -72,7 +84,10 @@ export const ensure = mutation({
     const normalizedHandle = handle.trim().toLowerCase();
 
     if (!/^[a-z0-9_]{3,24}$/.test(normalizedHandle)) {
-      throw new Error('invalid handle');
+      throw new ApplicationError('bad_request', {
+        field: 'handle',
+        reason: 'invalid_format',
+      });
     }
 
     const existing = await ctx.db
@@ -89,7 +104,12 @@ export const ensure = mutation({
       .withIndex('by_handle', (q) => q.eq('handle', normalizedHandle))
       .unique();
 
-    if (handleOwner) throw new Error('handle unavailable');
+    if (handleOwner) {
+      throw new ApplicationError('conflict', {
+        field: 'handle',
+        reason: 'unavailable',
+      });
+    }
 
     return ctx.db.insert('profiles', {
       authUser: user.tokenIdentifier,
@@ -107,14 +127,23 @@ PBVex indexes are not unique constraints. The mutation checks both application i
 ```ts
 export const me = query({
   args: {},
+  returns: maybePublicProfileValidator,
   handler: async (ctx) => {
     const user = await requireIdentity(ctx.auth);
-    return ctx.db
+    const profile = await ctx.db
       .query('profiles')
       .withIndex('by_auth_user', (q) =>
         q.eq('authUser', user.tokenIdentifier),
       )
       .unique();
+
+    if (!profile) return null;
+    return {
+      _id: profile._id,
+      handle: profile.handle,
+      displayName: profile.displayName,
+      avatarStorageId: profile.avatarStorageId,
+    };
   },
 });
 ```

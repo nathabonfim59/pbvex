@@ -34,6 +34,12 @@
 
 ***
 
+### data?
+
+> `readonly` `optional` **data?**: [`PbvexValue`](../type-aliases/PbvexValue.md)
+
+***
+
 ### details?
 
 > `readonly` `optional` **details?**: `unknown`[]

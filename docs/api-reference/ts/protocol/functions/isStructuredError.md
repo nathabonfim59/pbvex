@@ -2,7 +2,7 @@
 
 # Function: isStructuredError()
 
-> **isStructuredError**(`value`): `value is Readonly<{ code: ErrorCode; details?: unknown[]; error: true; message: string; requestId?: string }>`
+> **isStructuredError**(`value`): `value is Readonly<{ code: ErrorCode; data?: JSONValue; details?: unknown[]; error: true; message: string; requestId?: string }>`
 
 ## Parameters
 
@@ -12,4 +12,4 @@
 
 ## Returns
 
-`value is Readonly<{ code: ErrorCode; details?: unknown[]; error: true; message: string; requestId?: string }>`
+`value is Readonly<{ code: ErrorCode; data?: JSONValue; details?: unknown[]; error: true; message: string; requestId?: string }>`

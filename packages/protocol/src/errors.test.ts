@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ERROR_CODES, isErrorCode, isStructuredError, structuredError } from './index.js';
+import { ERROR_CODES, errorToJson, isErrorCode, isStructuredError, structuredError } from './index.js';
 import type { ErrorCode, StorageId, StorageUploadResponse } from './index.js';
 
 test('storage error codes are part of the strict shared wire contract', () => {
@@ -20,6 +20,18 @@ test('storage error codes are part of the strict shared wire contract', () => {
   }
   assert.equal(isErrorCode('unknown_storage_error'), false);
   assert.equal(isStructuredError({ error: true, code: 'unknown_storage_error', message: 'bad' }), false);
+});
+
+test('application error category and data use the structured error envelope', () => {
+  const error = structuredError('conflict', 'Conflict.', { data: { resource: 'note' }, requestId: 'rid' });
+  assert.equal(isStructuredError(error), true);
+  assert.deepEqual(errorToJson(error), {
+    error: true,
+    code: 'conflict',
+    message: 'Conflict.',
+    data: { resource: 'note' },
+    requestId: 'rid',
+  });
 });
 
 test('storage upload responses carry the branded identifier at the type boundary', () => {

@@ -24,13 +24,13 @@
 
 ### tables
 
-> `readonly` **tables**: `Readonly`\<`Tables` & `Record`\<`string`, [`TableDefinition`](TableDefinition.md) \| `undefined`\>\>
+> `readonly` **tables**: `Readonly`\<`BoundTables`\<`Tables`\> & `Record`\<`string`, [`SchemaTableDefinition`](../type-aliases/SchemaTableDefinition.md)\<`string`\> \| `undefined`\>\>
 
 ## Methods
 
 ### getTable()
 
-> **getTable**\<`Name`\>(`name`): `Tables`\[`Name`\]
+> **getTable**\<`Name`\>(`name`): `BoundTable`\<`Tables`\[`Name`\], `Name`\>
 
 #### Type Parameters
 
@@ -46,7 +46,7 @@
 
 #### Returns
 
-`Tables`\[`Name`\]
+`BoundTable`\<`Tables`\[`Name`\], `Name`\>
 
 ***
 

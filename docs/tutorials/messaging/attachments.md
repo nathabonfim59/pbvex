@@ -9,10 +9,11 @@ The base tutorial allows each message sender to upload for that message. The sep
 ```ts
 // pbvex/attachments.ts
 import { mutation, query } from './_generated/server';
-import type { StorageId } from 'pbvex/server';
+import { ApplicationError, type StorageId } from 'pbvex/server';
 import { v } from 'pbvex/values';
 import { requireIdentity } from './lib/identity';
 import { requireMembership } from './lib/membership';
+import { attachmentValidator } from './lib/validators';
 
 export const createUpload = mutation({
   args: { messageId: v.id('messages') },
@@ -24,7 +25,9 @@ export const createUpload = mutation({
     const user = await requireIdentity(ctx.auth);
     const message = await ctx.db.get(messageId);
     if (!message || message.sender !== user.tokenIdentifier) {
-      throw new Error('forbidden');
+      throw new ApplicationError('forbidden', {
+        reason: 'message_sender_required',
+      });
     }
     await requireMembership(ctx, message.conversationId, user.tokenIdentifier);
 
@@ -98,7 +101,9 @@ export const attach = mutation({
       !message ||
       message.sender !== user.tokenIdentifier
     ) {
-      throw new Error('forbidden');
+      throw new ApplicationError('forbidden', {
+        reason: 'upload_intent_owner_required',
+      });
     }
 
     await requireMembership(
@@ -110,16 +115,25 @@ export const attach = mutation({
     const metadata = await ctx.storage.getMetadata(
       args.storageId as StorageId,
     );
-    if (!metadata) throw new Error('upload not found');
+    if (!metadata) {
+      throw new ApplicationError('not_found', { resource: 'upload' });
+    }
     if (metadata.createdBy !== user.tokenIdentifier) {
-      throw new Error('upload owner mismatch');
+      throw new ApplicationError('forbidden', {
+        reason: 'upload_owner_required',
+      });
     }
 
     const alreadyAttached = await ctx.db
       .query('messageAttachments')
       .withIndex('by_storage', (q) => q.eq('storageId', args.storageId))
       .unique();
-    if (alreadyAttached) throw new Error('upload already attached');
+    if (alreadyAttached) {
+      throw new ApplicationError('conflict', {
+        resource: 'upload',
+        reason: 'already_attached',
+      });
+    }
 
     const existing = await ctx.db
       .query('messageAttachments')
@@ -127,7 +141,13 @@ export const attach = mutation({
         q.eq('messageId', args.messageId),
       )
       .take(10);
-    if (existing.length >= 10) throw new Error('too many attachments');
+    if (existing.length >= 10) {
+      throw new ApplicationError('bad_request', {
+        resource: 'message_attachments',
+        reason: 'limit_reached',
+        limit: 10,
+      });
+    }
 
     const attachmentId = await ctx.db.insert('messageAttachments', {
       messageId: args.messageId,
@@ -166,10 +186,13 @@ Start from the message, verify conversation membership, then query its attachmen
 ```ts
 export const listForMessage = query({
   args: { messageId: v.id('messages') },
+  returns: v.array(attachmentValidator),
   handler: async (ctx, { messageId }) => {
     const user = await requireIdentity(ctx.auth);
     const message = await ctx.db.get(messageId);
-    if (!message) throw new Error('not found');
+    if (!message) {
+      throw new ApplicationError('not_found', { resource: 'message' });
+    }
 
     await requireMembership(
       ctx,
@@ -182,7 +205,14 @@ export const listForMessage = query({
       .withIndex('by_message', (q) => q.eq('messageId', messageId))
       .take(10);
 
-    return attachments.map(({ storageId: _storageId, owner: _owner, ...safe }) => safe);
+    return attachments.map((attachment) => ({
+      _id: attachment._id,
+      _creationTime: attachment._creationTime,
+      messageId: attachment.messageId,
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      size: attachment.size,
+    }));
   },
 });
 ```

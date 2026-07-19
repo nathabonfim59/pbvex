@@ -18,14 +18,20 @@
 
 > **continueCursor**: `string`
 
+Opaque cursor for the next page; the runtime emits an empty string when `isDone` is true.
+
 ***
 
 ### isDone
 
 > **isDone**: `boolean`
 
+True when pagination is complete and there is no next page.
+
 ***
 
 ### page
 
 > **page**: [`DocumentByName`](../type-aliases/DocumentByName.md)\<`DataModel`, `TableName`\>[]
+
+Documents in this page.

@@ -275,13 +275,14 @@ describe('FetchRealtimeTransport', () => {
     } as WatchOptions<unknown>);
 
     await wait(10);
-    const payload = { error: true, code: 'internal', message: 'boom' };
+    const payload = { error: true, code: 'conflict', message: 'Conflict.', data: { retryAfter: { $integer: 'AQAAAAAAAAA=' } } };
     harness.push(sseEnvelope(payload, id));
     await wait(10);
 
     const last = updates[updates.length - 1];
     expect(last.error).toBeInstanceOf(PBVexError);
-    expect(last.error?.message).toBe('boom');
+    expect(last.error?.message).toBe('Conflict.');
+    expect((last.error as PBVexError).data).toEqual({ retryAfter: 1n });
     expect(errors[0]).toBeInstanceOf(PBVexError);
   });
 

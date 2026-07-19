@@ -436,7 +436,7 @@ type Worker struct {
 ```
 
 <a name="NewWorker"></a>
-### func [NewWorker](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L57>)
+### func [NewWorker](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L62>)
 
 ```go
 func NewWorker(service *Service) *Worker
@@ -445,7 +445,7 @@ func NewWorker(service *Service) *Worker
 NewWorker creates a worker bound to the given service.
 
 <a name="Worker.Cancel"></a>
-### func \(\*Worker\) [Cancel](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L113>)
+### func \(\*Worker\) [Cancel](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L118>)
 
 ```go
 func (w *Worker) Cancel(id, leaseToken string) bool
@@ -454,7 +454,7 @@ func (w *Worker) Cancel(id, leaseToken string) bool
 Cancel requests that a running attempt stop. The leaseToken scopes the cancel to the current attempt, so a stale cancellation cannot accidentally remove the cancel func of a reclaimed attempt.
 
 <a name="Worker.Start"></a>
-### func \(\*Worker\) [Start](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L68>)
+### func \(\*Worker\) [Start](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L73>)
 
 ```go
 func (w *Worker) Start(ctx context.Context) error
@@ -463,7 +463,7 @@ func (w *Worker) Start(ctx context.Context) error
 Start begins the polling loop.
 
 <a name="Worker.Stop"></a>
-### func \(\*Worker\) [Stop](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L93>)
+### func \(\*Worker\) [Stop](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L98>)
 
 ```go
 func (w *Worker) Stop()
@@ -472,7 +472,7 @@ func (w *Worker) Stop()
 Stop cancels the worker and waits for all goroutines to finish.
 
 <a name="Worker.Wake"></a>
-### func \(\*Worker\) [Wake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L103>)
+### func \(\*Worker\) [Wake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/scheduler/worker.go#L108>)
 
 ```go
 func (w *Worker) Wake()

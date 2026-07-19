@@ -23,9 +23,9 @@ Use this skill to orient a PBVex change, then load only the specialized skill(s)
 
 - PBVex's own Go/PocketBase implementation, runtime routes, migration activation/rollback internals, PocketBase host migrations, or Go tests: `pbvex-internals`.
 - Manifest/wire compatibility, canonical artifacts, shared TypeScript/Go validators, fixtures, IDs, or protocol ADRs: `pbvex-protocol`.
-- Application backend work under `pbvex/`, including schema/functions, first-class migration definitions, indexed queries and pagination, authorization, relationships, outbound HTTP, HTTP actions, email templates, or scheduling: `pbvex-backend`.
+- Application backend work under `pbvex/`, including deployed function/return contracts, strict object DTOs, application errors, schema/functions, first-class migration definitions, indexed queries and pagination, authorization, relationships, outbound HTTP, HTTP actions, email templates, or scheduling: `pbvex-backend`.
 - Storage contracts, `StorageId`, metadata, URL access modes, CDN caching, resizing, object storage, or deletion: `pbvex-storage`.
-- Native PocketBase signup/sign-in, auth collections/stores, OAuth2, OTP, MFA, refresh, logout, or token lifecycle: `pbvex-auth`.
+- Native PocketBase signup/sign-in, auth collections/stores, OAuth2, OTP, MFA, refresh, logout, token lifecycle, or choosing authentication-required (401) versus authenticated-but-forbidden (403): `pbvex-auth`.
 - SSE subscriptions, `watch`, reconnects, deduplication, proxy streaming, or realtime transport tests: `pbvex-realtime`.
 - Vanilla typed calls, errors/cancellation, or browser/Node storage transfers: `pbvex-client` (add the owning auth/realtime/storage skill as needed).
 - React provider/hooks/tests: `pbvex-react`; Svelte 5 runes/tests: `pbvex-svelte`.
@@ -58,7 +58,7 @@ separate rollback lifecycle. Never use both systems for the same table, edit an
 applied migration ID, invent row/byte estimates from the structural plan, or
 assume maintenance mode exists.
 
-Design database reads as bounded access patterns. Prefer a matching index plus `first`, `unique`, `take`, or `paginate`; use `collect` only for provably small result sets. Pagination uses HMAC-authenticated keyset cursors: keep `continueCursor` opaque and restart from `null` when bounds, order, or page size change.
+Design database reads as bounded access patterns. Prefer a matching index plus `first`, `unique`, `take`, or `paginate`; use `collect` only for provably small result sets. Pagination uses HMAC-authenticated keyset cursors: `isDone: true` means there is no next page and `continueCursor` is empty; otherwise keep it opaque and restart from `null` when bounds, order, or page size change.
 
 ## Use the documentation by ownership
 

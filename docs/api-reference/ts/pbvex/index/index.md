@@ -17,6 +17,7 @@
 - [FunctionType](type-aliases/FunctionType.md)
 - [FunctionVisibility](type-aliases/FunctionVisibility.md)
 - [OptionalRestArgs](type-aliases/OptionalRestArgs.md)
+- [SchemaTableDefinition](type-aliases/SchemaTableDefinition.md)
 - [StorageFileMetadata](type-aliases/StorageFileMetadata.md)
 - [StorageId](type-aliases/StorageId.md)
 - [StorageImageMetadata](type-aliases/StorageImageMetadata.md)
@@ -47,6 +48,18 @@ Re-exports [ActionCtx](../server/interfaces/ActionCtx.md)
 ### ActionDef
 
 Re-exports [ActionDef](../server/interfaces/ActionDef.md)
+
+***
+
+### ApplicationError
+
+Re-exports [ApplicationError](../server/classes/ApplicationError.md)
+
+***
+
+### ApplicationErrorCategory
+
+Re-exports [ApplicationErrorCategory](../server/type-aliases/ApplicationErrorCategory.md)
 
 ***
 
@@ -473,6 +486,12 @@ Re-exports [PaginationOptions](../server/interfaces/PaginationOptions.md)
 ### PaginationResult
 
 Re-exports [PaginationResult](../server/interfaces/PaginationResult.md)
+
+***
+
+### paginationResultValidator
+
+Re-exports [paginationResultValidator](../server/functions/paginationResultValidator.md)
 
 ***
 

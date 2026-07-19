@@ -10,6 +10,7 @@ Require authentication even when handles are searchable, then return only fields
 // pbvex/profiles.ts
 export const findByHandle = query({
   args: { handle: v.string() },
+  returns: maybePublicProfileValidator,
   handler: async (ctx, { handle }) => {
     await requireIdentity(ctx.auth);
 
@@ -41,8 +42,10 @@ The client supplies the selected profile ID. The mutation derives the owner and 
 ```ts
 // pbvex/contacts.ts
 import { mutation, query } from './_generated/server';
+import { ApplicationError } from 'pbvex/server';
 import { v } from 'pbvex/values';
 import { requireIdentity } from './lib/identity';
+import { contactCardValidator } from './lib/validators';
 
 export const add = mutation({
   args: {
@@ -53,9 +56,14 @@ export const add = mutation({
   handler: async (ctx, { profileId, nickname }) => {
     const user = await requireIdentity(ctx.auth);
     const profile = await ctx.db.get(profileId);
-    if (!profile) throw new Error('profile not found');
+    if (!profile) {
+      throw new ApplicationError('not_found', { resource: 'profile' });
+    }
     if (profile.authUser === user.tokenIdentifier) {
-      throw new Error('cannot add yourself');
+      throw new ApplicationError('bad_request', {
+        field: 'profileId',
+        reason: 'self_contact',
+      });
     }
 
     const existing = await ctx.db
@@ -86,6 +94,7 @@ Load a bounded set of the current user’s contact rows, deduplicate profile IDs
 ```ts
 export const list = query({
   args: {},
+  returns: v.array(contactCardValidator),
   handler: async (ctx) => {
     const user = await requireIdentity(ctx.auth);
 

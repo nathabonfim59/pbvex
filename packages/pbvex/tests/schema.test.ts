@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateManifest } from '@pbvex/protocol';
+import { formatOpaqueId } from '@pbvex/protocol';
 import { v, ValidationError } from '../src/runtime/values.js';
 import { defineSchema, defineTable, index, isSchemaDefinition, isTableDefinition } from '../src/schema/schema.js';
 
@@ -45,6 +46,77 @@ describe('schema authoring', () => {
     });
   });
 
+  it('derives complete document validators from schema-bound tables', () => {
+    const sourceFields = {
+      title: v.string(),
+      caption: v.optional(v.string()),
+      views: v.defaulted(v.number(), 0),
+    };
+    const schema = defineSchema({ photos: defineTable(sourceFields) });
+    const validator = schema.tables.photos.documentValidator;
+    const photoId = formatOpaqueId({
+      version: 2,
+      keyId: 1n,
+      namespace: 'root',
+      table: 'photos',
+      raw: '123456789012345',
+    }, new Uint8Array(32));
+
+    expect(validator.kind).toBe('object');
+    expect(validator.toJSON()).toEqual({
+      type: 'object',
+      shape: {
+        title: { type: 'string' },
+        caption: { type: 'optional', validator: { type: 'string' } },
+        views: { type: 'defaulted', validator: { type: 'number' }, defaultValue: 0 },
+        _id: { type: 'id', tableName: 'photos' },
+        _creationTime: { type: 'number' },
+      },
+    });
+    expect(validator.validate({ title: 'Sunset', _id: photoId, _creationTime: 10 })).toEqual({
+      title: 'Sunset',
+      caption: undefined,
+      views: 0,
+      _id: photoId,
+      _creationTime: 10,
+    });
+    expect(() => validator.validate({ title: 'Sunset', _id: photoId })).toThrow(ValidationError);
+    expect(() => validator.validate({ title: 'Sunset', _id: photoId, _creationTime: 10, extra: true })).toThrow(ValidationError);
+
+    expect(validator.pick('_id', 'title').toJSON()).toEqual({
+      type: 'object',
+      shape: { _id: { type: 'id', tableName: 'photos' }, title: { type: 'string' } },
+    });
+    expect(validator.omit('_creationTime').extend({ selected: v.boolean() }).partial().kind).toBe('object');
+  });
+
+  it('keeps document validators and their schema field snapshot immutable', () => {
+    const fields = { name: v.string() };
+    const table = defineTable(fields);
+    const schema = defineSchema({ users: table });
+    const validator = schema.getTable('users').documentValidator;
+
+    fields.name = v.number();
+    expect(validator.toJSON()).toEqual({
+      type: 'object',
+      shape: {
+        name: { type: 'string' },
+        _id: { type: 'id', tableName: 'users' },
+        _creationTime: { type: 'number' },
+      },
+    });
+    expect(Object.isFrozen(validator)).toBe(true);
+    expect(table).not.toHaveProperty('documentValidator');
+    expect(validator.omit('_id')).not.toBe(validator);
+    expect(validator.toJSON()).toHaveProperty('shape._id');
+  });
+
+  it('does not include document validators in schema serialization', () => {
+    const schema = defineSchema({ photos: defineTable({ url: v.string() }) });
+    expect(Object.keys(schema.toJSON().tables[0]).sort()).toEqual(['fields', 'tableName']);
+    expect(JSON.parse(JSON.stringify(schema))).toEqual(schema.toJSON());
+  });
+
   it('toJSON is JSON.stringify-safe and accepted by validateManifest', () => {
     const schema = defineSchema({
       users: defineTable({
@@ -84,6 +156,10 @@ describe('schema authoring', () => {
         users: defineTable({ $name: v.string() } as any),
       }),
     ).toThrow(ValidationError);
+  });
+
+  it.each(['_id', '_creationTime', '_pbvex_internal'])('rejects reserved top-level system field %s', (field) => {
+    expect(() => defineTable({ [field]: v.string() })).toThrow(ValidationError);
   });
 
   it('rejects invalid index names', () => {

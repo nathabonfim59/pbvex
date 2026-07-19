@@ -45,10 +45,10 @@ All entries below are methods of `v` imported from `pbvex/values`. `Validator<Ou
 | `v.null()` | `null` | Only `null`; it does not accept `undefined`. |
 | `v.bytes()` | `ArrayBuffer` | Only an `ArrayBuffer`, encoded as PBVex `$bytes` base64 on the wire. A `Uint8Array` is not itself accepted; pass its `.buffer` when that is the intended value. |
 | `v.id('table')` | `GenericId<'table'>` / server `Id<'table'>` | An authenticated opaque ID for exactly that logical table. The table name must be a valid identifier. It is not an arbitrary string and cannot be created client-side. |
-| `v.image(options)` | `StorageId` | A canonical PBVex storage ID for an image field. `thumbs` contains at most 16 predefined PocketBase resize strings; `mimeTypes` is a non-empty subset of GIF, JPEG, PNG, and WebP. Use a schema-bound image upload URL to enforce the byte-level policy. |
+| `v.image(options)` | `StorageId` | Checks canonical PBVex `StorageId` syntax and emits an image-policy descriptor. It does not check object existence, bytes, ownership, or upload provenance. `thumbs` contains at most 16 predefined PocketBase resize strings; `mimeTypes` is a non-empty subset of GIF, JPEG, PNG, and WebP. Use a schema-bound image upload URL to enforce the byte-level policy. |
 | `v.literal(value)` | the literal type of `value` | `value` may be a `string`, finite `number`, `bigint`, or `boolean`. Equality is exact; non-finite numeric literals are rejected. |
 | `v.array(item)` | `Out[]` | A JavaScript array whose every item validates with `item`. An omitted/`undefined` item is not allowed unless the item validator accepts it. |
-| `v.object(shape)` | object mapped from `shape` | A constrained, non-array object with the declared fields. Required fields must be present; unknown fields are not retained locally and are rejected at the persisted/runtime document boundary. |
+| `v.object(shape)` | object mapped from `shape` | A constrained, non-array object with the declared fields. Required fields must be present; unknown fields are rejected by local validation and at persisted/runtime boundaries. |
 | `v.record(key, value)` | `Record<KeyOut, ValueOut>` | A non-array object with arbitrary declared keys and values. The serialized key validator must be `v.string()`, a string `v.literal(...)`, or a union of those; keys must normalize to strings. |
 | `v.union(a, b, ...)` | union of each branch's types | Tries validators in declaration order and succeeds on the first match. A deployable union needs at least one branch and has a fixed maximum of 64 branches. |
 | `v.optional(child)` | `Out \| undefined` | Accepts omitted/`undefined`; in an object shape it makes that property optional. It does not mean `null`. |
@@ -138,7 +138,19 @@ const value = settings.validate({ theme: 'dark' });
 // value.pageSize is 20
 ```
 
-An object validator validates the declared shape. Do not rely on excess properties being preserved: its local implementation returns the declared keys, and server document validation rejects unknown fields. Model open-ended maps with `v.record`, not `v.object`.
+An object validator validates exactly the declared shape and rejects excess properties. Model open-ended maps with `v.record`, not `v.object`.
+
+Object validators can be composed without changing the original validator:
+
+```ts
+const task = v.object({ title: v.string(), priority: v.number() });
+const savedTask = task.extend({ id: v.id('tasks') });
+const taskSummary = savedTask.pick('id', 'title');
+const createTask = savedTask.omit('id');
+const taskPatch = createTask.partial();
+```
+
+`extend` replaces an existing field with the new validator. `pick` follows the requested key order, while `omit` and `partial` retain declaration order. `partial` makes every field optional, including defaulted fields, without changing the underlying field validator.
 
 `v.optional` only special-cases `undefined`. It does not validate `undefined` inside an array as a wire value:
 
@@ -192,7 +204,7 @@ For practical TypeScript code, it is often clearer to declare the recursive Type
 
 ## Inference and function boundaries
 
-Function factories accept either an object of field validators or a single validator. An object shorthand is normalized to `v.object(...)`; omitted `args` becomes an empty object validator, while omitted `returns` becomes `v.any()`.
+Function factories accept either an object of field validators or a single validator. An object shorthand is normalized to `v.object(...)`; omitted `args` becomes an empty object validator, while omitted `returns` becomes `v.any()`. Declare an explicit `returns` validator for every stable deployed function; omission is useful only during short-lived prototyping, not as a preferred contract for complex values.
 
 ```ts
 import { query } from './_generated/server';
@@ -233,7 +245,7 @@ Define schema fields with the same validators:
 import { defineSchema, defineTable } from 'pbvex/server';
 import { v } from 'pbvex/values';
 
-export default defineSchema({
+const schema = defineSchema({
   tasks: defineTable({
     title: v.string(),
     ownerId: v.id('users'),
@@ -242,6 +254,9 @@ export default defineSchema({
   }).index('by_owner_state', ['ownerId', 'state'])
     .index('by_project', ['metadata.project']),
 });
+
+export const taskDocument = schema.tables.tasks.documentValidator;
+export default schema;
 ```
 
 A document has two server-provided system fields in addition to schema fields:
@@ -252,6 +267,8 @@ A document has two server-provided system fields in addition to schema fields:
 | `_creationTime` | `number` | Server-set creation timestamp. |
 
 Do not declare, insert, patch, or replace `_id` or `_creationTime`; PBVex treats top-level system fields as immutable. `_pbvex_`-prefixed top-level schema field names are also rejected by the server. Nested object keys are ordinary data keys, subject to safe field-name rules.
+
+Each schema-bound table exposes a `documentValidator` derived from the table's immutable field snapshot. It is a complete `ObjectValidator` containing the declared fields plus `_id: v.id('tasks')` and `_creationTime: v.number()`, so it can be used directly for a function return contract without repeating the schema. Its `pick`, `omit`, `extend`, and `partial` methods create new validators and preserve the table-specific ID type. The unnamed value returned by `defineTable(...)` has no document validator because its table name is assigned only by `defineSchema(...)`.
 
 Database write types reflect this rule:
 

@@ -14,6 +14,7 @@
 
 - [GenericId](type-aliases/GenericId.md)
 - [ObjectValidator](type-aliases/ObjectValidator.md)
+- [ObjectValidatorFor](type-aliases/ObjectValidatorFor.md)
 - [Validator](type-aliases/Validator.md)
 - [ValidatorKind](type-aliases/ValidatorKind.md)
 

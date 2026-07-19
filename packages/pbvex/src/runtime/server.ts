@@ -5,7 +5,7 @@ import { v, isValidator } from './values.js';
 
 export type { StorageFileMetadata, StorageId, StorageImageMetadata, StorageUploadResponse } from '@pbvex/protocol';
 
-export type { TableDefinition, SchemaDefinition, IndexDefinition } from '../schema/schema.js';
+export type { TableDefinition, SchemaTableDefinition, SchemaDefinition, IndexDefinition } from '../schema/schema.js';
 export { defineSchema, defineTable, index, isSchemaDefinition, isTableDefinition } from '../schema/schema.js';
 
 import type {
@@ -38,6 +38,30 @@ export type Id<TableName extends string = string> = GenericId<TableName>;
 
 export type Value = any;
 export type NumericValue = number | bigint;
+
+export type ApplicationErrorCategory =
+  | 'bad_request'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'not_found'
+  | 'conflict';
+
+/** A safe, handler-authored error whose category determines its HTTP status. */
+export class ApplicationError<Data extends PbvexValue = PbvexValue> extends Error {
+  readonly category!: ApplicationErrorCategory;
+  readonly data: Data | undefined;
+
+  constructor(category: ApplicationErrorCategory, data?: Data) {
+    super(category);
+    const create = (globalThis as any).__pbvex?.createApplicationError;
+    if (typeof create === 'function') {
+      return create(category, data, arguments.length >= 2, new.target.prototype) as ApplicationError<Data>;
+    }
+    this.name = 'ApplicationError';
+    this.category = category;
+    this.data = data;
+  }
+}
 
 type ValidatorOutput<T extends Validator<any, any>> = T extends Validator<infer Output, any> ? Output : never;
 type ValidatorInput<T extends Validator<any, any>> = T extends Validator<any, infer Input> ? Input : never;
@@ -176,9 +200,21 @@ export interface PaginationOptions {
 }
 
 export interface PaginationResult<TableName extends string, DataModel extends GenericDataModel> {
+  /** Documents in this page. */
   page: DocumentByName<DataModel, TableName>[];
+  /** True when pagination is complete and there is no next page. */
   isDone: boolean;
+  /** Opaque cursor for the next page; the runtime emits an empty string when `isDone` is true. */
   continueCursor: string;
+}
+
+/** Builds the canonical closed validator for a PBVex pagination result. */
+export function paginationResultValidator<Item extends Validator<any, any>>(itemValidator: Item) {
+  return v.object({
+    page: v.array(itemValidator),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  });
 }
 
 // A nested plain object we can descend into: excludes arrays, primitives, and

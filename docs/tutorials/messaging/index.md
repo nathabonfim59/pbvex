@@ -55,7 +55,8 @@ pbvex/
 ├── attachments.ts
 └── lib/
     ├── identity.ts
-    └── membership.ts
+    ├── membership.ts
+    └── validators.ts
 ```
 
 After changing schema or function exports, regenerate the typed contract:
@@ -65,6 +66,8 @@ pbvex codegen
 pbvex typecheck
 pbvex build --check
 ```
+
+Every exported query, mutation, and action in this tutorial declares `args` and `returns` because it is a stable deployed boundary. Ordinary local helpers such as `requireIdentity` and `requireMembership` are TypeScript implementation details and do not need runtime validators.
 
 ## The request flow
 

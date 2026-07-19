@@ -1521,7 +1521,7 @@ func (s *Service) Call(ctx context.Context, functionName string, args any, authA
 		return nil, err
 	}
 	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Manifest.Migrations, snap.Config); err != nil {
-		return nil, err
+		return nil, WrapFunctionFailure(err, functionName, snap.Descriptor.Type, FailurePhaseRuntimeSetup)
 	}
 	return s.invokeWithLimits(ctx, snap.DeploymentID, functionName, args, snap.Config, snap.Manifest)
 }
@@ -1533,7 +1533,7 @@ func (s *Service) CallQuery(ctx context.Context, functionName string, args any) 
 		return nil, err
 	}
 	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Manifest.Migrations, snap.Config); err != nil {
-		return nil, err
+		return nil, WrapFunctionFailure(err, functionName, snap.Descriptor.Type, FailurePhaseRuntimeSetup)
 	}
 	return s.invokeWithLimits(ctx, snap.DeploymentID, functionName, args, snap.Config, snap.Manifest)
 }
@@ -1544,7 +1544,7 @@ func (s *Service) CallQuery(ctx context.Context, functionName string, args any) 
 // if a new deployment is activated mid-connection.
 func (s *Service) InvokeSnapshot(ctx context.Context, snap *CallSnapshot, args any) (any, error) {
 	if err := compileRuntime(s.invoker, snap.DeploymentID, snap.BundleJS, snap.Functions, snap.Manifest.Migrations, snap.Config); err != nil {
-		return nil, err
+		return nil, WrapFunctionFailure(err, snap.Descriptor.Name, snap.Descriptor.Type, FailurePhaseRuntimeSetup)
 	}
 	return s.invokeWithLimits(ctx, snap.DeploymentID, snap.Descriptor.Name, args, snap.Config, snap.Manifest)
 }
@@ -1577,7 +1577,7 @@ func (s *Service) HTTPAction(ctx context.Context, method, path string, envelope 
 	}
 	deploymentID := record.GetString(schema.FieldDeploymentID)
 	if err := compileRuntime(s.invoker, deploymentID, record.GetString(schema.FieldBundle), manifest.Functions, manifest.Migrations, cfg); err != nil {
-		return nil, err
+		return nil, WrapFunctionFailure(err, name, FunctionTypeHTTPAction, FailurePhaseRuntimeSetup)
 	}
 	metadata := auth.InvocationMetadataFromContext(ctx)
 	if invoker, ok := s.invoker.(interface {
@@ -1585,17 +1585,19 @@ func (s *Service) HTTPAction(ctx context.Context, method, path string, envelope 
 	}); ok {
 		callCtx, cancel := contextWithTimeout(ctx, time.Duration(cfg.DefaultRequestTimeoutMs)*time.Millisecond)
 		defer cancel()
-		return invoker.InvokeHTTPWithDatabase(callCtx, deploymentID, name, envelope, metadata.Identity, metadata.RequestID, s.app, manifest)
+		response, err := invoker.InvokeHTTPWithDatabase(callCtx, deploymentID, name, envelope, metadata.Identity, metadata.RequestID, s.app, manifest)
+		return response, WrapFunctionFailure(err, name, FunctionTypeHTTPAction, "")
 	}
 	invoker, ok := s.invoker.(interface {
 		InvokeHTTP(context.Context, string, string, *HTTPRequestEnvelope, *auth.UserIdentity, string) (*HTTPResponseEnvelope, error)
 	})
 	if !ok {
-		return nil, fmt.Errorf("HTTP action runtime is not configured")
+		return nil, WrapFunctionFailure(fmt.Errorf("HTTP action runtime is not configured"), name, FunctionTypeHTTPAction, FailurePhaseRuntimeSetup)
 	}
 	callCtx, cancel := contextWithTimeout(ctx, time.Duration(cfg.DefaultRequestTimeoutMs)*time.Millisecond)
 	defer cancel()
-	return invoker.InvokeHTTP(callCtx, deploymentID, name, envelope, metadata.Identity, metadata.RequestID)
+	response, err := invoker.InvokeHTTP(callCtx, deploymentID, name, envelope, metadata.Identity, metadata.RequestID)
+	return response, WrapFunctionFailure(err, name, FunctionTypeHTTPAction, "")
 }
 
 func (s *Service) MatchHTTPRouteContext(ctx context.Context, method, path string) (string, string, bool) {
@@ -1724,7 +1726,7 @@ func (s *Service) InvokeDeploymentSnapshot(ctx context.Context, deploymentID, bu
 	}
 	realDeploymentID := record.GetString(schema.FieldDeploymentID)
 	if err := compileRuntime(s.invoker, realDeploymentID, record.GetString(schema.FieldBundle), manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
-		return nil, err
+		return nil, WrapFunctionFailure(err, functionName, functionTypeFor(manifest, functionName), FailurePhaseRuntimeSetup)
 	}
 	return s.invokeWithLimits(ctx, realDeploymentID, functionName, args, NormalizeConfig(manifest.Config), manifest)
 }
@@ -1771,7 +1773,10 @@ func (s *Service) Pin(ctx context.Context, deploymentID string, delta int) error
 	return nil
 }
 
-func (s *Service) invokeWithLimits(ctx context.Context, deploymentID, functionName string, args any, cfg DeploymentConfig, manifest DeploymentManifest) (any, error) {
+func (s *Service) invokeWithLimits(ctx context.Context, deploymentID, functionName string, args any, cfg DeploymentConfig, manifest DeploymentManifest) (result any, err error) {
+	defer func() {
+		err = WrapFunctionFailure(err, functionName, functionTypeFor(manifest, functionName), "")
+	}()
 	if err := checkWireSize(args, cfg.MaxFunctionArgsBytes, "function arguments"); err != nil {
 		return nil, err
 	}
@@ -1788,7 +1793,7 @@ func (s *Service) invokeWithLimits(ctx context.Context, deploymentID, functionNa
 		}
 		return result, nil
 	}
-	result, err := invokeRuntime(s.invoker, callCtx, deploymentID, functionName, args)
+	result, err = invokeRuntime(s.invoker, callCtx, deploymentID, functionName, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1796,6 +1801,15 @@ func (s *Service) invokeWithLimits(ctx context.Context, deploymentID, functionNa
 		return nil, err
 	}
 	return result, nil
+}
+
+func functionTypeFor(manifest DeploymentManifest, functionName string) FunctionType {
+	for _, descriptor := range manifest.Functions {
+		if descriptor.Name == functionName {
+			return descriptor.Type
+		}
+	}
+	return ""
 }
 
 func checkWireSize(value any, limit int64, label string) error {

@@ -18,6 +18,10 @@ export interface ManagedBackendOptions {
   storageBaseUrl?: string;
 }
 
+export function managedBackendEnv(token: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...base, PBVEX_DEV_DEPLOY_TOKEN: token, PBVEX_HANDLER_LOG_STDERR: '1' };
+}
+
 export function applicationPocketBaseMigrationsDir(rootDir: string, override?: string): string {
   return override
     ? path.resolve(rootDir, override)
@@ -120,7 +124,7 @@ export async function startManagedBackend(config: ResolvedConfig, options: Manag
   const dataDir = path.join(config.rootDir, '.pbvex', 'dev', config.target, 'pb_data');
   await mkdir(dataDir, { recursive: true });
   const token = randomBytes(32).toString('base64url');
-  const env = { ...process.env, PBVEX_DEV_DEPLOY_TOKEN: token };
+  const env = managedBackendEnv(token);
   const serverArgs = managedBackendArgs(dataDir, address, {
     ...options,
     pocketbaseMigrationsDir: applicationPocketBaseMigrationsDir(config.rootDir, options.pocketbaseMigrationsDir),

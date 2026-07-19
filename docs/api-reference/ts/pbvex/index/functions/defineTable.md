@@ -14,7 +14,7 @@
 
 ### fields
 
-`Readonly`\<`Fields`\>
+`Readonly`\<`Fields`\> & `object`
 
 ### options?
 

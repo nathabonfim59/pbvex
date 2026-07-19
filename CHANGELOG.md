@@ -6,6 +6,21 @@ entries are intentionally not duplicated in this changelog.
 
 ## Unreleased
 
+### Added
+
+- Object validators now support immutable `extend`, `pick`, `omit`, and
+  `partial` composition with precise input and output inference.
+- Schema-bound table references now expose a complete, schema-derived
+  `documentValidator` with precisely typed `_id` and `_creationTime` fields.
+- `paginationResultValidator(itemValidator)` now provides the canonical closed
+  validator for pagination results with precise item input and output types.
+
+### Changed
+
+- Direct TypeScript `v.object(shape).validate(value)` calls now reject unknown
+  fields instead of silently stripping them, matching deployed constrained-object
+  validation.
+
 ## 0.4.0 - 2026-07-18
 
 ### Added

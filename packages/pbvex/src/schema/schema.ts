@@ -1,5 +1,5 @@
-import type { Validator } from '../runtime/values.js';
-import { ValidationError, isValidator } from '../runtime/values.js';
+import type { GenericId, ObjectValidatorFor, Validator } from '../runtime/values.js';
+import { ValidationError, isValidator, v } from '../runtime/values.js';
 import { isIdentifier, isPlainObject, isSafeFieldName } from '@pbvex/protocol';
 
 export const TABLE_KIND = 'table' as const;
@@ -63,16 +63,38 @@ export interface TableDefinition<Fields extends Record<string, Validator<any>> =
   toJSON(): TableDefinitionJson;
 }
 
+type DocumentValidatorFields<Fields extends Record<string, Validator<any>>, TableName extends string> =
+  Omit<Fields, '_id' | '_creationTime'> & {
+    _id: Validator<GenericId<TableName>>;
+    _creationTime: Validator<number>;
+  };
+
+export type SchemaTableDefinition<
+  TableName extends string,
+  Fields extends Record<string, Validator<any>> = Record<string, Validator<any>>,
+> = TableDefinition<Fields> & {
+  readonly tableName: TableName;
+  readonly documentValidator: ObjectValidatorFor<DocumentValidatorFields<Fields, TableName>>;
+};
+
+type BoundTable<Table, Name extends string> = Table extends TableDefinition<infer Fields>
+  ? SchemaTableDefinition<Name, Fields>
+  : never;
+
+type BoundTables<Tables extends Record<string, TableDefinition>> = {
+  [Name in keyof Tables]: Name extends string ? BoundTable<Tables[Name], Name> : never;
+};
+
 export interface SchemaDefinitionJson {
   tables: TableDefinitionJson[];
 }
 
 export interface SchemaDefinition<Tables extends Record<string, TableDefinition> = Record<string, TableDefinition>> {
   readonly kind: typeof SCHEMA_KIND;
-  readonly tables: Readonly<Tables & Record<string, TableDefinition | undefined>>;
+  readonly tables: Readonly<BoundTables<Tables> & Record<string, SchemaTableDefinition<string> | undefined>>;
   readonly tableNames: readonly (keyof Tables & string)[];
   toJSON(): SchemaDefinitionJson;
-  getTable<Name extends keyof Tables & string>(name: Name): Tables[Name];
+  getTable<Name extends keyof Tables & string>(name: Name): BoundTable<Tables[Name], Name>;
 }
 
 function codeUnitCompare(a: string, b: string): number {
@@ -223,6 +245,9 @@ function validateFields<Fields extends Record<string, Validator<any>>>(fields: R
     if (!isValidator(fields[key])) {
       throw new ValidationError(`Invalid validator for field ${JSON.stringify(key)} in table ${JSON.stringify(tableName)}`);
     }
+    if (key === '_id' || key === '_creationTime' || key.startsWith('_pbvex_')) {
+      throw new ValidationError(`Reserved system field ${JSON.stringify(key)} in table ${JSON.stringify(tableName)}`);
+    }
   }
 }
 
@@ -251,7 +276,7 @@ function createTableDefinition<Fields extends Record<string, Validator<any>>>(
       ) as readonly IndexDefinition[])
     : undefined;
 
-  const table: TableDefinition<Fields> = {
+  const table: TableDefinition<Fields> & { documentValidator?: ObjectValidatorFor<any> } = {
     kind: TABLE_KIND,
     tableName,
     fields: fieldsCopy,
@@ -278,14 +303,22 @@ function createTableDefinition<Fields extends Record<string, Validator<any>>>(
     },
   };
 
+  if (tableName !== '') {
+    table.documentValidator = Object.freeze(v.object({
+      ...fieldsCopy,
+      _id: v.id(tableName),
+      _creationTime: v.number(),
+    }));
+  }
+
   return Object.freeze(table) as TableDefinition<Fields>;
 }
 
 export function defineTable<Fields extends Record<string, Validator<any>>>(
-  fields: Readonly<Fields>,
+  fields: Readonly<Fields> & { readonly _id?: never; readonly _creationTime?: never },
   options?: { indexes?: readonly IndexDefinition[] },
 ): TableDefinition<Fields> {
-  return createTableDefinition(fields, options, '');
+  return createTableDefinition<Fields>(fields, options, '');
 }
 
 export function defineSchema<Tables extends Record<string, TableDefinition>>(
@@ -318,8 +351,8 @@ export function defineSchema<Tables extends Record<string, TableDefinition>>(
         tables: this.tableNames.map((name) => (this.tables[name] as TableDefinition).toJSON() as TableDefinitionJson),
       };
     },
-    getTable<Name extends keyof Tables & string>(name: Name): Tables[Name] {
-      return this.tables[name] as Tables[Name];
+    getTable<Name extends keyof Tables & string>(name: Name): BoundTable<Tables[Name], Name> {
+      return this.tables[name] as BoundTable<Tables[Name], Name>;
     },
   }) as unknown as SchemaDefinition<Tables>;
 }

@@ -1,6 +1,6 @@
 ---
 name: pbvex-backend
-description: Build or review application backends with PBVex TypeScript schema and functions, including indexed queries and pagination, mutations, actions, authorization, relationships, storage fields, outbound HTTP, HTTP actions, email templates, validators, generated references, nested calls, and scheduling. Use for application code under pbvex/ and generated-contract workflows.
+description: Build or review PBVex application backends, including deployed function and return contracts, strict object validators and DTOs, application errors, schema, indexed queries and pagination, mutations, actions, authorization, relationships, outbound HTTP, HTTP actions, email templates, generated references, nested calls, and scheduling. Use for application code under pbvex/ and generated-contract workflows.
 ---
 
 # PBVex application backend
@@ -18,9 +18,28 @@ rg -n "(query|mutation|action|httpAction)\(" pbvex
 
 ## Define bounded contracts
 
-Use `defineSchema`, `defineTable`, indexes, and `v` validators. Declare `args` and `returns`; validators are both runtime boundaries and generated TypeScript types. Use opaque `v.id('table')` values as IDs—never parse, manufacture, or retag them. Keep public and internal functions distinct: `api` is client-callable; `internal` is backend-only. Public exposure never replaces authorization: resolve `ctx.auth.getUserIdentity()` and enforce ownership/tenant rules.
+Ordinary TypeScript helpers are local implementation details: write normal parameter and return types, and do not add PBVex validators unless the helper itself needs runtime validation. In contrast, exports created with generated `query`, `internalQuery`, `mutation`, `internalMutation`, `action`, or `internalAction` factories are deployed wire boundaries. Every stable deployed value function must declare `returns` as well as intentional `args`; validators enforce runtime values and determine generated reference types. HTTP actions instead use their native `Request`/`Response` contract.
 
-`v.optional` means absence, not `null`; `v.defaulted` materializes omitted insert/replace values but not omitted patch fields. `v.any()` still accepts only PBVex wire values. Args, returns, documents, and validator values reject `v.delayed`, non-finite numbers, `Date`, `Map`, typed arrays, class instances, cycles, and other non-wire values; API-specific inputs such as scheduler dates or HTTP byte bodies are separate contracts. `_id` and `_creationTime` are immutable; use `normalizeId` at untyped string boundaries.
+Omitting `returns` is exactly an implicit `v.any()`: PBVex still applies bounded wire-value encoding and checks, but application shape validation is lost and generated references expose `any`. Explicit `v.any()` is appropriate only for an intentionally dynamic contract or short-lived prototyping, not as a way to silence a contract error.
+
+Use `defineSchema`, `defineTable`, indexes, and `v` validators. A deployed `v.object(...)` is a closed object: required fields must exist and unknown fields are rejected. Local `validator.validate(...)` is equally strict. Validation does not project or strip a larger object into the declared shape, so map a document to an explicit DTO before returning it, or use a complete document validator:
+
+```ts
+import { paginationResultValidator } from 'pbvex/server';
+import { v } from 'pbvex/values';
+import schema from './schema';
+
+const taskDocument = schema.tables.tasks.documentValidator;
+const taskSummary = taskDocument.pick('_id', 'title');
+const editableSummary = taskSummary.omit('_id').extend({ title: v.string() }).partial();
+const taskPage = paginationResultValidator(taskSummary);
+```
+
+`documentValidator` includes every schema field plus typed `_id` and `_creationTime`. Its `pick`, `omit`, `extend`, and `partial` methods preserve precise types; `paginationResultValidator(itemValidator)` declares the closed `{ page, isDone, continueCursor }` result. Prefer an explicit DTO validator and matching object mapping when the public shape intentionally differs from a stored document.
+
+`v.optional` means absence, not `null`; `v.defaulted` materializes omitted insert/replace values but not omitted patch fields. Even `v.any()` accepts only PBVex wire values. Args, returns, documents, and validator values reject `v.delayed`, non-finite numbers, `Date`, `Map`, typed arrays, class instances, cycles, and other non-wire values; API-specific inputs such as scheduler dates or HTTP byte bodies are separate contracts. Use opaque `v.id('table')` values as IDs—never parse, manufacture, or retag them. `_id` and `_creationTime` are immutable; use `normalizeId` at untyped string boundaries.
+
+Keep public and internal functions distinct: `api` is client-callable; `internal` is backend-only. Public exposure never replaces authorization: resolve `ctx.auth.getUserIdentity()` and enforce ownership/tenant rules.
 
 Choose the narrowest function kind:
 
@@ -41,11 +60,26 @@ Migrations are bundled and run during atomic deployment activation; deployment r
 
 Design indexes from access patterns: equality fields first, then the range/order field. Use `withIndex` to reduce candidates, reserve `filter` for residual predicates, and use `fullTableScan` only when the bounded scan is deliberate. Finish every growing query with `first`, `unique`, `take`, or `paginate`; reserve `collect` for provably small sets.
 
-Pagination is keyset-based. Pass `{ numItems, cursor: cursor ?? null }`, return `page`, `isDone`, and `continueCursor`, and treat the cursor as opaque. Do not reuse it after changing query arguments, index bounds, ordering, or page size. Paginate before hydrating typed-ID relationships, and bound related reads to avoid N+1 client calls.
+Pagination is keyset-based. Pass `{ numItems, cursor: cursor ?? null }`, declare `returns: paginationResultValidator(itemValidator)`, and return `page`, `isDone`, and `continueCursor`. `isDone: true` means the result is complete and there is no next page; `continueCursor` is then the empty string. Otherwise pass the opaque non-empty cursor to the next request. Do not decode it or reuse it after changing query arguments, index bounds, ordering, or page size. Paginate before hydrating typed-ID relationships, and bound related reads to avoid N+1 client calls.
 
 An ID validates table/namespace identity, not referenced-record existence; PBVex has no automatic expansion, cascades, or foreign-key enforcement. Model many-to-many data with a junction table and an index for each traversal. Indexes are not uniqueness constraints, and `unique()` detects duplicate results rather than enforcing writes. Choose and implement delete policy explicitly: restrict, transactional cascade, detach, or preserve history.
 
 Authentication is not authorization. Resolve `ctx.auth.getUserIdentity()`, derive ownership from `tokenIdentifier`, and check stored ownership, membership, tenant, or role state at every sensitive public function. A valid `v.id(...)` proves table/namespace identity, not access. Put the same authorization inside subscribed queries and re-read durable permission state in delayed jobs.
+
+## Return application failures safely
+
+Import `ApplicationError` from `pbvex/server` for expected, client-actionable failures. Its recognized categories and deterministic HTTP statuses are `bad_request` (400), `unauthorized` (401), `forbidden` (403), `not_found` (404), and `conflict` (409). Use `unauthorized` only when authentication is required or invalid; use `forbidden` when an authenticated identity is not allowed.
+
+```ts
+throw new ApplicationError('conflict', {
+  resource: 'task',
+  reason: 'version_mismatch',
+});
+```
+
+The optional `data` is returned to clients, so include only bounded PBVex wire values that are deliberately safe to disclose; never put secrets, stack traces, raw provider responses, or internal diagnostics there. Throwing an `ApplicationError` from a mutation rolls back the transaction like any other handler failure. Calls and HTTP actions receive the category's structured error and status. Realtime has already established an HTTP 200 stream, so a failed subscription result carries the structured error as a stream event rather than changing HTTP status.
+
+Use ordinary `Error` for unexpected faults. PBVex masks those from clients as a generic internal error and logs the original server-side with available correlation context such as request, subscription, or job ID. Do not convert unexpected exceptions into `ApplicationError` merely to expose their messages. See `docs/guides/client/errors.md` for client handling and `docs/guides/authorization.md` for policy structure.
 
 ## Author storage contracts
 

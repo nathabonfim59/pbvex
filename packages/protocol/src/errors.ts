@@ -19,13 +19,14 @@ export function isStructuredError(value: unknown): value is StructuredError {
 export function structuredError(
   code: ErrorCode,
   message: string,
-  options?: { details?: unknown[]; requestId?: string }
+  options?: { details?: unknown[]; data?: StructuredError['data']; requestId?: string }
 ): StructuredError {
   return {
     error: true,
     code,
     message,
     details: options?.details,
+    data: options?.data,
     requestId: options?.requestId,
   };
 }
@@ -36,6 +37,7 @@ export function errorToJson(error: StructuredError): { [key: string]: unknown } 
     code: error.code,
     message: error.message,
     ...(error.details !== undefined ? { details: error.details } : {}),
+    ...(error.data !== undefined ? { data: error.data } : {}),
     ...(error.requestId !== undefined ? { requestId: error.requestId } : {}),
   };
 }

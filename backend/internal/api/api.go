@@ -458,6 +458,7 @@ func handleCall(service *deploy.Service, cors CORSConfig) func(*core.RequestEven
 		identity := auth.IdentityFromRequest(e)
 		result, err := service.Call(e.Request.Context(), name, args, identity, requestID)
 		if err != nil {
+			deploy.LogUnexpectedHandlerFailure(e.App, err, deploy.HandlerFailureContext{RequestID: requestID, FunctionName: name})
 			return callServiceError(err, e)
 		}
 		setCORSHeaders(e, cors)
@@ -538,6 +539,7 @@ func handleHTTPAction(service *deploy.Service, storageBasePath string, cors CORS
 
 		resp, err := service.HTTPAction(e.Request.Context(), matchMethod, path, envelope, identity, requestID)
 		if err != nil {
+			deploy.LogUnexpectedHandlerFailure(e.App, err, deploy.HandlerFailureContext{RequestID: requestID, FunctionType: deploy.FunctionTypeHTTPAction})
 			return protocolServiceError(err, e)
 		}
 		return writeHTTPResponse(e, resp, cors)
@@ -803,6 +805,11 @@ func validDevDeploymentRequest(e *core.RequestEvent, expected string) bool {
 
 func protocolServiceError(err error, e *core.RequestEvent) error {
 	status, code, message := http.StatusInternalServerError, deploy.ErrorCodeInternal, "Internal server error."
+	var applicationErr *deploy.ApplicationError
+	if errors.As(err, &applicationErr) {
+		status, code, message = applicationErrorResponse(applicationErr.Category)
+		return protocolErrorWithData(e, status, code, message, applicationErr.Data, applicationErr.HasData)
+	}
 	switch {
 	case func() bool {
 		var upload *deploy.UploadValidationError
@@ -833,7 +840,8 @@ func protocolServiceError(err error, e *core.RequestEvent) error {
 	default:
 		status, code, message = http.StatusInternalServerError, deploy.ErrorCodeInternal, "Internal server error."
 	}
-	if e.App.IsDev() || isDevDeploymentRequest(e) {
+	var functionFailure *deploy.FunctionFailure
+	if (e.App.IsDev() || isDevDeploymentRequest(e)) && !errors.As(err, &functionFailure) {
 		e.App.Logger().Error("PBVex protocol request failed", "requestId", requestIDFor(e), "code", code, "error", err)
 	}
 	if err != nil && isDevDeploymentRequest(e) {
@@ -852,4 +860,29 @@ func protocolError(e *core.RequestEvent, status int, code deploy.ErrorCode, mess
 	}
 	requestID := requestIDFor(e)
 	return e.JSON(status, deploy.StructuredError{Error: true, Code: code, Message: message, Details: details, RequestID: requestID})
+}
+
+func protocolErrorWithData(e *core.RequestEvent, status int, code deploy.ErrorCode, message string, data any, hasData bool) error {
+	errorEnvelope := deploy.StructuredError{Error: true, Code: code, Message: message, Details: []any{}, RequestID: requestIDFor(e)}
+	if hasData {
+		errorEnvelope.Data = &data
+	}
+	return e.JSON(status, errorEnvelope)
+}
+
+func applicationErrorResponse(category deploy.ApplicationErrorCategory) (int, deploy.ErrorCode, string) {
+	switch category {
+	case deploy.ApplicationErrorBadRequest:
+		return http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Bad request."
+	case deploy.ApplicationErrorUnauthorized:
+		return http.StatusUnauthorized, deploy.ErrorCodeUnauthorized, "Unauthorized."
+	case deploy.ApplicationErrorForbidden:
+		return http.StatusForbidden, deploy.ErrorCodeForbidden, "Forbidden."
+	case deploy.ApplicationErrorNotFound:
+		return http.StatusNotFound, deploy.ErrorCodeNotFound, "Not found."
+	case deploy.ApplicationErrorConflict:
+		return http.StatusConflict, deploy.ErrorCodeConflict, "Conflict."
+	default:
+		return http.StatusInternalServerError, deploy.ErrorCodeInternal, "Internal server error."
+	}
 }

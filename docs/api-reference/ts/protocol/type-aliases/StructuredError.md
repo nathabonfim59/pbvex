@@ -2,4 +2,4 @@
 
 # Type Alias: StructuredError
 
-> **StructuredError** = `Readonly`\<\{ `code`: [`ErrorCode`](ErrorCode.md); `details?`: `unknown`[]; `error`: `true`; `message`: `string`; `requestId?`: `string`; \}\>
+> **StructuredError** = `Readonly`\<\{ `code`: [`ErrorCode`](ErrorCode.md); `data?`: [`JSONValue`](JSONValue.md); `details?`: `unknown`[]; `error`: `true`; `message`: `string`; `requestId?`: `string`; \}\>

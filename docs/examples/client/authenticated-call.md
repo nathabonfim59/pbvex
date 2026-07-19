@@ -24,7 +24,11 @@ async function loadProfile() {
     return profile;
   } catch (error) {
     if (error instanceof PBVexError && error.code === 'unauthorized') {
-      console.error('Not authenticated');
+      console.error({
+        category: error.code,
+        status: 401,
+        data: error.data,
+      });
     }
     throw error;
   }
