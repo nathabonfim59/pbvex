@@ -50,7 +50,7 @@
   "dependencies": {
     "@pbvex/protocol": "workspace:0.4.2",
     "@pbvex/server": "workspace:0.4.2",
-    "commander": "^12.0.0",
+    "commander": "^15.0.0",
     "chokidar": "^3.6.0",
     "zod": "^3.22.0",
     "esbuild": "^0.21.5",
