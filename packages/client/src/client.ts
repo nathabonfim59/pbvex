@@ -365,17 +365,17 @@ export class Client {
       externalSignal.addEventListener('abort', externalAbortHandler, { once: true });
     }
 
-    let authAbortHandler: (() => void) | undefined;
-    const authAbortPromise = new Promise<never>((_, reject) => {
-      authAbortHandler = () => reject(new Error('aborted'));
-      controller.signal.addEventListener('abort', authAbortHandler, { once: true });
+    let abortHandler: (() => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      abortHandler = () => reject(new Error('aborted'));
+      controller.signal.addEventListener('abort', abortHandler, { once: true });
     });
-    authAbortPromise.catch(() => {});
+    abortPromise.catch(() => {});
 
     try {
       const authPromise = this.resolveAuth(options?.auth);
       authPromise.catch(() => {});
-      const token = await Promise.race([authPromise, authAbortPromise]);
+      const token = await Promise.race([authPromise, abortPromise]);
       if (controller.signal.aborted) {
         throw new Error('aborted');
       }
@@ -387,12 +387,17 @@ export class Client {
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const response = await this.fetchFn(this.callUrl, {
+      const fetchPromise = this.fetchFn(this.callUrl, {
         method: 'POST',
         headers,
         body: bodyText,
         signal: controller.signal,
       });
+      // Race the fetch against the abort signal: a fetch implementation that
+      // ignores (or never observes) the signal must not defeat the timeout.
+      // Swallow a late rejection from the fetch once the abort wins the race.
+      fetchPromise.catch(() => {});
+      const response = await Promise.race([fetchPromise, abortPromise]);
 
       const raw = await readBoundedText(response, this.maxReturnValueBytes + 4096, controller.signal);
 
@@ -435,8 +440,8 @@ export class Client {
       throw error;
     } finally {
       clearTimeout(timer);
-      if (controller && authAbortHandler) {
-        controller.signal.removeEventListener('abort', authAbortHandler);
+      if (controller && abortHandler) {
+        controller.signal.removeEventListener('abort', abortHandler);
       }
       if (externalSignal && externalAbortHandler) {
         externalSignal.removeEventListener('abort', externalAbortHandler);
