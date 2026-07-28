@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/dop251/goja v0.0.0-20260722130236-0768e0998ac0
 	github.com/dop251/goja_nodejs v0.0.0-20260212111938-1f56ff5bcf14
-	github.com/gabriel-vasile/mimetype v1.4.13
+	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/google/uuid v1.6.0
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.39.9
