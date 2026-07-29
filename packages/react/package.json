@@ -45,7 +45,7 @@
     "@types/react-dom": "^19.2.3",
     "jsdom": "^30.0.0",
     "react": "19.2.8",
-    "react-dom": "19.2.7",
+    "react-dom": "19.2.8",
     "typescript": "^5.0.0",
     "vitest": "^4.1.10"
   },
