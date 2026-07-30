@@ -9,12 +9,12 @@ try {
   process.exit(1);
 }
 
-child.once('error', (error) => {
+child.once('error', (error: Error) => {
   console.error(`Failed to start the PBVex backend: ${error.message}`);
   process.exitCode = 1;
 });
 
-child.once('exit', (code, signal) => {
+child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
   if (signal) {
     process.kill(process.pid, signal);
     return;
