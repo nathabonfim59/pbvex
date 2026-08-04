@@ -8,7 +8,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/google/uuid v1.6.0
 	github.com/pocketbase/dbx v1.12.0
-	github.com/pocketbase/pocketbase v0.39.9
+	github.com/pocketbase/pocketbase v0.39.10
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.22.0
 )
@@ -44,5 +44,5 @@ require (
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.54.0 // indirect
+	modernc.org/sqlite v1.55.0 // indirect
 )
