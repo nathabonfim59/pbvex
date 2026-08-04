@@ -37,7 +37,7 @@
   "devDependencies": {
     "@pbvex/client": "workspace:*",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "jsdom": "^30.0.0",
+    "jsdom": "^30.0.1",
     "svelte": "^5.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.1.10"
