@@ -4,7 +4,11 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
-## 0.5.0 - 2026-09-01
+## 0.5.1 - 2026-09-01
+
+> Supersedes the unpublished 0.5.0, whose release tag was accidentally created
+> from the repository's inherited PocketBase history. No 0.5.0 artifacts were
+> ever published to npm or GitHub Releases.
 
 ### Changed
 
