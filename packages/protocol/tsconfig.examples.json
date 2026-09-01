@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "..",
-    "baseUrl": ".",
+    "types": ["node"],
     "paths": {
       "@pbvex/protocol": ["./src/index.ts"],
       "@pbvex/client": ["./examples/_stubs/client.d.ts"],
