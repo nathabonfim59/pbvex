@@ -164,7 +164,7 @@ func (s *Service) GetMetadata(ctx context.Context, storageID string) (map[string
 		"createdBy":   record.GetString(schema.FieldStorageCreatedBy),
 		"filename":    record.GetString(schema.FieldStorageFilename),
 		"contentType": record.GetString(schema.FieldStorageContentType),
-		"size":        record.GetInt(schema.FieldStorageSize),
+		"size":        record.GetInt64(schema.FieldStorageSize),
 		"sha256":      record.GetString(schema.FieldStorageSha256),
 		"extension":   fileExtension(record.GetString(schema.FieldStorageFilename), record.GetString(schema.FieldStorageContentType)),
 	}
@@ -358,7 +358,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 		return "", &UploadError{Code: ErrorCodeUploadExpired, Message: "upload token expired"}
 	}
 
-	maxSize := int64(tokenRec.GetInt(schema.FieldTokenMaxSize))
+	maxSize := tokenRec.GetInt64(schema.FieldTokenMaxSize)
 	if maxSize <= 0 || maxSize > s.config.MaxFileSize {
 		maxSize = s.config.MaxFileSize
 	}

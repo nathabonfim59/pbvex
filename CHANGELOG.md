@@ -11,6 +11,17 @@ entries are intentionally not duplicated in this changelog.
 - The `pbvex` CLI now validates `pbvex.config.ts` with Zod 4. Invalid config
   errors are reported as readable, path-annotated messages (for example
   `✖ Invalid URL → at targets.local.url`) instead of a raw JSON issue dump.
+- The backend now builds on PocketBase v0.40 (Go 1.27, `encoding/json` v2).
+  Invalid `pbvex` CLI invocations now exit with a non-zero status code, so
+  scripts that chain commands with `&&` stop at the first failure. Server
+  responses also include `Cross-Origin-Opener-Policy: same-origin` in the
+  default security headers.
+
+### Fixed
+
+- Error envelopes preserve explicit `null` error data from handlers as
+  `"data": null`. The new JSON serializer otherwise dropped the `data` field,
+  breaking the distinction between absent and explicit-null error data.
 
 ## 0.4.2 - 2026-07-19
 
