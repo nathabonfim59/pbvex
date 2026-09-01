@@ -4,6 +4,14 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
+## Unreleased
+
+### Changed
+
+- The `pbvex` CLI now validates `pbvex.config.ts` with Zod 4. Invalid config
+  errors are reported as readable, path-annotated messages (for example
+  `✖ Invalid URL → at targets.local.url`) instead of a raw JSON issue dump.
+
 ## 0.4.2 - 2026-07-19
 
 ### Added

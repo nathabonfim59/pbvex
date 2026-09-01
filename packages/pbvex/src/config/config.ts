@@ -6,18 +6,26 @@ import ts from 'typescript';
 import { validateImports } from '../bundler/importValidator.js';
 
 const targetSchema = z.object({
-  url: z.string().url(),
-  metadata: z.record(z.unknown()).default({}),
+  url: z.url(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const configSchema = z.object({
   project: z.string().optional(),
   defaultTarget: z.string().default('local'),
-  targets: z.record(targetSchema).default({}),
+  targets: z.record(z.string(), targetSchema).default({}),
 });
 
 export type Target = z.infer<typeof targetSchema>;
 export type PbvexConfig = z.infer<typeof configSchema>;
+
+function parseConfig(value: unknown): PbvexConfig {
+  const result = configSchema.safeParse(value);
+  if (!result.success) {
+    throw new Error(`Invalid pbvex config:\n${z.prettifyError(result.error)}`);
+  }
+  return result.data;
+}
 
 export interface ResolvedConfig extends PbvexConfig {
   target: string;
@@ -38,7 +46,7 @@ export async function loadConfig(cwd: string, options: { target?: string; url?: 
   } else if (existsSync(jsConfigPath)) {
     config = await importConfig(jsConfigPath);
   } else {
-    config = configSchema.parse({});
+    config = parseConfig({});
   }
 
   const targetName = options.target ?? config.defaultTarget ?? 'local';
@@ -215,7 +223,7 @@ async function importConfig(configPath: string): Promise<PbvexConfig> {
   fn(mod, mod.exports, undefined, path.dirname(configPath), configPath, defineConfig);
 
   const exported = mod.exports?.default ?? mod.exports;
-  return configSchema.parse(exported);
+  return parseConfig(exported);
 }
 
 export async function resolveToken(cwd: string, targetName: string): Promise<string | undefined> {
