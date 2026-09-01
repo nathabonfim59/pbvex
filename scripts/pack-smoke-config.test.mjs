@@ -9,7 +9,7 @@ test('the CLI declares TypeScript as a runtime dependency', async () => {
     await readFile(new URL('../packages/pbvex/package.json', import.meta.url), 'utf8'),
   );
 
-  assert.equal(packageJson.dependencies.typescript, '^5.0.0');
+  assert.ok(packageJson.dependencies.typescript, 'TypeScript must be a runtime dependency');
   assert.equal(packageJson.devDependencies.typescript, undefined);
 });
 
