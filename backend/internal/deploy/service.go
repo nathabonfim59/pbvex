@@ -340,7 +340,7 @@ func (s *Service) resumeUpload(record *core.Record, manifest DeploymentManifest,
 	}
 	if record.GetString(schema.FieldManifest) != string(manifestJSON) ||
 		record.GetString(schema.FieldBundleHash) != bundleHash ||
-		int64(record.GetInt(schema.FieldBundleSize)) != bundleSize ||
+		record.GetInt64(schema.FieldBundleSize) != bundleSize ||
 		record.GetString(schema.FieldBundle) != bundleJS {
 		return nil, fmt.Errorf("%w: deployment id already exists with different content", ErrInvalidBundle)
 	}

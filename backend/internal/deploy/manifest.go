@@ -332,7 +332,7 @@ type StructuredError struct {
 	Code      ErrorCode `json:"code"`
 	Message   string    `json:"message"`
 	Details   []any     `json:"details,omitempty"`
-	Data      *any      `json:"data,omitempty"`
+	Data      *any      `json:"data,omitzero"`
 	RequestID string    `json:"requestId,omitempty"`
 }
 

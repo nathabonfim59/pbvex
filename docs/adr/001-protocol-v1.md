@@ -131,9 +131,12 @@ All structured errors are JSON objects:
   "code": "<error-code>",
   "message": "<string>",
   "details": [],
+  "data": "<wire-safe application error data>",
   "requestId": "<optional>"
 }
 ```
+
+`details` and `data` are optional. `data` carries wire-safe data supplied by an application error: the key is absent when the handler supplied no payload, and present with `null` when the handler explicitly supplied `null`. Clients can rely on this distinction.
 
 Core error codes are `bad_request`, `invalid_manifest`, `invalid_function`, `bundle_not_found`, `bundle_hash_mismatch`, `activation_failed`, `not_found`, `unauthorized`, `forbidden`, and `internal`. Service-specific protocol errors include storage admission states such as `upload_expired`, `upload_consumed`, `upload_pending`, and `storage_full`. Clients must preserve unknown string codes for forward compatibility.
 

@@ -71,6 +71,8 @@ try {
 
 The application-category status mapping for calls is `bad_request` 400, `unauthorized` 401, `forbidden` 403, `not_found` 404, and `conflict` 409. `PBVexError` exposes `code` and does not expose a `status` property, so use this mapping only when the UI needs the corresponding call status. Realtime errors arrive within an already-established HTTP 200 event stream. Never display ordinary error messages as if they were safe application data; unexpected server errors are intentionally generic.
 
+`data` is `undefined` when the handler supplied no payload and `null` when the handler explicitly threw with `null` data, so a missing payload is distinguishable from an explicit one.
+
 ## Call errors
 
 | Symptom | Likely cause |
