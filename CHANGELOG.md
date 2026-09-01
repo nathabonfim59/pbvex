@@ -4,7 +4,7 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
-## Unreleased
+## 0.5.0 - 2026-09-01
 
 ### Changed
 

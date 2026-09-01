@@ -1,6 +1,6 @@
 {
   "name": "@pbvex/protocol",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "type": "module",
   "description": "Shared PBVex deployment protocol, wire value codec, and canonical hashing",
   "license": "MIT",
