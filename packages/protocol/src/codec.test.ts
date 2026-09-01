@@ -157,9 +157,10 @@ test('encodeValue and decodeValue are inverses', () => {
   assert.ok(obj.data instanceof ArrayBuffer);
   assert.deepStrictEqual(new Uint8Array(obj.data as ArrayBuffer), new Uint8Array([1, 2, 3]));
   assert.ok(Array.isArray(obj.nested));
-  assert.strictEqual(obj.nested[0], false);
-  assert.strictEqual(obj.nested[1], 'x');
-  const nested2 = obj.nested[2];
+  const nested = obj.nested as PbvexValue[];
+  assert.strictEqual(nested[0], false);
+  assert.strictEqual(nested[1], 'x');
+  const nested2 = nested[2];
   assert.ok(nested2 !== null && typeof nested2 === 'object' && !Array.isArray(nested2));
   assert.strictEqual((nested2 as Record<string, PbvexValue>).a, BigInt(-1));
 });

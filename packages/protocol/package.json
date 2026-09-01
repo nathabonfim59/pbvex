@@ -30,7 +30,7 @@
     "test:examples": "tsc --noEmit -p tsconfig.examples.json"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
+    "typescript": "^6.0.3",
     "@types/node": "^26.1.2"
   }
 }
