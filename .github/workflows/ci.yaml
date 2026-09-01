@@ -35,7 +35,7 @@ jobs:
       - name: Set up Go for packed backend smoke test
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.6'
+          go-version-file: backend/go.mod
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -68,7 +68,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.6'
+          go-version-file: backend/go.mod
 
       - name: Format check
         working-directory: backend
@@ -100,7 +100,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.6'
+          go-version-file: backend/go.mod
 
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
