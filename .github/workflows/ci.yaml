@@ -49,6 +49,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Check generated docs are current
+        run: pnpm docs:check && pnpm docs:links
+
       - name: Test packed packages in a clean consumer
         run: ./scripts/pack-smoke.sh
 
