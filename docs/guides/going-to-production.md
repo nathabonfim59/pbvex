@@ -191,7 +191,10 @@ restart the service when the session is complete:
 Configure a production SMTP provider under **Settings > Mail settings** and
 test delivery. PocketBase's development-oriented `sendmail` fallback is not a
 reliable production mail path; OTP, verification, and password-reset flows
-depend on mail delivery.
+depend on mail delivery. Environment-provisioned deployments can instead set
+`PBVEX_SMTP_*` variables in the service environment file; the server applies
+them on every startup and a provided variable wins over the dashboard value
+(see [self-hosting](../self-hosting.md#mail-smtp-configuration)).
 
 Application-owned templates under `pbvex/emails/` use this same configured
 mailer when called from an action or HTTP action. Test one representative

@@ -194,6 +194,41 @@ explicit values fail startup rather than silently weakening limits.
 
 Schema-declared image thumbnails are generated lazily and stored beside the original object in the configured local or S3 filesystem. Include these variant objects in backups. Image decoding consumes CPU and memory based on decoded dimensions, not compressed upload bytes alone; keep upload limits appropriate for your application. Deleting an original removes its complete object prefix, including variants.
 
+## Mail (SMTP) configuration
+
+Mail delivery uses PocketBase's own mailer, normally configured in the
+dashboard under **Settings > Mail settings**. The `PBVEX_SMTP_*` variables are
+an alternative for environment-provisioned deployments: the server process
+reads them at startup and applies them to the persisted mail settings on every
+bootstrap. Only provided variables are applied, so dashboard-managed values
+for absent variables survive restarts, while a provided variable always wins
+on boot:
+
+| Variable | Purpose |
+| --- | --- |
+| `PBVEX_SMTP_ENABLED` | `true`/`false`; enables the SMTP client instead of the development sendmail fallback |
+| `PBVEX_SMTP_HOST` | SMTP server hostname |
+| `PBVEX_SMTP_PORT` | SMTP server port (0-65535) |
+| `PBVEX_SMTP_USERNAME` | SMTP authentication username |
+| `PBVEX_SMTP_PASSWORD` | SMTP authentication password |
+| `PBVEX_SMTP_AUTH_METHOD` | `PLAIN` (default) or `LOGIN` |
+| `PBVEX_SMTP_TLS` | `true` enforces TLS instead of STARTTLS |
+| `PBVEX_SMTP_LOCAL_NAME` | Optional domain or IP used in the EHLO/HELO exchange |
+| `PBVEX_SMTP_SENDER_ADDRESS` | Default sender address (`Settings > Application`) |
+| `PBVEX_SMTP_SENDER_NAME` | Default sender display name (`Settings > Application`) |
+
+These variables have no command-line flags so credentials cannot leak through
+argv or shell history. Malformed values (a bad boolean or an out-of-range
+port) fail startup, and an invalid combination, such as enabling SMTP without
+a host, fails PocketBase's settings validation at bootstrap.
+
+Applied values are persisted with the rest of the settings, so removing a
+variable later does not revert its value; edit **Settings > Mail settings** to
+unbind a field from the environment. Rotate credentials by changing the
+variable and restarting the process. Because the settings store holds the SMTP
+password, enable settings encryption with `--encryptionEnv` in production (see
+[going to production](./guides/going-to-production.md#run-under-systemd)).
+
 ## Scheduler operations
 
 The scheduler is durable and pins the deployment snapshot associated with each
