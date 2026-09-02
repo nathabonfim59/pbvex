@@ -26,6 +26,15 @@ func main() {
 	cfg := pbvex.DefaultConfig()
 	cfg.DevDeployToken = envString("PBVEX_DEV_DEPLOY_TOKEN", "")
 
+	// Mail settings. Environment-only (no flags): the variables carry SMTP
+	// credentials that must not appear in argv or shell history. Invalid
+	// values fail startup with a descriptive error.
+	smtpCfg, err := pbvex.SMTPConfigFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg.SMTP = smtpCfg
+
 	app.RootCmd.PersistentFlags().StringVar(
 		&cfg.HooksDir,
 		"hooksDir",

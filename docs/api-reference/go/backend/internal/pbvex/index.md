@@ -8,14 +8,28 @@ import "github.com/nathabonfim59/pbvex/backend/internal/pbvex"
 
 ## Index
 
+- [func ApplySMTPSettings\(app core.App, cfg SMTPConfig\) error](<#ApplySMTPSettings>)
 - [func Register\(app \*pocketbase.PocketBase, cfg Config\) error](<#Register>)
 - [func RegisterCore\(app core.App, cfg Config\) \(\*deploy.Service, deploy.Invalidator, error\)](<#RegisterCore>)
 - [type Config](<#Config>)
   - [func DefaultConfig\(\) Config](<#DefaultConfig>)
+- [type SMTPConfig](<#SMTPConfig>)
+  - [func SMTPConfigFromEnv\(\) \(SMTPConfig, error\)](<#SMTPConfigFromEnv>)
+  - [func \(c SMTPConfig\) ApplyTo\(s \*core.Settings\) bool](<#SMTPConfig.ApplyTo>)
+  - [func \(c SMTPConfig\) Empty\(\) bool](<#SMTPConfig.Empty>)
 
+
+<a name="ApplySMTPSettings"></a>
+## func [ApplySMTPSettings](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/smtp.go#L136>)
+
+```go
+func ApplySMTPSettings(app core.App, cfg SMTPConfig) error
+```
+
+ApplySMTPSettings writes the PBVEX\_SMTP\_\* overrides onto the app mail settings and persists them. It is a no\-op when no variable is provided or when every provided value already matches the persisted settings. Saving runs PocketBase's settings validation, so an invalid combination \(for example enabling SMTP without a host\) fails the bootstrap.
 
 <a name="Register"></a>
-## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L63>)
+## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L64>)
 
 ```go
 func Register(app *pocketbase.PocketBase, cfg Config) error
@@ -24,7 +38,7 @@ func Register(app *pocketbase.PocketBase, cfg Config) error
 Register wires PBVex behavior into the provided PocketBase application.
 
 <a name="RegisterCore"></a>
-## func [RegisterCore](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L100>)
+## func [RegisterCore](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L101>)
 
 ```go
 func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator, error)
@@ -33,7 +47,7 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 RegisterCore wires PBVex core behavior into any core.App implementation.
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L26-L43>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L26-L44>)
 
 Config configures PBVex registration.
 
@@ -51,6 +65,7 @@ type Config struct {
     Realtime      realtime.Config
     Scheduler     scheduler.Config
     Storage       storage.Config
+    SMTP          SMTPConfig
     CORS          api.CORSConfig
     // DevDeployToken grants deployment-only access from loopback requests while
     // it is configured. It must never be configured for a production server.
@@ -59,12 +74,61 @@ type Config struct {
 ```
 
 <a name="DefaultConfig"></a>
-### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L46>)
+### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L47>)
 
 ```go
 func DefaultConfig() Config
 ```
 
 DefaultConfig returns sane defaults for PBVex.
+
+<a name="SMTPConfig"></a>
+## type [SMTPConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/smtp.go#L19-L30>)
+
+SMTPConfig carries optional PBVEX\_SMTP\_\* overrides for PocketBase's mail settings. Every field is a pointer: nil means the variable was not provided and the dashboard\-managed setting is left untouched. Provided fields are applied to the app settings and persisted on every bootstrap, so the environment wins on boot for the fields it declares. Removing a variable does not revert the previously persisted value; edit it in the dashboard \(Settings \> Mail settings\) to unbind it from the environment.
+
+```go
+type SMTPConfig struct {
+    Enabled       *bool
+    Host          *string
+    Port          *int
+    Username      *string
+    Password      *string
+    AuthMethod    *string // PLAIN (default) or LOGIN; compared case-insensitively
+    TLS           *bool
+    LocalName     *string
+    SenderAddress *string // applied to Settings().Meta.SenderAddress
+    SenderName    *string // applied to Settings().Meta.SenderName
+}
+```
+
+<a name="SMTPConfigFromEnv"></a>
+### func [SMTPConfigFromEnv](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/smtp.go#L50>)
+
+```go
+func SMTPConfigFromEnv() (SMTPConfig, error)
+```
+
+SMTPConfigFromEnv builds a SMTPConfig from the PBVEX\_SMTP\_\* process environment. Absent variables leave the matching field nil; a variable explicitly set to an empty string is considered present. Malformed booleans or ports return an error so misconfiguration fails startup instead of being silently ignored.
+
+These variables configure the server process itself. They are unrelated to component envVar bindings, are never exposed to deployed functions, and intentionally have no command\-line flags so credentials cannot leak through argv or shell history.
+
+<a name="SMTPConfig.ApplyTo"></a>
+### func \(SMTPConfig\) [ApplyTo](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/smtp.go#L83>)
+
+```go
+func (c SMTPConfig) ApplyTo(s *core.Settings) bool
+```
+
+ApplyTo writes the provided fields onto the app settings and reports whether any value changed. Fields without an override are untouched, so dashboard\-managed values for absent variables survive restarts.
+
+<a name="SMTPConfig.Empty"></a>
+### func \(SMTPConfig\) [Empty](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/smtp.go#L33>)
+
+```go
+func (c SMTPConfig) Empty() bool
+```
+
+Empty reports whether no SMTP variable was provided.
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)
