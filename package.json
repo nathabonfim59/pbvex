@@ -24,7 +24,7 @@
     "docs:verify": "pnpm docs:check && pnpm docs:links && pnpm docs:build"
   },
   "devDependencies": {
-    "turbo": "^2.7.5",
+    "turbo": "^2.10.12",
     "typedoc": "0.28.20",
     "typedoc-plugin-markdown": "4.13.0",
     "typedoc-vitepress-theme": "1.1.3",
