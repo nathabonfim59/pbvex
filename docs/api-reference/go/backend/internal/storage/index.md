@@ -746,7 +746,7 @@ func (s *Service) GetURL(ctx context.Context, storageID string, auth AuthContext
 GetURL returns a signed short\-lived download URL for the storage ID, or an empty string if missing/deleted.
 
 <a name="Service.InstallNativeQuotaHooks"></a>
-### func \(\*Service\) [InstallNativeQuotaHooks](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/nativequota.go#L79>)
+### func \(\*Service\) [InstallNativeQuotaHooks](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/nativequota.go#L76>)
 
 ```go
 func (s *Service) InstallNativeQuotaHooks(app core.App) error
