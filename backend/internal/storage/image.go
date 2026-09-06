@@ -173,6 +173,7 @@ func requestedThumb(record *core.Record, request *http.Request) (string, *ImageM
 
 func (s *Service) ensureThumb(ctx context.Context, fs *filesystem.System, storageID, originalKey, thumb string) (string, error) {
 	thumbKey := strings.TrimSuffix(originalKey, "/blob") + "/thumbs/" + thumb + "/blob"
+	var quotaRes QuotaReservation
 	_, err, _ := s.thumbPending.Do(thumbKey, func() (any, error) {
 		if _, err := s.repo.GetFile(schema.WithInternalContext(ctx), s.app, storageID); err != nil {
 			return nil, err
@@ -180,16 +181,37 @@ func (s *Service) ensureThumb(ctx context.Context, fs *filesystem.System, storag
 		if exists, err := fs.Exists(thumbKey); err != nil || exists {
 			return nil, err
 		}
+		// Reserve the worst-case variant bytes before the derived write. A
+		// denial fails the download closed rather than storing an
+		// unreserved variant.
+		res, reserveErr := s.reserveQuotaForVariant(ctx, storageID, thumbKey, thumb)
+		if reserveErr != nil {
+			return nil, reserveErr
+		}
+		quotaRes = res
 		if err := s.thumbSem.Acquire(ctx, 1); err != nil {
+			s.quotaRelease(quotaRes)
 			return nil, err
 		}
 		defer s.thumbSem.Release(1)
 		if err := fs.CreateThumb(originalKey, thumbKey, thumb); err != nil {
+			// Release only when the variant is confirmed absent; a possibly
+			// partial write keeps the reservation for reconciliation.
+			s.releaseReservationIfGone(s.app, thumbKey, quotaRes)
 			return nil, err
 		}
 		if _, err := s.repo.GetFile(schema.WithInternalContext(ctx), s.app, storageID); err != nil {
 			_ = fs.Delete(thumbKey)
+			s.releaseReservationIfGone(s.app, thumbKey, quotaRes)
 			return nil, err
+		}
+		// Settle the reservation to the actual stored variant size. An
+		// unreadable size leaves the reservation unsettled: the bytes exist
+		// and must not be released.
+		if actual := quotaSettledBytesFrom(s.app, thumbKey); actual >= 0 {
+			s.quotaSettle(quotaRes, actual)
+		} else {
+			s.quotaKeepForUncertainWrite(quotaRes, thumbKey)
 		}
 		return nil, nil
 	})
