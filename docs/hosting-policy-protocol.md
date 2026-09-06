@@ -228,12 +228,13 @@ An externally supplied observer is composed, never silently overwritten:
 external Begin runs first (its denial prevents reserving capacity), the
 hosting adapter runs second, and the external observer receives its End
 exactly once whenever its Begin succeeded — including when admission then
-denies the execution. A nil or unrelated external context is rejected safely
-with that same End pairing, and admission always runs under the caller's
+denies the execution. A nil external context is rejected safely
+with that same End pairing. Admission always runs under the caller's
 cancellation and deadline, which an external observer cannot erase. The
 synchronous foundation trades latency for
-simplicity: an execution start costs two socket round-trips worst case
-(admission plus started, each bounded by the configured client deadline),
+simplicity: an execution start normally costs two socket round-trips
+(admission plus started, up to four attempts total with retries, each bounded
+by the configured client deadline and caller context),
 completion adds a bounded best-effort report, and no queues, spools or
 telemetry goroutines exist. Production metering needs a bounded durable
 outbox or a documented reconciliation strategy instead of this latch.
@@ -248,9 +249,10 @@ are omitted when unsafe. Empty function types are not functions: `bundle_load`
 maps to the `bundle.load` kind and `migration` to `migration.application`.
 
 Coverage is limited to what the runtime observes. Native PocketBase
-operations — settings writes, backup create, superuser authentication, record
-and file endpoints — remain capability-checked but are never admitted or
-reported as protocol events. The PocketBase JS plugin stays disabled
+operations are not admitted or reported as protocol events. Changed storage,
+backup and SMTP settings categories and backup creation are capability-checked;
+superuser authentication and native record/file endpoints do not receive those
+new checks. The PocketBase JS plugin stays disabled
 (temporary limitation below), so no `hook.load` or `hook.callback` events
 occur yet. `runtime.Config.MaxConcurrentExecutions` remains independently
 owned by the runtime; hosting policy cannot raise it.
@@ -274,7 +276,7 @@ ownership.
 | Downstream task | Implemented foundation | Remaining acceptance gaps |
 | --- | --- | --- |
 | DS-01 | Public v1 wire contract, typed client, bounded reference service, lifecycle/conflict tests | Production ledger, independent third-party conformance, crash recovery, latency benchmark |
-| DS-02 | Explicit enablement, validated bootstrap, persistent socket, startup handshake, dynamic fail-closed admin checks, central runtime observer adapter with fail-closed reporting latch and per-name environment gating | Combined validation on the integrated runtime branch, provider reconciliation of unknown reservations, latency benchmark |
+| DS-02 | Explicit enablement, validated bootstrap, persistent socket, startup handshake, dynamic fail-closed admin checks, central runtime observer adapter with fail-closed reporting latch and per-name environment gating; integrated backend tests pass | Provider reconciliation of unknown reservations, latency benchmark |
 | DS-03 | Settings request compares old/new S3, backups and SMTP categories; unchanged protected values permit unrelated saves; backup-create gate; unconditional restore denial | Managed secret injection/redaction, settings export/backup confidentiality, collection import and full native-path audit |
 | DS-04 | Enabled integration skips the entire PocketBase JS plugin registration, preventing hook-file and custom JS migration loading | Dynamic optional hooks and per-callback telemetry require PocketBase execution-boundary changes; host JS remains disabled even if `host.scripts` allows |
 
