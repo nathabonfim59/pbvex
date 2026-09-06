@@ -19,6 +19,13 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// EnvironmentResolver resolves a named host environment variable for a
+// component env binding. provided reports whether the host supplied the
+// variable, and err reports a host-side denial or lookup failure. The runtime
+// consults the resolver on every binding resolution and never caches results,
+// so hosted policy can gate each operation dynamically.
+type EnvironmentResolver func(ctx context.Context, name string) (value string, provided bool, err error)
+
 // Config controls the Goja runtime pool.
 type Config struct {
 	PoolSize          int
@@ -27,6 +34,12 @@ type Config struct {
 	// MaxConcurrentExecutions bounds roots across all deployment pools. Zero
 	// preserves the existing per-pool behavior; nested work shares a root slot.
 	MaxConcurrentExecutions int
+	// EnvironmentResolver optionally owns component environment lookups. Nil
+	// preserves standalone behavior: declared env bindings read the process
+	// environment directly. When set, every binding resolution goes through
+	// the resolver; failures fail the invocation before the handler runs and
+	// never surface resolver diagnostics, variable values, or names.
+	EnvironmentResolver EnvironmentResolver
 }
 
 // DefaultConfig returns the default runtime pool configuration.
@@ -112,7 +125,7 @@ func (m *Manager) CompileDeployment(deploymentID, bundle string, descriptors []d
 	}
 
 	extenders := append([]ContextExtender(nil), m.extenders...)
-	m.pools[deploymentID] = newPool(m.config.PoolSize, m.config.Timeout, program, descriptors, migrations, config, fingerprint, m.Scheduler, deploymentID, extenders)
+	m.pools[deploymentID] = newPool(m.config.PoolSize, m.config.Timeout, program, descriptors, migrations, config, fingerprint, m.Scheduler, deploymentID, extenders, m.config.EnvironmentResolver)
 	m.pools[deploymentID].manager = m
 	return nil
 }
@@ -171,6 +184,7 @@ func (m *Manager) VerifyDeployment(ctx context.Context, deploymentID, bundle str
 
 	e := newEntry(program, descriptors, migrations, deploy.DefaultDeploymentConfig)
 	e.manager, e.deploymentID = m, deploymentID
+	e.envResolver = m.config.EnvironmentResolver
 	release, err := m.acquireRoot(ctx)
 	if err != nil {
 		return err
@@ -407,9 +421,10 @@ type Pool struct {
 	scheduler    Scheduler
 	deploymentID string
 	extenders    []ContextExtender
+	envResolver  EnvironmentResolver
 }
 
-func newPool(maxSize int, timeout time.Duration, program *goja.Program, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, config deploy.DeploymentConfig, fingerprint string, scheduler Scheduler, deploymentID string, extenders []ContextExtender) *Pool {
+func newPool(maxSize int, timeout time.Duration, program *goja.Program, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, config deploy.DeploymentConfig, fingerprint string, scheduler Scheduler, deploymentID string, extenders []ContextExtender, envResolver EnvironmentResolver) *Pool {
 	return &Pool{
 		program:      program,
 		descriptors:  descriptors,
@@ -421,6 +436,7 @@ func newPool(maxSize int, timeout time.Duration, program *goja.Program, descript
 		scheduler:    scheduler,
 		deploymentID: deploymentID,
 		extenders:    extenders,
+		envResolver:  envResolver,
 	}
 }
 
@@ -439,6 +455,7 @@ func (p *Pool) acquire(ctx context.Context) (*entry, error) {
 func (p *Pool) newEntry() *entry {
 	e := newEntry(p.program, p.descriptors, p.migrations, p.config, p.scheduler, p.deploymentID, p.extenders)
 	e.manager = p.manager
+	e.envResolver = p.envResolver
 	return e
 }
 
@@ -559,6 +576,7 @@ type entry struct {
 	scheduler         Scheduler
 	deploymentID      string
 	extenders         []ContextExtender
+	envResolver       EnvironmentResolver
 	applicationErrors map[*goja.Object]registeredApplicationError
 	admissionErrors   map[*goja.Object]error
 }
@@ -1031,7 +1049,7 @@ func (e *entry) throwApplicationError(applicationErr *deploy.ApplicationError) {
 }
 
 func (e *entry) buildInvocationContext(invocation *Invocation, descriptor deploy.FunctionDescriptor, functionName string, normalizedArgs any, jsArgs goja.Value) (*goja.Object, error) {
-	ctx, err := newInvocationContext(e.vm, invocation.Ctx, invocation.App, invocation.Manifest, descriptor, functionName, normalizedArgs, jsArgs, e.extenders)
+	ctx, err := newInvocationContext(e.vm, invocation.Ctx, invocation.App, invocation.Manifest, descriptor, functionName, normalizedArgs, jsArgs, e.extenders, e.envResolver)
 	if err != nil {
 		return nil, err
 	}

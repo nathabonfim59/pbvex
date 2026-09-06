@@ -49,14 +49,14 @@ func TestMissingDeclaredComponentEnvFailsRuntimeContext(t *testing.T) {
 	t.Setenv(variable, "")
 	definition := deploy.ComponentDefinition{ComponentID: "secrets", Env: map[string]deploy.EnvArgDescriptor{"TOKEN": {Type: "envVar", Name: variable}}}
 	namespace := testNamespace(t, definition, deploy.ComponentMount{Name: "secrets", ComponentID: "secrets"})
-	if env, err := resolveComponentEnv(namespace); err != nil || env["TOKEN"] != "" {
+	if env, err := resolveComponentEnv(context.Background(), namespace, nil); err != nil || env["TOKEN"] != "" {
 		t.Fatalf("explicit empty env must resolve: %#v %v", env, err)
 	}
 
 	missing := strings.ReplaceAll(variable, "TOKEN", "ABSENT")
 	definition.Env["TOKEN"] = deploy.EnvArgDescriptor{Type: "envVar", Name: missing}
 	namespace = testNamespace(t, definition, deploy.ComponentMount{Name: "secrets", ComponentID: "secrets"})
-	if _, err := resolveComponentEnv(namespace); err == nil || !strings.Contains(err.Error(), `env "TOKEN" requires unset variable`) {
+	if _, err := resolveComponentEnv(context.Background(), namespace, nil); err == nil || !strings.Contains(err.Error(), `env "TOKEN" requires unset variable`) {
 		t.Fatalf("expected precise missing env error, got %v", err)
 	}
 }
