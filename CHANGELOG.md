@@ -4,6 +4,17 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
+## Unreleased
+
+### Added
+
+- `PBVEX_SMTP_*` server environment variables configure PocketBase's mail
+  settings at startup. Only provided variables are applied, so
+  dashboard-managed values for absent variables survive restarts, while a
+  provided variable wins on boot. The variables have no command-line flags,
+  and invalid values or combinations fail startup instead of being ignored.
+  See `docs/self-hosting.md` for the variable list and semantics.
+
 ## 0.5.1 - 2026-09-01
 
 > Supersedes the unpublished 0.5.0, whose release tag was accidentally created

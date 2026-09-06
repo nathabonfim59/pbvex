@@ -100,6 +100,12 @@ For containers or a process manager, use its secret integration to populate the 
 
 Provision every deployment target independently because each target points to a separate backend process. `PBVEX_TOKEN` and `PBVEX_<TARGET>_TOKEN` authenticate the CLI deployment request only; deployed functions cannot read them.
 
+## Server-process configuration variables
+
+Some variables configure the PBVex server process itself rather than an application component. The `PBVEX_SMTP_*` group applies PocketBase's mail settings (SMTP client and default sender) on server startup; see [self-hosting](../self-hosting.md#mail-smtp-configuration) for the variable list and bootstrap semantics.
+
+These variables and component `envVar` bindings are independent. Deployed functions never receive `PBVEX_SMTP_*` values, and the server does not resolve `PBVEX_APP_*` variables on its own — only bindings declared by a component read the process environment.
+
 ## Validation and failure behavior
 
 Deployment validates the binding shape, but it does not require an `envVar` to exist on the target server. The backend resolves the variable when it creates a component invocation context:

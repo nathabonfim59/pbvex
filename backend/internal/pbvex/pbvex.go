@@ -36,6 +36,7 @@ type Config struct {
 	Realtime      realtime.Config
 	Scheduler     scheduler.Config
 	Storage       storage.Config
+	SMTP          SMTPConfig
 	CORS          api.CORSConfig
 	// DevDeployToken grants deployment-only access from loopback requests while
 	// it is configured. It must never be configured for a production server.
@@ -154,6 +155,22 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 			return e.Next()
 		},
 	})
+
+	// PBVEX_SMTP_* overrides for PocketBase mail settings. Priority 95 runs
+	// inside the pbvexBootstrap e.Next() chain, after the core bootstrap has
+	// loaded the persisted settings and before the PBVex system schema work.
+	if !cfg.SMTP.Empty() {
+		app.OnBootstrap().Bind(&hook.Handler[*core.BootstrapEvent]{
+			Id:       "pbvexSMTPSettings",
+			Priority: 95,
+			Func: func(e *core.BootstrapEvent) error {
+				if err := e.Next(); err != nil {
+					return err
+				}
+				return ApplySMTPSettings(e.App, cfg.SMTP)
+			},
+		})
+	}
 
 	// Protect reserved PBVex collections and generated document backing stores
 	// from direct writes. Runtime writes carry InternalContextKey and therefore
