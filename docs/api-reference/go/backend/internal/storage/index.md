@@ -24,6 +24,12 @@ import "github.com/nathabonfim59/pbvex/backend/internal/storage"
 - [type FileRecord](<#FileRecord>)
 - [type ImageMetadata](<#ImageMetadata>)
 - [type ImagePolicy](<#ImagePolicy>)
+- [type QuotaCreditRequest](<#QuotaCreditRequest>)
+- [type QuotaObserver](<#QuotaObserver>)
+  - [func NewHostedQuotaObserver\(client \*storagequota.Client\) QuotaObserver](<#NewHostedQuotaObserver>)
+- [type QuotaPurpose](<#QuotaPurpose>)
+- [type QuotaReservation](<#QuotaReservation>)
+- [type QuotaReservationRequest](<#QuotaReservationRequest>)
 - [type Repo](<#Repo>)
   - [func NewRepo\(\) \*Repo](<#NewRepo>)
   - [func \(r \*Repo\) BackfillPublicTokens\(ctx context.Context, app core.App\) error](<#Repo.BackfillPublicTokens>)
@@ -59,7 +65,9 @@ import "github.com/nathabonfim59/pbvex/backend/internal/storage"
   - [func \(s \*Service\) GetMetadata\(ctx context.Context, storageID string\) \(map\[string\]any, error\)](<#Service.GetMetadata>)
   - [func \(s \*Service\) GetPublicURL\(ctx context.Context, storageID string\) \(string, error\)](<#Service.GetPublicURL>)
   - [func \(s \*Service\) GetURL\(ctx context.Context, storageID string, auth AuthContext\) \(string, error\)](<#Service.GetURL>)
+  - [func \(s \*Service\) InstallNativeQuotaHooks\(app core.App\) error](<#Service.InstallNativeQuotaHooks>)
   - [func \(s \*Service\) RunCleanup\(\) error](<#Service.RunCleanup>)
+  - [func \(s \*Service\) SetQuotaObserver\(observer QuotaObserver\)](<#Service.SetQuotaObserver>)
   - [func \(s \*Service\) Start\(\) error](<#Service.Start>)
   - [func \(s \*Service\) Stop\(\) error](<#Service.Stop>)
   - [func \(s \*Service\) Upload\(ctx context.Context, token string, body io.Reader, contentType, filename string, headerSize int64\) \(string, error\)](<#Service.Upload>)
@@ -92,6 +100,19 @@ var (
     ErrURLForbidden          = errors.New("signed url does not match caller")
     ErrStorageDataLost       = errors.New("storage file data lost")
     ErrReservationLost       = errors.New("storage upload reservation lost")
+)
+```
+
+<a name="ErrQuotaDenied"></a>
+
+```go
+var (
+    // ErrQuotaDenied is returned by an observer when the provider denied a
+    // reservation (for example the tenant is over its byte quota).
+    ErrQuotaDenied = errors.New("storage quota denied")
+    // ErrQuotaUnavailable is returned when the quota service could not be
+    // reached or answered invalidly. Storage writes fail closed.
+    ErrQuotaUnavailable = errors.New("storage quota unavailable")
 )
 ```
 
@@ -286,7 +307,7 @@ type FileRecord struct {
 ```
 
 <a name="ImageMetadata"></a>
-## type [ImageMetadata](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/image.go#L39-L46>)
+## type [ImageMetadata](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/image.go#L40-L47>)
 
 
 
@@ -302,7 +323,7 @@ type ImageMetadata struct {
 ```
 
 <a name="ImagePolicy"></a>
-## type [ImagePolicy](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/image.go#L33-L37>)
+## type [ImagePolicy](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/image.go#L34-L38>)
 
 
 
@@ -311,6 +332,99 @@ type ImagePolicy struct {
     Kind      string   `json:"kind"`
     Thumbs    []string `json:"thumbs"`
     MimeTypes []string `json:"mimeTypes"`
+}
+```
+
+<a name="QuotaCreditRequest"></a>
+## type [QuotaCreditRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/quota.go#L56-L61>)
+
+QuotaCreditRequest reports bytes actually freed by a confirmed deletion. OpID is the idempotent identity of the deletion report.
+
+```go
+type QuotaCreditRequest struct {
+    OpID      string
+    StorageID string
+    Key       string
+    Bytes     int64
+}
+```
+
+<a name="QuotaObserver"></a>
+## type [QuotaObserver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/quota.go#L70-L76>)
+
+QuotaObserver is the provider\-neutral boundary between the storage service and a host\-owned quota service. A nil observer means standalone mode: no byte accounting is performed and existing semantics are kept.
+
+The observer is authoritative. Reserve decisions must be atomic at the host before acknowledging an allow, and usage must never live in the tenant database, so a tenant restore cannot reset consumed quota.
+
+```go
+type QuotaObserver interface {
+    // Reserve is called before any bytes are written. Returning an error
+    // must abort the write: an unavailable quota service fails closed.
+    Reserve(ctx context.Context, req QuotaReservationRequest) (QuotaReservation, error)
+    // Credit reports confirmed freed bytes after a deletion.
+    Credit(ctx context.Context, req QuotaCreditRequest) error
+}
+```
+
+<a name="NewHostedQuotaObserver"></a>
+### func [NewHostedQuotaObserver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/quota_hosted.go#L22>)
+
+```go
+func NewHostedQuotaObserver(client *storagequota.Client) QuotaObserver
+```
+
+NewHostedQuotaObserver returns a QuotaObserver backed by the public storage byte quota client. The client must have completed a successful Handshake before the observer is used, mirroring the policy protocol's enabled\-startup requirements.
+
+<a name="QuotaPurpose"></a>
+## type [QuotaPurpose](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/quota.go#L17>)
+
+QuotaPurpose classifies the storage write a byte reservation covers.
+
+```go
+type QuotaPurpose string
+```
+
+<a name="QuotaPurposeUpload"></a>
+
+```go
+const (
+    // QuotaPurposeUpload covers writing original upload bytes.
+    QuotaPurposeUpload QuotaPurpose = "upload"
+    // QuotaPurposeVariant covers writing a derived image variant.
+    QuotaPurposeVariant QuotaPurpose = "variant"
+)
+```
+
+<a name="QuotaReservation"></a>
+## type [QuotaReservation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/quota.go#L46-L52>)
+
+QuotaReservation is a host\-acknowledged byte reservation. A reservation must end in exactly one of Settle \(bytes were written; actual usage\) or Release \(the write definitively did not persist\). When the outcome is unknown, neither may be called: the provider keeps the reservation for reconciliation instead of guessing.
+
+```go
+type QuotaReservation interface {
+    ID() string
+    // Settle transitions the reservation to the actual stored byte count.
+    Settle(ctx context.Context, actualBytes int64) error
+    // Release returns reserved capacity because no bytes persisted.
+    Release(ctx context.Context) error
+}
+```
+
+<a name="QuotaReservationRequest"></a>
+## type [QuotaReservationRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/quota.go#L30-L39>)
+
+QuotaReservationRequest describes a worst\-case byte reservation for one storage write attempt. OpID is the idempotent identity of the attempt: every retry of the same attempt must reuse the same OpID, while a new attempt needs a new OpID.
+
+```go
+type QuotaReservationRequest struct {
+    OpID      string
+    Purpose   QuotaPurpose
+    StorageID string
+    // Key is the object key or prefix the write targets when known.
+    Key string
+    // WorstCase is the upper bound of bytes the write may store. It must
+    // be reserved before any bytes reach the storage backend.
+    WorstCase int64
 }
 ```
 
@@ -531,7 +645,7 @@ func (r *Repo) TransitionUploadingToStaged(ctx context.Context, app core.App, st
 TransitionUploadingToStaged atomically moves a reservation from uploading to staged with the finalized metadata. The CAS \(status=uploading AND owner\) ensures it cannot transition a record that cleanup reclaimed or another owner took. Returns ErrReservationLost when the reservation no longer matches.
 
 <a name="Service"></a>
-## type [Service](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L51-L69>)
+## type [Service](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L51-L74>)
 
 Service is the application layer for file storage.
 
@@ -542,7 +656,7 @@ type Service struct {
 ```
 
 <a name="NewService"></a>
-### func [NewService](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L72>)
+### func [NewService](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L77>)
 
 ```go
 func NewService(app core.App, repo *Repo, config Config) (*Service, error)
@@ -551,7 +665,7 @@ func NewService(app core.App, repo *Repo, config Config) (*Service, error)
 NewService creates a new storage service.
 
 <a name="Service.Delete"></a>
-### func \(\*Service\) [Delete](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L244>)
+### func \(\*Service\) [Delete](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L249>)
 
 ```go
 func (s *Service) Delete(ctx context.Context, storageID string) error
@@ -560,7 +674,7 @@ func (s *Service) Delete(ctx context.Context, storageID string) error
 Delete removes a stored file and its metadata. When called inside a transaction, it marks the file as deleting and schedules the irreversible blob deletion in TxInfo.OnComplete after successful commit.
 
 <a name="Service.Download"></a>
-### func \(\*Service\) [Download](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L748>)
+### func \(\*Service\) [Download](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L819>)
 
 ```go
 func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID string, auth AuthContext) error
@@ -569,7 +683,7 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, storageID str
 Download serves a stored file for GET/HEAD requests.
 
 <a name="Service.DownloadPublic"></a>
-### func \(\*Service\) [DownloadPublic](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L775>)
+### func \(\*Service\) [DownloadPublic](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L846>)
 
 ```go
 func (s *Service) DownloadPublic(w http.ResponseWriter, r *http.Request, token string) error
@@ -578,7 +692,7 @@ func (s *Service) DownloadPublic(w http.ResponseWriter, r *http.Request, token s
 DownloadPublic serves a stable public storage URL without caller authentication.
 
 <a name="Service.GenerateImageUploadURL"></a>
-### func \(\*Service\) [GenerateImageUploadURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L100>)
+### func \(\*Service\) [GenerateImageUploadURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L105>)
 
 ```go
 func (s *Service) GenerateImageUploadURL(ctx context.Context, auth AuthContext, policy ImagePolicy) (string, error)
@@ -587,7 +701,7 @@ func (s *Service) GenerateImageUploadURL(ctx context.Context, auth AuthContext, 
 GenerateImageUploadURL creates an upload URL bound to a schema image policy.
 
 <a name="Service.GenerateUploadURL"></a>
-### func \(\*Service\) [GenerateUploadURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L95>)
+### func \(\*Service\) [GenerateUploadURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L100>)
 
 ```go
 func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (string, error)
@@ -596,7 +710,7 @@ func (s *Service) GenerateUploadURL(ctx context.Context, auth AuthContext) (stri
 GenerateUploadURL returns a short\-lived, single\-use URL for uploading a file.
 
 <a name="Service.GetCapabilityURL"></a>
-### func \(\*Service\) [GetCapabilityURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L200>)
+### func \(\*Service\) [GetCapabilityURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L205>)
 
 ```go
 func (s *Service) GetCapabilityURL(ctx context.Context, storageID string) (string, error)
@@ -605,7 +719,7 @@ func (s *Service) GetCapabilityURL(ctx context.Context, storageID string) (strin
 GetCapabilityURL returns a signed short\-lived bearer URL that does not require caller authentication.
 
 <a name="Service.GetMetadata"></a>
-### func \(\*Service\) [GetMetadata](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L150>)
+### func \(\*Service\) [GetMetadata](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L155>)
 
 ```go
 func (s *Service) GetMetadata(ctx context.Context, storageID string) (map[string]any, error)
@@ -614,7 +728,7 @@ func (s *Service) GetMetadata(ctx context.Context, storageID string) (map[string
 GetMetadata returns persisted metadata for a storage object.
 
 <a name="Service.GetPublicURL"></a>
-### func \(\*Service\) [GetPublicURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L205>)
+### func \(\*Service\) [GetPublicURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L210>)
 
 ```go
 func (s *Service) GetPublicURL(ctx context.Context, storageID string) (string, error)
@@ -623,13 +737,22 @@ func (s *Service) GetPublicURL(ctx context.Context, storageID string) (string, e
 GetPublicURL returns the stable public bearer URL for a stored file.
 
 <a name="Service.GetURL"></a>
-### func \(\*Service\) [GetURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L195>)
+### func \(\*Service\) [GetURL](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L200>)
 
 ```go
 func (s *Service) GetURL(ctx context.Context, storageID string, auth AuthContext) (string, error)
 ```
 
 GetURL returns a signed short\-lived download URL for the storage ID, or an empty string if missing/deleted.
+
+<a name="Service.InstallNativeQuotaHooks"></a>
+### func \(\*Service\) [InstallNativeQuotaHooks](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/nativequota.go#L76>)
+
+```go
+func (s *Service) InstallNativeQuotaHooks(app core.App) error
+```
+
+InstallNativeQuotaHooks installs the native record file quota hooks and the native thumbnail request gate on the app. It returns nil without installing anything when no quota observer is attached \(standalone mode\), so wiring it unconditionally preserves existing semantics.
 
 <a name="Service.RunCleanup"></a>
 ### func \(\*Service\) [RunCleanup](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/worker.go#L131>)
@@ -639,6 +762,15 @@ func (s *Service) RunCleanup() error
 ```
 
 RunCleanup executes a single cleanup pass synchronously. Useful for tests.
+
+<a name="Service.SetQuotaObserver"></a>
+### func \(\*Service\) [SetQuotaObserver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/quota.go#L91>)
+
+```go
+func (s *Service) SetQuotaObserver(observer QuotaObserver)
+```
+
+SetQuotaObserver attaches the host quota observer. It must be called before the service is used for uploads or downloads \(before Start in the standard wiring\) and is intended to be called at most once. A nil observer keeps standalone semantics.
 
 <a name="Service.Start"></a>
 ### func \(\*Service\) [Start](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/worker.go#L15>)
@@ -659,7 +791,7 @@ func (s *Service) Stop() error
 Stop halts the background cleanup worker and waits for the current pass to finish.
 
 <a name="Service.Upload"></a>
-### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L324>)
+### func \(\*Service\) [Upload](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L357>)
 
 ```go
 func (s *Service) Upload(ctx context.Context, token string, body io.Reader, contentType, filename string, headerSize int64) (string, error)
@@ -668,7 +800,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 Upload streams and persists a file from an upload token. The commit creates a staged file record, then OnComplete moves the staged blob to the final key and marks the file active. If the transaction fails, the claim is released and the staged blob is removed.
 
 <a name="Service.WarmActive"></a>
-### func \(\*Service\) [WarmActive](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L87>)
+### func \(\*Service\) [WarmActive](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/storage/service.go#L92>)
 
 ```go
 func (s *Service) WarmActive() error

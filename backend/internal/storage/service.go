@@ -64,6 +64,11 @@ type Service struct {
 	// When non-nil it can block to simulate a slow backend persist.
 	persistHook func()
 
+	// quota is the optional host-owned byte quota observer. A nil observer
+	// keeps standalone semantics; see quota.go. It must be attached with
+	// SetQuotaObserver before the service starts serving traffic.
+	quota QuotaObserver
+
 	thumbPending singleflight.Group
 	thumbSem     *semaphore.Weighted
 }
@@ -286,8 +291,16 @@ func (s *Service) deleteInApp(ctx context.Context, app core.App, storageID strin
 // deleteBlob removes the blob and marks the metadata deleted. It returns an
 // error when either step fails so that callers (notably the cleanup worker) can
 // report accurate recovery metrics and retry. A missing blob is treated as
-// success.
+// success. When a quota observer is attached, the confirmed freed bytes are
+// reported with the stable deletion identity of the storage id.
 func (s *Service) deleteBlob(record *core.Record, fileKey string) error {
+	// List before deleting: the byte total is only creditable when the whole
+	// prefix is confirmed removed below.
+	var freedBytes int64
+	var listErr error
+	if s.hasQuota() {
+		freedBytes, listErr = s.confirmedPrefixBytes(record, fileKey)
+	}
 	if err := s.deleteFilePrefix(s.app, strings.TrimRight(path.Dir(fileKey), "/")+"/"); err != nil {
 		return fmt.Errorf("delete storage blob: %w", err)
 	}
@@ -297,7 +310,27 @@ func (s *Service) deleteBlob(record *core.Record, fileKey string) error {
 	if err := s.app.SaveWithContext(schema.WithInternalContext(context.Background()), record); err != nil {
 		return fmt.Errorf("mark storage file deleted: %w", err)
 	}
+	storageID := record.GetString(schema.FieldStorageID)
+	if listErr != nil {
+		s.app.Logger().Warn("storage deletion bytes not credited; listing failed",
+			"storageId", storageID, "classification", classifyQuotaError(listErr))
+	} else {
+		s.quotaCredit(QuotaCreditRequest{
+			OpID:      quotaDeleteOpID(storageID),
+			StorageID: storageID,
+			Key:       quotaPrefixFor(fileKey),
+			Bytes:     freedBytes,
+		})
+	}
 	return nil
+}
+
+// confirmedPrefixBytes lists the objects of a storage prefix and returns
+// their byte total. The result is only used after the prefix deletion
+// succeeded, so the reported bytes were actually freed.
+func (s *Service) confirmedPrefixBytes(record *core.Record, fileKey string) (int64, error) {
+	prefix := strings.TrimRight(path.Dir(fileKey), "/") + "/"
+	return sumPrefixBytes(s.app, prefix)
 }
 
 func (s *Service) deleteFilePrefix(app core.App, prefix string) error {
@@ -404,6 +437,21 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 		return "", err
 	}
 
+	// Reserve the worst-case upload bytes at the host quota service before
+	// any bytes reach the storage backend. A denial or unavailability fails
+	// closed: the upload aborts before staging and the claim is released.
+	quotaRes, quotaErr := s.reserveQuotaForUpload(ctx, storageID, stageKey, filename, maxSize)
+	if quotaErr != nil {
+		_ = s.releaseReservation(storageID, attempt)
+		_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
+		return "", quotaErr
+	}
+	releaseQuotaBeforePersist := func() {
+		// Nothing has reached the storage backend yet; the reservation is
+		// returned unconditionally.
+		s.quotaRelease(quotaRes)
+	}
+
 	// Renew the reservation lease while staging and backend persistence are
 	// active so cleanup cannot reclaim a live upload even if it outlives a single
 	// lease interval. The renewer's lifetime follows the actual staging/persist
@@ -419,6 +467,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	tmpPath, sha, size, err := s.stageToTemp(body, filename, maxSize, headerSize)
 	if err != nil {
 		stopRenewer()
+		releaseQuotaBeforePersist()
 		_ = s.releaseReservation(storageID, attempt)
 		_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
 		return "", err
@@ -429,6 +478,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	if imagePolicy != nil {
 		if err := s.thumbSem.Acquire(ctx, 1); err != nil {
 			stopRenewer()
+			releaseQuotaBeforePersist()
 			_ = s.releaseReservation(storageID, attempt)
 			_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
 			return "", &UploadError{Code: ErrorCodeInternal, Message: "image inspection cancelled", Err: err}
@@ -437,6 +487,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 		s.thumbSem.Release(1)
 		if inspectErr != nil {
 			stopRenewer()
+			releaseQuotaBeforePersist()
 			_ = s.releaseReservation(storageID, attempt)
 			_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
 			return "", inspectErr
@@ -449,6 +500,10 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	persistErr := s.persistStagedBlob(tmpPath, stageKey, filename)
 	stopRenewer()
 	if persistErr != nil {
+		// The backend may hold a partial object: the write is uncertain, so
+		// the byte reservation is intentionally left unsettled for provider
+		// reconciliation (never released on an uncertain write).
+		s.quotaKeepForUncertainWrite(quotaRes, stageKey)
 		_ = s.releaseReservation(storageID, attempt)
 		_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
 		s.app.Logger().Error("storage upload persist failed", "storageId", storageID, "error", persistErr)
@@ -456,6 +511,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	}
 	if storedType, err := s.storedContentType(stageKey); err != nil {
 		_ = s.deleteFile(app, stageKey)
+		s.releaseReservationIfGone(app, stageKey, quotaRes)
 		_ = s.releaseReservation(storageID, attempt)
 		_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
 		return "", &UploadError{Code: ErrorCodeInternal, Message: "failed to inspect stored upload", Err: err}
@@ -465,6 +521,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	if imagePolicy == nil {
 		if err := s.validateContentType(contentType, tokenRec.GetString(schema.FieldTokenAllowedTypes)); err != nil {
 			_ = s.deleteFile(app, stageKey)
+			s.releaseReservationIfGone(app, stageKey, quotaRes)
 			_ = s.releaseReservation(storageID, attempt)
 			_ = s.repo.ReleaseClaim(schema.WithInternalContext(ctx), app, tokenHash, attempt)
 			return "", err
@@ -477,6 +534,7 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 	// (potentially slow) staging; classify/handle precisely rather than 500.
 	if err := s.commitUpload(ctx, app, tokenHash, attempt, storageID, sha, size, stageKey, contentType, metadata); err != nil {
 		_ = s.deleteFile(app, stageKey)
+		s.releaseReservationIfGone(app, stageKey, quotaRes)
 		_ = s.releaseReservation(storageID, attempt)
 		if errors.Is(err, ErrTokenClaimFailed) {
 			return "", s.classifyTokenFailure(ctx, app, tokenHash)
@@ -489,6 +547,11 @@ func (s *Service) Upload(ctx context.Context, token string, body io.Reader, cont
 		s.app.Logger().Error("storage upload commit failed", "storageId", storageID, "error", err)
 		return "", &UploadError{Code: ErrorCodeInternal, Message: "failed to commit upload", Err: err}
 	}
+
+	// The metadata commit fixed the actual stored byte count: settle the
+	// quota reservation to that value before the blob is finalized. The
+	// report is bounded and cancellation-independent.
+	s.quotaSettle(quotaRes, size)
 
 	// Finalize: move the staged blob to its final key and mark the record
 	// active. Re-fetch the record fresh because the commit CAS updated its
@@ -732,6 +795,8 @@ func (s *Service) finalizeUpload(record *core.Record, stageKey, finalKey string)
 
 // markFileLost transitions a record whose blobs are both missing to the deleted
 // state and returns a distinct error so the upload path surfaces the data loss.
+// The settled byte reservation is credited back: the objects were verified
+// missing, so no bytes remain stored for the storage id.
 func (s *Service) markFileLost(record *core.Record) error {
 	storageID := record.GetString(schema.FieldStorageID)
 	s.app.Logger().Error("storage file data lost", "storageId", storageID, "reason", "missing staged and final blobs")
@@ -741,6 +806,12 @@ func (s *Service) markFileLost(record *core.Record) error {
 	if err := s.app.SaveWithContext(schema.WithInternalContext(context.Background()), record); err != nil {
 		return fmt.Errorf("failed to mark lost storage file deleted: %w", err)
 	}
+	s.quotaCredit(QuotaCreditRequest{
+		OpID:      "lost-" + storageID,
+		StorageID: storageID,
+		Key:       quotaPrefixFor(record.GetString(schema.FieldStorageFileKey)),
+		Bytes:     record.GetInt64(schema.FieldStorageSize),
+	})
 	return ErrStorageDataLost
 }
 
