@@ -207,7 +207,8 @@ func waitForStatus(t *testing.T, ctx context.Context, svc *Service, id string, w
 // fake now+d (or the job is no longer running). Advancing a fake clock can
 // otherwise outrun the heartbeat goroutine: a dropped ticker tick would leave
 // the recorded lease expired and let the poller legally steal the job even
-// though renewal is healthy, which never happens with a real clock.
+// though the test intends to exercise healthy renewal. Synchronize simulated
+// time with persisted renewal rather than relying on goroutine scheduling.
 func waitForRenewedLease(t *testing.T, ctx context.Context, svc *Service, id string, clock *FakeClock, d time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
