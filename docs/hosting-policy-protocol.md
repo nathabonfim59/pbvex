@@ -181,18 +181,103 @@ on restart. It intentionally does not expire/reconcile reservations or bill unit
 The example refuses an existing socket path and sets socket mode 0600; a private
 parent directory must prevent access during the bind/chmod interval.
 
+## Runtime integration (observer adapter and environment gating)
+
+When hosting is enabled, PBVex builds exactly one policy client per
+application and shares it between the administrative gates and a
+`runtime.ExecutionObserver` adapter installed before the runtime manager is
+created. Every boundary the runtime observes is metered: function calls with
+origin `call`, `http_action`, `realtime` or `scheduler` — nested calls
+inherit the entry origin and correlate through root/parent identifiers — plus
+bundle loads with origin `bundle_load` and application migrations with origin
+`migration`. A denied Begin prevents user code from running; the runtime
+reports such attempts as admission errors (mapped to HTTP 503, scheduler
+defers unstarted work) and never automatically retries user functions.
+
+Begin performs admission and the `started` report synchronously before
+entering user code, each with bounded retries (two attempts, 50ms backoff) on
+identical identifiers and content. The reservation travels to End through the
+context returned by Begin, with a bounded fallback table (1024 entries,
+fail-closed) keyed by the runtime execution ID. End settles exactly one
+`completed` event per successful Begin using a cancellation-independent
+context with a 10s budget, so a caller timeout still emits. Outcomes are
+sanitized to `success`, `error`, `timeout` or `canceled` by error identity;
+error strings, arguments and results are never transmitted or logged — logs
+carry protocol identifiers only. Duration is wall time measured by the
+runtime from the admission boundary, including admission latency; it is
+reported before the surrounding mutation transaction commits, so `success`
+means the handler returned, not that writes committed, and it is never CPU
+time.
+
+Failure handling is explicit and deliberately simple. Exhausted retries (two
+admission attempts, two `started` attempts, three completion attempts) latch
+the adapter unhealthy, rejecting new execution starts until process restart,
+while in-flight completions still attempt settlement. A clean local capacity
+deny (client `ErrBusy`) and a clean provider denial do not latch. An
+uncertain `started` acknowledgement denies the execution but never releases
+the reservation, because the service may already have recorded the start; the
+`released` phase is therefore never emitted by this adapter. Latching on an
+unknown reservation at End, and process crashes between Begin and End, leave
+provider reservations for provider reconciliation. This adapter is a
+synchronous acknowledgement foundation, not a durable outbox, and claims no
+crash recovery.
+
+An externally supplied observer is composed, never silently overwritten:
+external Begin runs first (its denial prevents reserving capacity), the
+hosting adapter runs second, and the external observer receives its End
+exactly once whenever its Begin succeeded — including when admission then
+denies the execution. The synchronous foundation trades latency for
+simplicity: an execution start costs two socket round-trips worst case
+(admission plus started, each bounded by the configured client deadline),
+completion adds a bounded best-effort report, and no queues, spools or
+telemetry goroutines exist. Production metering needs a bounded durable
+outbox or a documented reconciliation strategy instead of this latch.
+
+Identity projection: the process generates one session identifier and a
+process-wide atomic event sequence starting at 1; runtime attempt identifiers
+(128-bit random hex) pass through when token-safe and are otherwise projected
+onto deterministic SHA-256 hexadecimal identifiers. Required labels that
+cannot be represented deny the execution — no invented labels, no unmetered
+path — while optional labels (`deploymentId`, `functionName`, `namespace`)
+are omitted when unsafe. Empty function types are not functions: `bundle_load`
+maps to the `bundle.load` kind and `migration` to `migration.application`.
+
+Coverage is limited to what the runtime observes. Native PocketBase
+operations — settings writes, backup create, superuser authentication, record
+and file endpoints — remain capability-checked but are never admitted or
+reported as protocol events. The PocketBase JS plugin stays disabled
+(temporary limitation below), so no `hook.load` or `hook.callback` events
+occur yet. `runtime.Config.MaxConcurrentExecutions` remains independently
+owned by the runtime; hosting policy cannot raise it.
+
+Host environment reads are permission-gated per name: every hosted component
+environment variable binding resolved from the host environment requires an
+explicit `environment.read/<name>` capability grant before lookup, while
+literal manifest bindings never consult policy. A configured custom
+environment resolver is composed consciously — permission check first, then
+the custom resolver; without one, the standard `os.LookupEnv` default
+applies. There is no unrestricted fallback: denial or unavailability fails
+the binding. Composed capability names are validated locally against the
+token rules before any socket traffic, and the reference service denies these
+capabilities unless the exact name is granted. This narrows, but does not
+close, the secret-isolation blocker below: what providers may safely grant
+and how managed credentials are injected remain runtime and platform
+ownership.
+
 ## Implementation matrix and remaining gaps
 
 | Downstream task | Implemented foundation | Remaining acceptance gaps |
 | --- | --- | --- |
 | DS-01 | Public v1 wire contract, typed client, bounded reference service, lifecycle/conflict tests | Production ledger, independent third-party conformance, crash recovery, latency benchmark |
-| DS-02 | Explicit enablement, validated bootstrap, persistent socket, startup handshake, dynamic fail-closed admin checks | Runtime observer adapter must wire admission/reporting centrally; hosted execution enforcement is not complete in this commit |
+| DS-02 | Explicit enablement, validated bootstrap, persistent socket, startup handshake, dynamic fail-closed admin checks, central runtime observer adapter with fail-closed reporting latch and per-name environment gating | Combined validation on the integrated runtime branch, provider reconciliation of unknown reservations, latency benchmark |
 | DS-03 | Settings request compares old/new S3, backups and SMTP categories; unchanged protected values permit unrelated saves; backup-create gate; unconditional restore denial | Managed secret injection/redaction, settings export/backup confidentiality, collection import and full native-path audit |
 | DS-04 | Enabled integration skips the entire PocketBase JS plugin registration, preventing hook-file and custom JS migration loading | Dynamic optional hooks and per-callback telemetry require PocketBase execution-boundary changes; host JS remains disabled even if `host.scripts` allows |
 
 Settings capabilities are `settings.storage.write`, `settings.backups.write`,
 `settings.smtp.write`; these gate the entire changed category, not individual
-fields. `backup.create` is dynamic. `backup.restore` is reserved: restores are
+fields. `environment.read/<name>` grants per-name host environment reads to
+hosted component bindings; the reference service denies them unless each
+exact name is granted. `backup.create` is dynamic. `backup.restore` is reserved: restores are
 unconditionally rejected before PocketBase's restore handler while enabled,
 because archives may replace settings/files. Standard PocketBase admin UI is
 retained. These checks are backend request/lifecycle hooks, not UI restrictions.
@@ -209,15 +294,27 @@ by request middleware and remains outside this foundation.
 
 **Secret isolation blocker:** `backend/internal/runtime/component.go` resolves
 component env bindings with `os.LookupEnv(binding.Name)` without a host-secret
-allowlist. Do not inject provider/managed storage credentials into the tenant
-process environment until that boundary is constrained. SMTP environment overrides
+allowlist on its own; when hosting is enabled, the resolver composed in the
+runtime integration section additionally requires an explicit
+`environment.read/<name>` grant before any host lookup, so ungranted names —
+including managed credential names — fail closed. A provider that grants a
+name still controls what that name exposes; managed secret injection and its
+ownership boundary remain runtime/platform work. SMTP environment overrides
 also persist in PocketBase settings; the new category write gate does not redact
 them from settings export or backups. Provider secrets should stay out of this
 process and its data. Full DS-03/DS-08 acceptance is blocked on these changes.
 
-Focused validation lives in `backend/hosting/client_test.go` and
-`backend/internal/pbvex/hosting_test.go`: persistent connections, dynamic changes,
-idempotency/conflicts, ordering/release, capacity, version/malformed/oversize/
-timeout/disconnect failure, settings effective changes, and restore-before-side-
-effect denial. Parent integration must test every execution origin and reporting
-failure; the protocol package alone does not instrument executions.
+Focused validation lives in `backend/hosting/client_test.go` (persistent
+connections, dynamic changes, idempotency across policy changes, conflicts,
+ordering/release, capacity, local saturation without a queue, malformed
+outcomes, version/oversize/timeout/disconnect failure, and environment
+capability namespaces), `backend/internal/pbvex/hosting_test.go` (settings
+effective changes and restore-before-side-effect denial), and
+`backend/internal/pbvex/hosting_observer_test.go` (observer lifecycle:
+admission/started/completion, denial before user code, uncertain-start latch
+without release, completion after caller cancellation, outcome sanitization,
+nested correlation and sequences, external observer composition, identity
+projection, tracking bounds, concurrent sequences, busy admission, and
+environment gating). The runtime branch carries its own observer seam tests;
+the integrated full suite and race check are owned by the downstream
+integration run, not by this protocol package.
