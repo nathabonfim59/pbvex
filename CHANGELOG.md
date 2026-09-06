@@ -19,8 +19,10 @@ entries are intentionally not duplicated in this changelog.
   before any write and settle after the commit through one shared client
   and in-flight budget, deletions credit only verified removals, native
   record deletion keeps usage reserved for reconciliation, native
-  thumbnail generation is denied while quotas are enforced, and backup
-  creation is denied outright because archive bytes cannot be reserved.
+  thumbnail requests are denied outright — cached variants included,
+  because upstream falls back to an unreserved generation whenever a
+  cached object is missing at serve time — and backup
+  creation is denied because archive bytes cannot be reserved.
   Standalone deployments are unchanged. Providers reject settlements above
   a reservation as conflicts and keep the reservation and its usage
   reserved for reconciliation instead of acknowledging an undercount. See

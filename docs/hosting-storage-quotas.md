@@ -44,7 +44,7 @@ the shared handshake, or startup fails (see the wiring section below).
   exactly-once delivery claim is made.
 - **Fail-closed.** Denials and unavailability prevent the write. A denied
   upload never enters the storage backend, a denied variant is never
-  persisted, and native thumbnail generation is denied outright while
+  persisted, and native thumbnail requests are denied outright while
   quotas are enforced (see coverage below). Settled usage may only be
   freed by a verified credit or provider reconciliation; the provider
   rejects a settlement above the reserved bound as a protocol conflict
@@ -124,7 +124,7 @@ the event ID and the provider floors its usage total at zero.
 | Native record create/update uploads | Exact multipart spool sizes reserved before upstream writes the files | Stored sizes settled after the record commit |
 | Native update file replacements | New bytes reserved before the write | New bytes settled; old bytes credited only after verified removal |
 | Native record deletion | — | NOT credited: upstream cleanup is asynchronous, so usage stays reserved for reconciliation |
-| Native on-demand thumbnails | Generation DENIED while quotas are enforced (no reservation is possible) | Cached variants keep serving |
+| Native on-demand thumbnails | All native thumbnail requests DENIED while quotas are enforced — cached selectors included, because no reservation is possible and a cached object can disappear before serving | — |
 
 Standalone behavior is unchanged: with no observer attached, no byte
 accounting is performed, no native hooks are installed, and thumbnail
@@ -183,15 +183,18 @@ Upstream generates missing record thumbnails inside the files download
 route — after routing and authorization but before serving — with no core
 hook in between (`OnFileDownloadRequest` fires after generation) and no
 size-carrying writer hook, so no exact reservation is possible on this
-path. While a quota observer is attached, the installed global request
-middleware therefore fails closed: any request upstream would serve by
-GENERATING a variant is denied before the write. Cached variants keep
-serving, requests upstream serves without writing (invalid selector,
-missing original, non-image original) keep their upstream behavior, and
-standalone deployments (no observer) generate exactly as upstream ships.
-The generation conditions mirror the pinned upstream route; if upstream
-changes them, the gate errs closed — it may deny a request upstream would
-no longer write, never allow an unreserved write.
+path. While a quota observer is attached, the installed gate therefore
+denies every native files-download request that carries a nonempty thumb
+selector with an explicit `403` — cached selectors included. A serve-only
+fast path cannot be made safe: upstream falls back to generating whenever
+the cached variant is missing at serve time, so a transient storage error
+on the cache lookup, or a cache deletion between the gate and the upstream
+handler, would produce an unreserved generation. The gate keys on the
+matched route pattern, so encoded path characters cannot rename the route
+that actually runs. Original downloads without a thumb selector keep their
+upstream behavior, and standalone deployments (no observer) generate
+exactly as upstream ships. PBVex's own variant path (encode-then-reserve)
+is a different route and is not affected.
 
 ## Documented gaps
 
@@ -217,14 +220,20 @@ no longer write, never allow an unreserved write.
   documented provider reconciliation pass over the actual object store.
   The protocol supports reconciliation; it does not fake a durable host
   service.
-- **Native thumbnail gate is route-level and denies closed.** Because
-  upstream lacks a core hook before thumbnail generation (and its writer
-  hook carries no byte count), enforced-mode deployments cannot serve
-  freshly generated native thumbnails; the gate denies the generation and
-  the platform should surface this as an expected restriction. Upstream
-  changes to the files route conditions must be mirrored; the pinned
-  version is documented in the implementation. PBVex's own variant path
-  (encode-then-reserve) is not affected.
+- **Native thumbnail requests are denied wholesale.** Because upstream
+  lacks a core hook before thumbnail generation (and its writer hook
+  carries no byte count), no exact reservation is possible on the files
+  download route — and no serve-only fast path is safe either, since
+  upstream falls back to generating whenever the cached variant is missing
+  at serve time (a transient storage error or a cache deletion between a
+  gate and the handler would produce an unreserved generation).
+  Enforced-mode deployments therefore refuse every native thumbnail
+  request with an explicit `403`, cached variants included, and the
+  platform should surface this as an expected restriction. Original
+  downloads without a thumb selector are unaffected; upstream changes to
+  that route must be mirrored, and the pinned version is documented in the
+  implementation. PBVex's own variant path (encode-then-reserve) is not
+  affected.
 
 ## Public Go API
 
@@ -301,6 +310,7 @@ shared-transport reuse, budget and close semantics), in
 `backend/internal/pbvex` (startup handshake compatibility against a
 policy-only provider, full startup smoke over the example-compatible
 composed provider with uploads, variants and native record files through
-the real router, fail-closed denial before writes, native thumbnail
-denial with cached variants still served, unchanged standalone behavior,
+the real router, fail-closed denial before writes, wholesale native
+thumbnail denial including cached selectors with originals still served,
+unchanged standalone behavior,
 and terminate closing the shared transport).

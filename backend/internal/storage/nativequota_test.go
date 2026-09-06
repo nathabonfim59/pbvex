@@ -348,7 +348,7 @@ func nativeServeRouter(t *testing.T, app core.App) http.Handler {
 	return mux
 }
 
-func TestNativeThumbGateFailsClosedWhenQuotaEnforced(t *testing.T) {
+func TestNativeThumbRequestDeniedWhenQuotaEnforced(t *testing.T) {
 	obs := newFakeQuotaObserver()
 	app, svc, collection := newNativeQuotaApp(t, obs)
 	newNativePhotoCollection(t, app, collection)
@@ -357,21 +357,47 @@ func TestNativeThumbGateFailsClosedWhenQuotaEnforced(t *testing.T) {
 	_ = svc
 
 	mux := nativeServeRouter(t, app)
-	url := fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0])
+	thumbURL := fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0])
 
-	// Snapshot the upload-phase reservations: the denied generation must
-	// not add any quota activity of its own.
+	// Snapshot the upload-phase reservations: the denial must not add any
+	// quota activity of its own.
 	beforeLog := len(obs.callLog())
 	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, url, nil))
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, thumbURL, nil))
 	// No exact reservation is possible on the unhookable native generation
-	// path: it must be denied before any bytes are written.
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected fail-closed 500 for native generation, got %d: %s", rr.Code, rr.Body.String())
+	// path, so every thumb-carrying request is refused with the explicit
+	// quota restriction before the upstream handler can run.
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected fail-closed 403 for native thumb request, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "storage quotas") {
+		t.Fatalf("expected the explicit quota rationale, got %s", rr.Body.String())
 	}
 	if len(obs.callLog()) != beforeLog {
-		t.Fatalf("the native gate must not pretend an approximate reservation, log: %v", obs.callLog())
+		t.Fatalf("the native gate must not perform quota activity, log: %v", obs.callLog())
 	}
+
+	// HEAD is served by the same GET pattern and is denied too, and a
+	// percent-encoded thumb selector cannot escape the gate.
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodHead, thumbURL, nil))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for HEAD thumb request, got %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=%%36%%34x64", record.Id, stored[0]), nil))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for encoded thumb selector, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Original downloads without a thumb selector keep working.
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/files/qfiles/%s/%s", record.Id, stored[0]), nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected the original to be served, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Nothing was written either way.
 	fs, err := app.NewFilesystem()
 	if err != nil {
 		t.Fatal(err)
@@ -382,11 +408,11 @@ func TestNativeThumbGateFailsClosedWhenQuotaEnforced(t *testing.T) {
 		t.Fatal(err)
 	}
 	if exists {
-		t.Fatal("denied variant must not be written")
+		t.Fatal("denied thumb request must not write a variant")
 	}
 }
 
-func TestNativeThumbCachedVariantServesWhenQuotaEnforced(t *testing.T) {
+func TestNativeThumbCachedVariantAlsoDeniedWhenQuotaEnforced(t *testing.T) {
 	obs := newFakeQuotaObserver()
 	app, svc, collection := newNativeQuotaApp(t, obs)
 	newNativePhotoCollection(t, app, collection)
@@ -395,7 +421,10 @@ func TestNativeThumbCachedVariantServesWhenQuotaEnforced(t *testing.T) {
 	_ = svc
 
 	// Pre-create the variant on the backend (as an earlier generation
-	// would have): it must keep being served under enforced quotas.
+	// would have). It is still denied: upstream falls back to generating
+	// whenever the cached object is missing at serve time, so a cache
+	// deletion or transient storage error between the gate and the handler
+	// could produce an unreserved generation even on the cached path.
 	fs, err := app.NewFilesystem()
 	if err != nil {
 		t.Fatal(err)
@@ -410,11 +439,24 @@ func TestNativeThumbCachedVariantServesWhenQuotaEnforced(t *testing.T) {
 	rr := httptest.NewRecorder()
 	before := len(obs.callLog())
 	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0]), nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected cached variant to be served, got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected cached thumb request to be denied too, got %d: %s", rr.Code, rr.Body.String())
 	}
 	if len(obs.callLog()) != before {
-		t.Fatalf("serving a cached variant must not reserve, log: %v", obs.callLog())
+		t.Fatalf("denying a cached thumb request must not touch the quota, log: %v", obs.callLog())
+	}
+	// The denial is passive: the cached object is untouched.
+	fs2, err := app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs2.Close()
+	exists, err := fs2.Exists(thumbKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("the denial must not delete the cached variant")
 	}
 }
 
@@ -489,7 +531,7 @@ func TestNativeThumbGateConcurrentRequestsAllFailClosed(t *testing.T) {
 	wg.Wait()
 	close(codes)
 	for code := range codes {
-		if code != http.StatusInternalServerError {
+		if code != http.StatusForbidden {
 			t.Fatalf("expected every concurrent request to fail closed, got %d", code)
 		}
 	}

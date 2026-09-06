@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
@@ -42,9 +40,14 @@ import (
 // hook in between (OnFileDownloadRequest fires after generation) and no
 // size-carrying writer hook, so no exact reservation is possible on that
 // path. While a quota observer is attached, a global request middleware
-// below fails closed: any request upstream would serve by GENERATING a
-// missing variant is denied before the write; cached variants and requests
-// upstream serves without writing pass through unchanged.
+// below denies every thumb-carrying request of that route with an
+// explicit 403, cached selectors included: upstream falls back to
+// generating the variant whenever the cached object is missing at serve
+// time, and a transient storage error on a cache lookup — or a cache
+// deletion between the gate and the upstream handler — could always
+// produce such an unreserved generation. Original downloads without a
+// thumb selector and standalone deployments (no observer) keep their
+// upstream behavior.
 //
 // The install is idempotent: handlers carry fixed hook ids and are safe to
 // rebind. It must be called with an attached quota observer; standalone
@@ -54,12 +57,6 @@ const (
 	nativeQuotaUploadStashKey      = "@pbvexQuotaUploads"
 	nativeQuotaDeleteStashKey      = "@pbvexQuotaDeletes"
 	nativeQuotaReservationStashKey = "@pbvexQuotaReservation"
-
-	// nativeDefaultThumbSizes mirrors the unexported apis.defaultThumbSizes
-	// of the pinned upstream: the only selector natively generated for file
-	// fields that do not declare thumbs. Keep in sync when bumping
-	// PocketBase.
-	nativeDefaultThumbSizes = "100x100"
 )
 
 // nativeUpload records one uploaded or removed native file with its exact
@@ -135,25 +132,26 @@ func (s *Service) InstallNativeQuotaHooks(app core.App) error {
 
 	// Failure handling: upstream cleanup interceptors run at -99; by the
 	// time these handlers execute, deletion of failed uploads has been
-	// attempted and its outcome is verifiable on the filesystem.
-	for _, id := range []string{"pbvexStorageQuotaAfterCreateError", "pbvexStorageQuotaAfterUpdateError"} {
-		app.OnRecordAfterCreateError().Bind(&hook.Handler[*core.RecordErrorEvent]{
-			Id:       id,
-			Priority: 0,
-			Func: func(e *core.RecordErrorEvent) error {
-				s.nativeHandleSaveError(e.App, e.Record)
-				return e.Next()
-			},
-		})
-		app.OnRecordAfterUpdateError().Bind(&hook.Handler[*core.RecordErrorEvent]{
-			Id:       id,
-			Priority: 0,
-			Func: func(e *core.RecordErrorEvent) error {
-				s.nativeHandleSaveError(e.App, e.Record)
-				return e.Next()
-			},
-		})
-	}
+	// attempted and its outcome is verifiable on the filesystem. A save
+	// error releases the reservation only when every uploaded object is
+	// verified absent; otherwise the reservation stays unsettled for
+	// provider reconciliation.
+	app.OnRecordAfterCreateError().Bind(&hook.Handler[*core.RecordErrorEvent]{
+		Id:       "pbvexStorageQuotaAfterCreateError",
+		Priority: 0,
+		Func: func(e *core.RecordErrorEvent) error {
+			s.nativeHandleSaveError(e.App, e.Record)
+			return e.Next()
+		},
+	})
+	app.OnRecordAfterUpdateError().Bind(&hook.Handler[*core.RecordErrorEvent]{
+		Id:       "pbvexStorageQuotaAfterUpdateError",
+		Priority: 0,
+		Func: func(e *core.RecordErrorEvent) error {
+			s.nativeHandleSaveError(e.App, e.Record)
+			return e.Next()
+		},
+	})
 
 	// Record deletion: upstream deletes the record files prefix
 	// asynchronously after the delete transaction (core/base.go
@@ -463,94 +461,31 @@ func (s *Service) nativeConfirmedRemovalBytes(app core.App, record *core.Record,
 	return u.Size + u.ThumbBytes
 }
 
-// nativeThumbGate fails closed before the native files download route
-// generates a missing thumbnail. Upstream owns generation (decode, resize,
-// encode) and writes the encoded bytes directly into the storage backend
-// with no pre-write core hook — OnFileDownloadRequest fires after the
-// generation — and the writer hook carries no byte count, so no exact
-// reservation is possible on this path. While a quota observer is
-// attached, any request upstream would serve by GENERATING a variant is
-// denied; cached variants and requests upstream serves without writing
-// (invalid selector, missing original, non-image original) pass through
-// unchanged. The generation conditions mirror the pinned upstream route;
-// if upstream changes them, this gate errs closed (it may deny a request
-// upstream would no longer write), never open.
+// nativeThumbGate denies the whole native thumbnail surface while a quota
+// observer is attached: any files-download request carrying a nonempty
+// thumb selector is refused with an explicit 403 before the upstream
+// handler runs, cached selectors included. Upstream owns generation
+// (decode, resize, encode) inside this route — after authorization, with
+// no pre-write core hook and no size-carrying writer hook — so no exact
+// reservation is possible, and it falls back to generating whenever the
+// cached variant is missing at serve time. A serve-only fast path cannot
+// be made safe: a transient storage error on the cache lookup, or a cache
+// deletion between this gate and the upstream handler, would let upstream
+// generate the variant unreserved. The gate keys on the matched route
+// pattern, which the mux resolves after path decoding and wildcard
+// matching, so encoded characters cannot rename the route that actually
+// runs (the GET pattern also serves HEAD). Original downloads without a
+// thumb selector and standalone deployments (no observer) keep their
+// upstream behavior; PBVex's own variant path (encode-then-reserve) is a
+// different route and is not affected.
 func (s *Service) nativeThumbGate(e *core.RequestEvent) error {
-	if e.Request.Method != http.MethodGet && e.Request.Method != http.MethodHead {
-		return e.Next()
-	}
-	if !strings.HasPrefix(e.Request.URL.Path, "/api/files/") {
+	if e.Request.Pattern != "GET /api/files/{collection}/{recordId}/{filename}" {
 		return e.Next()
 	}
 	thumb := e.Request.URL.Query().Get("thumb")
 	if thumb == "" {
 		return e.Next()
 	}
-	collectionIdOrName := e.Request.PathValue("collection")
-	recordId := e.Request.PathValue("recordId")
-	filename := e.Request.PathValue("filename")
-	if collectionIdOrName == "" || recordId == "" || filename == "" || strings.ContainsAny(filename, "/\\") {
-		return e.Next()
-	}
-	collection, err := e.App.FindCachedCollectionByNameOrId(collectionIdOrName)
-	if err != nil {
-		// Upstream resolves the collection and returns its own 404.
-		return e.Next()
-	}
-	record, err := e.App.FindRecordById(collection, recordId)
-	if err != nil {
-		return e.Next()
-	}
-	fileField := record.FindFileFieldByFile(filename)
-	if fileField == nil {
-		return e.Next()
-	}
-	// Mirror the upstream selector validation: unlisted selectors are
-	// served the original bytes and never generate a variant.
-	if thumb != nativeDefaultThumbSizes && !slices.Contains(fileField.Thumbs, thumb) {
-		return e.Next()
-	}
-	baseFilesPath := record.BaseFilesPath()
-	if collection.IsView() {
-		fileRecord, err := e.App.FindRecordByViewFile(collection.Id, fileField.Name, filename)
-		if err != nil {
-			return e.Next()
-		}
-		baseFilesPath = fileRecord.BaseFilesPath()
-	}
-	originalKey := baseFilesPath + "/" + filename
-	thumbKey := baseFilesPath + "/thumbs_" + filename + "/" + thumb + "_" + filename
-
-	fs, err := e.App.NewFilesystem()
-	if err != nil {
-		// Filesystem unavailable: upstream would fail the request anyway.
-		return e.Next()
-	}
-	defer fs.Close()
-	attrs, err := fs.Attributes(originalKey)
-	if err != nil {
-		return e.Next() // upstream 404s
-	}
-	if !nativeIsImageContentType(attrs.ContentType) {
-		return e.Next() // upstream serves the original
-	}
-	if exists, err := fs.Exists(thumbKey); err != nil || exists {
-		return e.Next() // cached variant is served; nothing to generate
-	}
-	// Upstream would now generate and write the variant bytes with no
-	// exact-size reservation possible: fail closed before e.Next() so the
-	// write never happens under enforced quotas.
-	s.app.Logger().Info("native thumbnail generation denied while storage quotas are enforced",
-		"thumb", thumb)
-	return e.InternalServerError("Thumbnail generation is unavailable while storage quotas are enforced.", ErrQuotaUnavailable)
-}
-
-// nativeIsImageContentType mirrors the upstream image content-type list of
-// the pinned apis/file.go. Keep in sync when bumping PocketBase.
-func nativeIsImageContentType(contentType string) bool {
-	switch contentType {
-	case "image/png", "image/jpg", "image/jpeg", "image/gif", "image/webp":
-		return true
-	}
-	return false
+	s.app.Logger().Info("native thumbnail request denied while storage quotas are enforced", "thumb", thumb)
+	return e.ForbiddenError("Native thumbnails are unavailable while storage quotas are enforced.", ErrQuotaUnavailable)
 }
