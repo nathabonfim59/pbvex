@@ -213,7 +213,9 @@ Failure handling is explicit and deliberately simple. Exhausted retries (two
 admission attempts, two `started` attempts, three completion attempts) latch
 the adapter unhealthy, rejecting new execution starts until process restart,
 while in-flight completions still attempt settlement. A clean local capacity
-deny (client `ErrBusy`) and a clean provider denial do not latch. An
+deny (client `ErrBusy` on the first attempt) and a clean provider denial do
+not latch; saturation following an already-uncertain attempt latches like any
+other unresolved exchange. An
 uncertain `started` acknowledgement denies the execution but never releases
 the reservation, because the service may already have recorded the start; the
 `released` phase is therefore never emitted by this adapter. Latching on an
@@ -226,7 +228,10 @@ An externally supplied observer is composed, never silently overwritten:
 external Begin runs first (its denial prevents reserving capacity), the
 hosting adapter runs second, and the external observer receives its End
 exactly once whenever its Begin succeeded — including when admission then
-denies the execution. The synchronous foundation trades latency for
+denies the execution. A nil or unrelated external context is rejected safely
+with that same End pairing, and admission always runs under the caller's
+cancellation and deadline, which an external observer cannot erase. The
+synchronous foundation trades latency for
 simplicity: an execution start costs two socket round-trips worst case
 (admission plus started, each bounded by the configured client deadline),
 completion adds a bounded best-effort report, and no queues, spools or

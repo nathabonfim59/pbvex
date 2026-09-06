@@ -307,10 +307,12 @@ func TestObserverNestedCorrelation(t *testing.T) {
 }
 
 type fakeExternalObserver struct {
-	beginErr error
-	mu       sync.Mutex
-	begins   []runtime.ExecutionInfo
-	ends     []runtime.ExecutionInfo
+	beginErr   error
+	nilContext bool
+	background bool
+	mu         sync.Mutex
+	begins     []runtime.ExecutionInfo
+	ends       []runtime.ExecutionInfo
 }
 
 type externalObserverKey struct{}
@@ -321,6 +323,14 @@ func (f *fakeExternalObserver) Begin(ctx context.Context, info runtime.Execution
 	f.mu.Unlock()
 	if f.beginErr != nil {
 		return ctx, f.beginErr
+	}
+	if f.nilContext {
+		return nil, nil
+	}
+	if f.background {
+		// An unrelated context: the adapter must not let it erase the
+		// caller's cancellation or deadline.
+		return context.Background(), nil
 	}
 	return context.WithValue(ctx, externalObserverKey{}, true), nil
 }
@@ -541,6 +551,170 @@ func (h *gatedAdmitHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 		<-h.gate
 	}
 	h.inner.ServeHTTP(w, req)
+}
+
+func TestObserverNilExternalContextDenied(t *testing.T) {
+	external := &fakeExternalObserver{nilContext: true}
+	observer, _, recording := observerTestObserver(t, nil, hosting.Config{})
+	observer.external = external
+	_, err := observer.Begin(context.Background(), observerInfo("inv-1"))
+	if !errors.Is(err, errNilObserverContext) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(external.ends) != 1 {
+		t.Fatalf("external ends = %d, want exactly one paired End", len(external.ends))
+	}
+	if admits := recording.admits(); len(admits) != 0 {
+		t.Fatal("admission attempted after nil external context")
+	}
+}
+
+func TestObserverExternalBackgroundCannotEraseCallerState(t *testing.T) {
+	external := &fakeExternalObserver{background: true}
+	observer, _, recording := observerTestObserver(t, nil, hosting.Config{})
+	observer.external = external
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := observer.Begin(canceled, observerInfo("inv-1")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled err = %v", err)
+	}
+	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer deadlineCancel()
+	if _, err := observer.Begin(deadlineCtx, observerInfo("inv-1")); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired deadline err = %v", err)
+	}
+	if admits := recording.admits(); len(admits) != 0 {
+		t.Fatal("canceled caller reached admission")
+	}
+	if len(external.begins) != 0 {
+		t.Fatal("canceled caller reached the external observer")
+	}
+}
+
+func TestObserverAdmissionStaysBoundToCallerContext(t *testing.T) {
+	gate := make(chan struct{})
+	arrived := make(chan struct{}, 8)
+	gated := &gatedAdmitHandler{gate: gate, arrived: arrived}
+	external := &fakeExternalObserver{background: true}
+	observer, _, _ := observerTestObserver(t, func(h http.Handler) http.Handler { gated.inner = h; return gated }, hosting.Config{Timeout: 2 * time.Second})
+	observer.external = external
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := observer.Begin(ctx, observerInfo("inv-1"))
+		done <- err
+	}()
+	<-arrived
+	// The external observer returned an unrelated context; the in-flight
+	// admission must still abort when the caller cancels.
+	cancel()
+	close(gate)
+	select {
+	case err := <-done:
+		if !errors.Is(err, hosting.ErrUnavailable) {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("admission ignored caller cancellation")
+	}
+	if !observer.unhealthy.Load() {
+		t.Fatal("uncertain in-flight cancellation was not treated conservatively")
+	}
+}
+
+func TestObserverUncertainAdmissionThenBusyLatches(t *testing.T) {
+	handler := &uncertainThenBusyHandler{
+		admitArrivals: make(chan struct{}, 4),
+		blockHolding:  make(chan struct{}, 1),
+		blockRelease:  make(chan struct{}),
+	}
+	observer, _, _ := observerTestObserver(t, func(h http.Handler) http.Handler { handler.inner = h; return handler }, hosting.Config{MaxInFlight: 1, Timeout: 2 * time.Second})
+	// Widen the retry backoff so the slot-holding blocker can deterministically
+	// occupy the client between the failed first attempt and the retry.
+	observer.retryBackoff = 250 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, err := observer.Begin(context.Background(), observerInfo("inv-1"))
+		done <- err
+	}()
+	<-handler.admitArrivals // first attempt returned 503: the exchange is uncertain
+	// Occupy the single client slot before the retried admission runs so the
+	// retry observes local saturation on top of prior uncertainty.
+	time.Sleep(25 * time.Millisecond)
+	checkDone := make(chan error, 1)
+	go func() {
+		_, err := observer.client.Check(context.Background(), hosting.FunctionExecute)
+		checkDone <- err
+	}()
+	select {
+	case <-handler.blockHolding:
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocker never reached the service")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, hosting.ErrBusy) || errors.Is(err, deploy.ErrExecutionBusy) {
+			t.Fatalf("err = %v, want uncertain exhaustion without the clean-busy mapping", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("uncertain admission did not finish")
+	}
+	if !observer.unhealthy.Load() {
+		t.Fatal("uncertain exchange followed by saturation did not latch")
+	}
+	close(handler.blockRelease)
+	<-checkDone
+	if _, err := observer.Begin(context.Background(), observerInfo("inv-2")); !errors.Is(err, errHostingMeteringUnhealthy) {
+		t.Fatalf("latch err = %v", err)
+	}
+}
+
+type uncertainThenBusyHandler struct {
+	inner         http.Handler
+	admitArrivals chan struct{}
+	blockHolding  chan struct{}
+	blockRelease  chan struct{}
+	admits        atomic.Int64
+}
+
+func (h *uncertainThenBusyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.URL.Path {
+	case "/v1/admit":
+		if h.admits.Add(1) == 1 {
+			h.admitArrivals <- struct{}{}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+	case "/v1/check":
+		h.blockHolding <- struct{}{}
+		<-h.blockRelease
+	}
+	h.inner.ServeHTTP(w, req)
+}
+
+func TestObserverEndIgnoresForeignReservationContext(t *testing.T) {
+	observer, _, recording := observerTestObserver(t, nil, hosting.Config{})
+	a, b := observerInfo("inv-a"), observerInfo("inv-b")
+	if _, err := observer.Begin(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	ctxB, err := observer.Begin(context.Background(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ending A under B's context must settle A by identifier, never B.
+	observer.End(ctxB, a, runtime.ExecutionResult{Duration: time.Millisecond})
+	events := recording.events()
+	if len(events) != 3 || events[2].Phase != "completed" || events[2].Operation.ID != "inv-a" {
+		t.Fatalf("events = %+v", events)
+	}
+	observer.End(ctxB, b, runtime.ExecutionResult{Duration: time.Millisecond})
+	events = recording.events()
+	if len(events) != 4 || events[3].Operation.ID != "inv-b" {
+		t.Fatalf("events = %+v", events)
+	}
 }
 
 func TestHostedEnvironmentResolver(t *testing.T) {

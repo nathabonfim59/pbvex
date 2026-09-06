@@ -39,6 +39,7 @@ var (
 	// errInvalidExecutionIdentity denies executions whose runtime-supplied
 	// identity cannot be projected onto the protocol without inventing labels.
 	errInvalidExecutionIdentity   = errors.New("hosting execution identity is invalid")
+	errNilObserverContext         = errors.New("hosting external observer returned a nil context")
 	errTrackedExecutionsExhausted = errors.New("hosting execution tracking bound reached")
 )
 
@@ -73,9 +74,10 @@ type hostingExecutionObserver struct {
 	unhealthy atomic.Bool
 	now       func() time.Time
 
-	mu         sync.Mutex
-	inFlight   map[string]*executionReservation
-	maxTracked int
+	mu           sync.Mutex
+	inFlight     map[string]*executionReservation
+	maxTracked   int
+	retryBackoff time.Duration
 }
 
 func newHostingExecutionObserver(logger *slog.Logger, client *hosting.Client, external runtime.ExecutionObserver) *hostingExecutionObserver {
@@ -83,13 +85,14 @@ func newHostingExecutionObserver(logger *slog.Logger, client *hosting.Client, ex
 		logger = slog.New(slog.DiscardHandler)
 	}
 	return &hostingExecutionObserver{
-		logger:     logger,
-		client:     client,
-		external:   external,
-		sessionID:  hosting.NewID(),
-		inFlight:   make(map[string]*executionReservation),
-		maxTracked: maxTrackedExecutions,
-		now:        func() time.Time { return time.Now().UTC() },
+		logger:       logger,
+		client:       client,
+		external:     external,
+		sessionID:    hosting.NewID(),
+		inFlight:     make(map[string]*executionReservation),
+		maxTracked:   maxTrackedExecutions,
+		retryBackoff: executionRetryBackoff,
+		now:          func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -106,26 +109,52 @@ func (o *hostingExecutionObserver) Begin(ctx context.Context, info runtime.Execu
 	if err := ctx.Err(); err != nil {
 		return ctx, err
 	}
+	derived := ctx
 	if o.external != nil {
-		// External observers run first so their denial prevents reserving
-		// provider capacity for work that would never start.
-		derived, err := o.external.Begin(ctx, info)
+		var err error
+		derived, err = o.external.Begin(ctx, info)
 		if err != nil {
 			return ctx, err
 		}
-		ctx = derived
+		if derived == nil {
+			// A successful Begin without a context cannot be used: pair its
+			// End exactly once and deny instead of risking a nil-context
+			// panic inside admission or context derivation.
+			err := errNilObserverContext
+			o.external.End(ctx, info, runtime.ExecutionResult{Err: err})
+			return ctx, err
+		}
 	}
+	// Admission keeps the caller's cancellation and deadline even when an
+	// external observer returns an unrelated context; the runtime re-derives
+	// its bounded execution context from the returned chain.
 	res, err := o.admitAndStart(ctx, info)
 	if err != nil {
 		if o.external != nil {
 			// The external observer saw a successful Begin; pair it with one
 			// End so its own accounting stays exactly once even though the
 			// runtime never observed success and will not call End.
-			o.external.End(ctx, info, runtime.ExecutionResult{Err: err})
+			o.external.End(derived, info, runtime.ExecutionResult{Err: err})
 		}
 		return ctx, err
 	}
-	return context.WithValue(ctx, reservationContextKey{}, res), nil
+	return context.WithValue(derived, reservationContextKey{}, res), nil
+}
+
+// reservationFor resolves the reservation belonging to this exact attempt. A
+// context value carrying another execution's reservation never settles; the
+// runtime guarantees a Begin-derived context, so the bounded identifier table
+// only backs exact matches.
+func (o *hostingExecutionObserver) reservationFor(ctx context.Context, info runtime.ExecutionInfo) *executionReservation {
+	projected, err := executionID(info.ID)
+	if err != nil {
+		return nil
+	}
+	if res := reservationFromContext(ctx); res != nil && res.operation.ID == projected {
+		o.untrack(info.ID)
+		return res
+	}
+	return o.untrack(info.ID)
 }
 
 // End settles the reservation with one completed event. It is called exactly
@@ -136,14 +165,7 @@ func (o *hostingExecutionObserver) End(ctx context.Context, info runtime.Executi
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res := reservationFromContext(ctx)
-	if res != nil {
-		o.untrack(info.ID)
-	} else {
-		// The runtime passes a Begin-derived context to End; the bounded
-		// fallback covers wrappers that drop context values.
-		res = o.untrack(info.ID)
-	}
+	res := o.reservationFor(ctx, info)
 	if res == nil {
 		// Completion without a matching admission cannot be settled. Latch:
 		// the provider may hold started work that this process can no longer
@@ -199,14 +221,16 @@ func (o *hostingExecutionObserver) admitAndStart(ctx context.Context, info runti
 
 // admit sends the admission with bounded retries. Identical request
 // identifiers and content make retries idempotent. Saturation of the local
-// client is a clean deny: nothing reached the service. Any other exhausted
-// exchange is uncertain about server-side state and latches unhealthy.
+// client is a clean deny only when no earlier attempt may have reached the
+// service; any other exhausted exchange is uncertain about server-side state
+// and latches unhealthy.
 func (o *hostingExecutionObserver) admit(ctx context.Context, request hosting.AdmissionRequest) (hosting.Decision, error) {
 	var decision hosting.Decision
 	var err error
+	uncertain := false
 	for attempt := 1; attempt <= executionAdmitAttempts; attempt++ {
 		if attempt > 1 {
-			o.pause(ctx, executionRetryBackoff)
+			o.pause(ctx, o.retryBackoff)
 		}
 		decision, err = o.client.Admit(ctx, request)
 		if err == nil {
@@ -216,8 +240,15 @@ func (o *hostingExecutionObserver) admit(ctx context.Context, request hosting.Ad
 			return decision, nil
 		}
 		if errors.Is(err, hosting.ErrBusy) {
-			return hosting.Decision{}, errors.Join(deploy.ErrExecutionBusy, err)
+			if !uncertain {
+				// Clean local saturation: nothing reached the service.
+				return hosting.Decision{}, errors.Join(deploy.ErrExecutionBusy, err)
+			}
+			// An earlier attempt may have created server state; saturation on
+			// the retry must not present the whole exchange as cleanly unsent.
+			break
 		}
+		uncertain = true
 	}
 	o.latchUnhealthy("admission", request.RequestID, request.Operation.ID)
 	return hosting.Decision{}, fmt.Errorf("hosting admission failed: %w", err)
@@ -230,7 +261,7 @@ func (o *hostingExecutionObserver) report(ctx context.Context, event hosting.Eve
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if attempt > 1 {
-			o.pause(ctx, executionRetryBackoff)
+			o.pause(ctx, o.retryBackoff)
 		}
 		if err = o.client.Report(ctx, event); err == nil {
 			return nil
