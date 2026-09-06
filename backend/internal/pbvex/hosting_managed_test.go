@@ -1,0 +1,337 @@
+package pbvex
+
+import (
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/nathabonfim59/pbvex/backend/hosting"
+	"github.com/pocketbase/pocketbase/apis"
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tests"
+	"github.com/pocketbase/pocketbase/tools/mailer"
+)
+
+const (
+	hostS3Secret  = "host-s3-secret-do-not-leak"
+	hostSMTPPass  = "host-smtp-password-do-not-leak"
+	hostS3Bucket  = "host-managed-bucket"
+	hostS3Endpoin = "https://s3.host-managed.example"
+)
+
+func hostedManagedStorage() core.S3Config {
+	return core.S3Config{
+		Enabled:   true,
+		Bucket:    hostS3Bucket,
+		Region:    "auto",
+		Endpoint:  hostS3Endpoin,
+		AccessKey: "host-access-key",
+		Secret:    hostS3Secret,
+	}
+}
+
+func hostedManagedSMTP() SMTPConfig {
+	enabled := true
+	port := 587
+	host := "smtp.host-managed.example"
+	user := "host-mail-user"
+	return SMTPConfig{
+		Enabled:  &enabled,
+		Host:     &host,
+		Port:     hostedSMTPIntPtr(port),
+		Username: &user,
+		Password: hostedSMTPStrPtr(hostSMTPPass),
+	}
+}
+
+func hostedSMTPStrPtr(v string) *string { return &v }
+
+func hostedSMTPIntPtr(v int) *int { return &v }
+
+// hostedSettingsRow mirrors the persisted settings parts this file asserts on.
+type hostedSettingsRow struct {
+	S3      core.S3Config      `json:"s3"`
+	SMTP    core.SMTPConfig    `json:"smtp"`
+	Backups core.BackupsConfig `json:"backups"`
+	Meta    core.MetaConfig    `json:"meta"`
+}
+
+func readPersistedSettings(t *testing.T, app *tests.TestApp) hostedSettingsRow {
+	t.Helper()
+	var row struct {
+		Value []byte `db:"value"`
+	}
+	if err := app.DB().NewQuery("SELECT value FROM `_params` WHERE id='settings'").One(&row); err != nil {
+		t.Fatalf("failed to read persisted settings: %v", err)
+	}
+	var parsed hostedSettingsRow
+	if err := json.Unmarshal(row.Value, &parsed); err != nil {
+		t.Fatalf("failed to parse persisted settings: %v", err)
+	}
+	return parsed
+}
+
+// newHostedTestApp boots a full test app with hosting integration enabled
+// against an in-process reference policy service, and exposes the built
+// PocketBase router so native endpoints can be exercised.
+func newHostedTestApp(t *testing.T, mutate func(*Config)) (*tests.TestApp, *hosting.ReferenceService, *http.Server, http.Handler) {
+	t.Helper()
+	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{})
+	if err != nil {
+		t.Fatalf("failed to create test app: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "p.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		app.Cleanup()
+		t.Fatal(err)
+	}
+	service := hosting.NewReferenceService(64)
+	server := &http.Server{Handler: service}
+	go server.Serve(l)
+
+	cfg := DefaultConfig()
+	cfg.Runtime.PoolSize = 2
+	cfg.Runtime.Timeout = 2 * time.Second
+	cfg.Deploy.HistoryLimit = 5
+	cfg.Storage.MaxFileSize = 1 << 20
+	cfg.Hosting.Enabled = true
+	cfg.Hosting.SocketPath = path
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	if _, _, err := RegisterCore(app, cfg); err != nil {
+		server.Close()
+		app.Cleanup()
+		t.Fatalf("failed to register core: %v", err)
+	}
+	if err := app.ResetBootstrapState(); err != nil {
+		server.Close()
+		app.Cleanup()
+		t.Fatalf("failed to reset state: %v", err)
+	}
+	if err := app.Bootstrap(); err != nil {
+		server.Close()
+		app.Cleanup()
+		t.Fatalf("failed to bootstrap: %v", err)
+	}
+	if err := app.RunAllMigrations(); err != nil {
+		server.Close()
+		app.Cleanup()
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+	router, err := apis.NewRouter(app)
+	if err != nil {
+		server.Close()
+		app.Cleanup()
+		t.Fatal(err)
+	}
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app, Router: router}); err != nil {
+		server.Close()
+		app.Cleanup()
+		t.Fatal(err)
+	}
+	mux, err := router.BuildMux()
+	if err != nil {
+		server.Close()
+		app.Cleanup()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Close(); app.Cleanup() })
+	return app, service, server, mux
+}
+
+func hostedJSONRequest(t *testing.T, mux http.Handler, app *tests.TestApp, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	token := superuserToken(t, app)
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", token)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestHostManagedStorageShadowAndPersistedBaseline(t *testing.T) {
+	app, _, _, mux := newHostedTestApp(t, func(c *Config) {
+		c.HostManagedStorageS3 = hostedManagedStorage()
+	})
+
+	// Runtime view: the in-memory settings carry the host values so native
+	// consumers (filesystems, mailer) use them.
+	if got := app.Settings().S3; got != hostedManagedStorage() {
+		t.Fatalf("shadowed S3 settings = %+v", got)
+	}
+	if got := app.Settings().Backups.S3; got != hostedManagedStorage() {
+		t.Fatalf("shadowed backups S3 settings = %+v", got)
+	}
+
+	// Persistence view: the stored row keeps the neutral baseline, so backup
+	// archives and restores never carry the host configuration.
+	row := readPersistedSettings(t, app)
+	if row.S3.Enabled || row.S3.Secret != "" || row.S3.Endpoint != "" || row.S3.Bucket != "" {
+		t.Fatalf("persisted S3 settings are not neutral: %+v", row.S3)
+	}
+	if row.Backups.S3.Enabled || row.Backups.S3.Secret != "" {
+		t.Fatalf("persisted backups S3 settings are not neutral: %+v", row.Backups.S3)
+	}
+
+	// API view: secrets are masked; the non-secret connection fields of the
+	// active (shadowed) settings render normally.
+	rr := hostedJSONRequest(t, mux, app, http.MethodGet, "/api/settings", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings list status = %d body %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, hostS3Secret) {
+		t.Fatal("settings list exposed the host S3 secret")
+	}
+	if !strings.Contains(body, hostS3Bucket) {
+		t.Fatal("settings list did not render the active managed storage")
+	}
+}
+
+func TestHostManagedSMTPShadowAndMailClient(t *testing.T) {
+	app, _, _, mux := newHostedTestApp(t, func(c *Config) {
+		c.SMTP = hostedManagedSMTP()
+	})
+
+	if !app.Settings().SMTP.Enabled || app.Settings().SMTP.Password != hostSMTPPass {
+		t.Fatalf("shadowed SMTP settings = %+v", app.Settings().SMTP)
+	}
+
+	client, ok := app.NewMailClient().(*mailer.SMTPClient)
+	if !ok {
+		t.Fatalf("mail client type = %T", app.NewMailClient())
+	}
+	if client.Host != "smtp.host-managed.example" || client.Password != hostSMTPPass || client.Port != 587 {
+		t.Fatalf("mail client does not use the host configuration: %+v", client)
+	}
+
+	row := readPersistedSettings(t, app)
+	if row.SMTP.Enabled || row.SMTP.Password != "" || row.SMTP.Host != "" {
+		t.Fatalf("persisted SMTP settings are not neutral: %+v", row.SMTP)
+	}
+
+	rr := hostedJSONRequest(t, mux, app, http.MethodGet, "/api/settings", "")
+	if strings.Contains(rr.Body.String(), hostSMTPPass) {
+		t.Fatal("settings list exposed the host SMTP password")
+	}
+}
+
+func TestHostManagedSettingsEditBoundaries(t *testing.T) {
+	app, service, _, mux := newHostedTestApp(t, func(c *Config) {
+		c.HostManagedStorageS3 = hostedManagedStorage()
+		c.SMTP = hostedManagedSMTP()
+	})
+
+	// An unrelated settings edit is allowed and keeps the managed values out
+	// of the database while the runtime keeps using them.
+	rr := hostedJSONRequest(t, mux, app, http.MethodPatch, "/api/settings", `{"meta":{"appName":"tenant-edited"}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unrelated settings edit status = %d body %s", rr.Code, rr.Body.String())
+	}
+	if app.Settings().Meta.AppName != "tenant-edited" {
+		t.Fatalf("app name not updated in memory: %q", app.Settings().Meta.AppName)
+	}
+	if got := app.Settings().S3; got != hostedManagedStorage() {
+		t.Fatalf("shadow lost after unrelated save: %+v", got)
+	}
+	row := readPersistedSettings(t, app)
+	if row.Meta.AppName != "tenant-edited" {
+		t.Fatalf("app name not persisted: %+v", row.Meta)
+	}
+	if row.S3.Enabled || row.S3.Secret != "" || row.SMTP.Enabled || row.SMTP.Password != "" {
+		t.Fatalf("managed values leaked into the persisted row: %+v", row)
+	}
+
+	// Managed categories reject any submitted change, including disabling.
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"disable managed s3", `{"s3":{"enabled":false}}`},
+		{"repoint managed s3", `{"s3":{"enabled":true,"bucket":"tenant","region":"us-east-1","endpoint":"https://tenant.example","accessKey":"ta","secret":"ts"}}`},
+		{"disable managed backups s3", `{"backups":{"cron":"","cronMaxKeep":3,"s3":{"enabled":false}}}`},
+		{"disable managed smtp", `{"smtp":{"enabled":false,"host":"smtp.tenant.example","port":587}}`},
+	} {
+		rr := hostedJSONRequest(t, mux, app, http.MethodPatch, "/api/settings", tc.body)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("%s: status = %d body %s", tc.name, rr.Code, rr.Body.String())
+		}
+	}
+	row = readPersistedSettings(t, app)
+	if row.S3.Enabled || row.SMTP.Enabled {
+		t.Fatalf("denied edits changed the persisted row: %+v", row)
+	}
+	if got := app.Settings().S3; got != hostedManagedStorage() {
+		t.Fatalf("denied edits changed the shadow: %+v", got)
+	}
+
+	// The backups cron fields stay editable under the existing capability.
+	rr = hostedJSONRequest(t, mux, app, http.MethodPatch, "/api/settings", `{"backups":{"cron":"* * * * *","cronMaxKeep":2}}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("backups cron edit without grant status = %d", rr.Code)
+	}
+	if err := service.SetPolicy("v2", map[string]bool{hosting.SettingsBackups: true}); err != nil {
+		t.Fatal(err)
+	}
+	rr = hostedJSONRequest(t, mux, app, http.MethodPatch, "/api/settings", `{"backups":{"cron":"* * * * *","cronMaxKeep":2}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("backups cron edit with grant status = %d body %s", rr.Code, rr.Body.String())
+	}
+	row = readPersistedSettings(t, app)
+	if row.Backups.Cron != "* * * * *" || row.Backups.CronMaxKeep != 2 {
+		t.Fatalf("backups cron not persisted: %+v", row.Backups)
+	}
+	if row.Backups.S3.Enabled || row.Backups.S3.Secret != "" {
+		t.Fatalf("backups s3 leaked into the persisted row: %+v", row.Backups.S3)
+	}
+	if got := app.Settings().Backups.S3; got != hostedManagedStorage() {
+		t.Fatalf("backups shadow lost after save: %+v", got)
+	}
+}
+
+func TestHostManagedWholeSettingsSaveStaysNeutral(t *testing.T) {
+	app, _, _, _ := newHostedTestApp(t, func(c *Config) {
+		c.HostManagedStorageS3 = hostedManagedStorage()
+		c.SMTP = hostedManagedSMTP()
+	})
+
+	// Internal code paths persist the whole in-memory settings object (for
+	// example the rate limit relabeling hook in PocketBase). The managed
+	// categories must be neutralized on their way to the database.
+	if err := app.Save(app.Settings()); err != nil {
+		t.Fatal(err)
+	}
+	row := readPersistedSettings(t, app)
+	if row.S3.Enabled || row.S3.Secret != "" || row.SMTP.Enabled || row.SMTP.Password != "" || row.Backups.S3.Enabled {
+		t.Fatalf("whole-settings save persisted managed values: %+v", row)
+	}
+	if got := app.Settings().S3; got != hostedManagedStorage() {
+		t.Fatalf("shadow lost after whole-settings save: %+v", got)
+	}
+	if !app.Settings().SMTP.Enabled || app.Settings().SMTP.Password != hostSMTPPass {
+		t.Fatalf("smtp shadow lost after whole-settings save: %+v", app.Settings().SMTP)
+	}
+}
+
+func TestHostManagedConfigRequiresHosting(t *testing.T) {
+	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+	cfg := DefaultConfig()
+	cfg.HostManagedStorageS3 = hostedManagedStorage()
+	if _, _, err := RegisterCore(app, cfg); err == nil {
+		t.Fatal("managed storage accepted without hosting integration")
+	}
+}

@@ -23,6 +23,10 @@ const (
 	SettingsSMTP    = "settings.smtp.write"
 	BackupRestore   = "backup.restore"
 	BackupCreate    = "backup.create"
+	// BackupDownload gates superuser backup archive downloads. Archives
+	// contain the tenant database, so hosted deployments keep this
+	// capability denied unless the provider explicitly grants it.
+	BackupDownload  = "backup.download"
 	HostScripts     = "host.scripts"
 	FunctionExecute = "function.execute"
 	// EnvironmentRead is the capability prefix for per-name host environment

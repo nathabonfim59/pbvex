@@ -2,6 +2,8 @@ package pbvex
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 
@@ -39,7 +41,12 @@ type Config struct {
 	Scheduler     scheduler.Config
 	Storage       storage.Config
 	SMTP          SMTPConfig
-	CORS          api.CORSConfig
+	// HostManagedStorageS3 configures host-owned S3 storage for record files
+	// and backups. It is honored only with hosting integration enabled and
+	// only when Enabled is true; the values are injected into the running
+	// app without being persisted in the tenant database.
+	HostManagedStorageS3 core.S3Config
+	CORS                 api.CORSConfig
 	// DevDeployToken grants deployment-only access from loopback requests while
 	// it is configured. It must never be configured for a production server.
 	DevDeployToken string
@@ -103,14 +110,30 @@ func Register(app *pocketbase.PocketBase, cfg Config) error {
 
 // RegisterCore wires PBVex core behavior into any core.App implementation.
 func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator, error) {
+	// Host-managed storage is a hosted-mode deployment concern: without the
+	// policy integration there is no hosting boundary, so the configuration
+	// is rejected instead of being silently ignored.
+	if !cfg.Hosting.Enabled && cfg.HostManagedStorageS3.Enabled {
+		return nil, nil, errors.New("host-managed storage requires hosting integration to be enabled")
+	}
+	if err := cfg.HostManagedStorageS3.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("invalid host-managed storage configuration: %w", err)
+	}
 	client, err := newHostingClient(cfg.Hosting)
 	if err != nil {
 		return nil, nil, err
 	}
+	var managed *managedInjection
 	if client != nil {
+		managed = registerManagedInjection(cfg.HostManagedStorageS3, cfg.SMTP)
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { client.Close(); return e.Next() })
-		if err := registerHosting(app, client); err != nil {
+		if err := registerHosting(app, client, managed); err != nil {
 			return nil, nil, err
+		}
+		if managed != nil {
+			if err := managed.register(app); err != nil {
+				return nil, nil, err
+			}
 		}
 		// One shared client gates administrative operations and meters every
 		// observed runtime execution. An externally supplied observer is
@@ -180,7 +203,11 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 	// PBVEX_SMTP_* overrides for PocketBase mail settings. Priority 95 runs
 	// inside the pbvexBootstrap e.Next() chain, after the core bootstrap has
 	// loaded the persisted settings and before the PBVex system schema work.
-	if !cfg.SMTP.Empty() {
+	// With hosting integration enabled the same variables are host-owned:
+	// the managed injection applies them to the in-memory settings only and
+	// the persisted mail settings stay neutral, so they are intentionally
+	// not persisted here.
+	if !cfg.SMTP.Empty() && !cfg.Hosting.Enabled {
 		app.OnBootstrap().Bind(&hook.Handler[*core.BootstrapEvent]{
 			Id:       "pbvexSMTPSettings",
 			Priority: 95,

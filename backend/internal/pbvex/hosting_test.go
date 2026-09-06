@@ -33,7 +33,7 @@ func TestHostingSettingsAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if err := registerHosting(app, client); err != nil {
+	if err := registerHosting(app, client, nil); err != nil {
 		t.Fatal(err)
 	}
 	check := func(changed bool) error {
@@ -79,7 +79,7 @@ func TestHostingDisabledAndUnavailable(t *testing.T) {
 	if err != nil || client != nil {
 		t.Fatal("disabled configuration must not create a client", err)
 	}
-	if err := registerHosting(app, nil); err != nil {
+	if err := registerHosting(app, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := newHostingClient(hosting.Config{Enabled: true, SocketPath: filepath.Join(t.TempDir(), "absent")}); err == nil {
