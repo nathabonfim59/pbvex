@@ -25,6 +25,10 @@ const (
 	BackupCreate    = "backup.create"
 	HostScripts     = "host.scripts"
 	FunctionExecute = "function.execute"
+	// EnvironmentRead is the capability prefix for per-name host environment
+	// reads: "environment.read/<name>". Each hosted component environment
+	// variable binding needs an explicit provider grant for its exact name.
+	EnvironmentRead = "environment.read"
 )
 
 var ErrUnavailable = errors.New("hosting policy unavailable")

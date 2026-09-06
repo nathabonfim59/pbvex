@@ -114,8 +114,11 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 		}
 		// One shared client gates administrative operations and meters every
 		// observed runtime execution. An externally supplied observer is
-		// composed (external Begin first), never silently overwritten.
+		// composed (external Begin first), never silently overwritten. The
+		// environment resolver is composed the same way: permission first,
+		// then any configured custom resolver, then the default lookup.
 		cfg.Runtime.ExecutionObserver = newHostingExecutionObserver(app.Logger(), client, cfg.Runtime.ExecutionObserver)
+		cfg.Runtime.EnvironmentResolver = hostedEnvironmentResolver(client, app.Logger(), cfg.Runtime.EnvironmentResolver)
 	}
 	repo := deploy.NewRepo()
 	manager := runtime.NewManager(cfg.Runtime)
