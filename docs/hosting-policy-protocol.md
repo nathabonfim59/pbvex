@@ -273,12 +273,12 @@ ownership.
 
 ## Implementation matrix and remaining gaps
 
-| Downstream task | Implemented foundation | Remaining acceptance gaps |
+| Area | Implemented foundation | Remaining limitations |
 | --- | --- | --- |
-| DS-01 | Public v1 wire contract, typed client, bounded reference service, lifecycle/conflict tests | Production ledger, independent third-party conformance, crash recovery, latency benchmark |
-| DS-02 | Explicit enablement, validated bootstrap, persistent socket, startup handshake, dynamic fail-closed admin checks, central runtime observer adapter with fail-closed reporting latch and per-name environment gating; integrated backend tests pass | Provider reconciliation of unknown reservations, latency benchmark |
-| DS-03 | Settings request compares old/new S3, backups and SMTP categories; unchanged protected values permit unrelated saves; backup-create gate; unconditional restore denial | Managed secret injection/redaction, settings export/backup confidentiality, collection import and full native-path audit |
-| DS-04 | Enabled integration skips the entire PocketBase JS plugin registration, preventing hook-file and custom JS migration loading | Dynamic optional hooks and per-callback telemetry require PocketBase execution-boundary changes; host JS remains disabled even if `host.scripts` allows |
+| Public protocol | Public v1 wire contract, typed client, bounded reference service, lifecycle/conflict tests | Production ledger, independent third-party conformance, crash recovery, latency benchmark |
+| Runtime integration | Explicit enablement, validated bootstrap, persistent socket, startup handshake, dynamic fail-closed admin checks, central runtime observer adapter with fail-closed reporting latch and per-name environment gating; integrated backend tests pass | Provider reconciliation of unknown reservations, latency benchmark |
+| Administrative gates | Settings request compares old/new S3, backups and SMTP categories; unchanged protected values permit unrelated saves; backup-create gate; unconditional restore denial | Managed secret injection/redaction, settings export/backup confidentiality, collection import and full native-path audit |
+| Host scripting | Enabled integration skips the entire PocketBase JS plugin registration, preventing hook-file and custom JS migration loading | Dynamic optional hooks and per-callback telemetry require PocketBase execution-boundary changes; host JS remains disabled even if `host.scripts` allows |
 
 Settings capabilities are `settings.storage.write`, `settings.backups.write`,
 `settings.smtp.write`; these gate the entire changed category, not individual
@@ -309,7 +309,8 @@ name still controls what that name exposes; managed secret injection and its
 ownership boundary remain runtime/platform work. SMTP environment overrides
 also persist in PocketBase settings; the new category write gate does not redact
 them from settings export or backups. Provider secrets should stay out of this
-process and its data. Full DS-03/DS-08 acceptance is blocked on these changes.
+process and its data. These gates alone do not provide complete managed-secret
+or storage isolation.
 
 Focused validation lives in `backend/hosting/client_test.go` (persistent
 connections, dynamic changes, idempotency across policy changes, conflicts,
