@@ -101,7 +101,7 @@ func NewID() string
 
 
 <a name="ValidToken"></a>
-## func [ValidToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L240>)
+## func [ValidToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L244>)
 
 ```go
 func ValidToken(s string) bool
@@ -165,7 +165,7 @@ func NewClient(cfg Config) (*Client, error)
 
 
 <a name="Client.Admit"></a>
-### func \(\*Client\) [Admit](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L211>)
+### func \(\*Client\) [Admit](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L215>)
 
 ```go
 func (c *Client) Admit(ctx context.Context, r AdmissionRequest) (Decision, error)
@@ -174,7 +174,7 @@ func (c *Client) Admit(ctx context.Context, r AdmissionRequest) (Decision, error
 
 
 <a name="Client.Check"></a>
-### func \(\*Client\) [Check](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L193>)
+### func \(\*Client\) [Check](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L197>)
 
 ```go
 func (c *Client) Check(ctx context.Context, capability string) (Decision, error)
@@ -192,7 +192,7 @@ func (c *Client) Close()
 
 
 <a name="Client.Handshake"></a>
-### func \(\*Client\) [Handshake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L182>)
+### func \(\*Client\) [Handshake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L186>)
 
 ```go
 func (c *Client) Handshake(ctx context.Context) (Hello, error)
@@ -201,7 +201,7 @@ func (c *Client) Handshake(ctx context.Context) (Hello, error)
 
 
 <a name="Client.Report"></a>
-### func \(\*Client\) [Report](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L222>)
+### func \(\*Client\) [Report](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L226>)
 
 ```go
 func (c *Client) Report(ctx context.Context, e Event) error
@@ -210,7 +210,7 @@ func (c *Client) Report(ctx context.Context, e Event) error
 
 
 <a name="Client.Require"></a>
-### func \(\*Client\) [Require](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L201>)
+### func \(\*Client\) [Require](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L205>)
 
 ```go
 func (c *Client) Require(ctx context.Context, capability string) error
