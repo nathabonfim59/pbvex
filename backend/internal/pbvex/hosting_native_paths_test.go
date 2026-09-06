@@ -87,6 +87,35 @@ func TestHostedBackupArchiveContainsNoManagedSecrets(t *testing.T) {
 	}
 }
 
+func TestHostedBackupDownloadGatesEncodedPaths(t *testing.T) {
+	// The download gate keys on the matched route pattern. A backup key that
+	// reaches the route through percent-encoding (an encoded dot, or an
+	// encoded slash that the wildcard matches as one escaped segment) must
+	// stay gated; a raw URL-path check would miss the encoded-slash form.
+	app, service, _, mux := newHostedTestApp(t, nil)
+	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.CreateBackup(context.Background(), "encoded.zip"); err != nil {
+		t.Fatal(err)
+	}
+	token := superuserFileToken(t, app)
+	for _, key := range []string{"encoded%2Ezip", "no-such%2Fkey.zip"} {
+		rr := hostedJSONRequest(t, mux, app, http.MethodGet, "/api/backups/"+key+"?token="+token, "")
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("encoded download %s status = %d body %s", key, rr.Code, rr.Body.String())
+		}
+	}
+	// With the grant, the plain route serves the archive.
+	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true, hosting.BackupDownload: true}); err != nil {
+		t.Fatal(err)
+	}
+	rr := hostedJSONRequest(t, mux, app, http.MethodGet, "/api/backups/encoded.zip?token="+token, "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("plain download with grant status = %d body %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestHostedBackupDownloadFailsClosedWithoutProvider(t *testing.T) {
 	app, service, server, mux := newHostedTestApp(t, nil)
 	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true}); err != nil {
@@ -115,7 +144,10 @@ func TestHostedNativePathDenials(t *testing.T) {
 		t.Fatalf("sql api status = %d body %s", rr.Code, rr.Body.String())
 	}
 
-	// Collection import is denied before any side effect.
+	// Collection import is denied before any side effect. The real route is
+	// registered with PUT; the gate keys on the matched route pattern, so
+	// the real method is refused even though older raw-path checks would
+	// have missed it.
 	var collections []*core.Collection
 	if err := app.CollectionQuery().All(&collections); err != nil {
 		t.Fatal(err)
@@ -127,9 +159,15 @@ func TestHostedNativePathDenials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rr = hostedJSONRequest(t, mux, app, http.MethodPost, "/api/collections/import", string(importBody))
+	rr = hostedJSONRequest(t, mux, app, http.MethodPut, "/api/collections/import", string(importBody))
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("collections import status = %d body %s", rr.Code, rr.Body.String())
+	}
+	// A method without a registered route must not fire the gate (the mux
+	// rejects it); this pins that the gate matches real routes only.
+	rr = hostedJSONRequest(t, mux, app, http.MethodPost, "/api/collections/import", string(importBody))
+	if rr.Code == http.StatusForbidden {
+		t.Fatal("gate fired for an unregistered method")
 	}
 	after, err := func() ([]*core.Collection, error) {
 		var list []*core.Collection

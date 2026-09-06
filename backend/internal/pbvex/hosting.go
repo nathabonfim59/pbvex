@@ -2,9 +2,7 @@ package pbvex
 
 import (
 	"context"
-	"net/http"
 	"reflect"
-	"strings"
 
 	"github.com/nathabonfim59/pbvex/backend/hosting"
 	"github.com/pocketbase/pocketbase/core"
@@ -127,41 +125,45 @@ func registerHosting(app core.App, client *hosting.Client, managed *managedInjec
 
 	// Gate the native routes that have no dedicated PocketBase hook in
 	// v0.40.1. Bindings made during OnServe are baked into the mux when
-	// OnServe completes, so this middleware covers the built-in routes.
+	// OnServe completes, so this middleware covers the built-in routes. The
+	// switch keys on the matched route pattern, which the router resolves
+	// after path decoding and wildcard matching, so encoded characters
+	// (for example %2F inside a backup key) cannot rename the route that
+	// actually runs. Unmatched paths (redirects and 404s) never reach a
+	// route handler and need no gate.
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{Id: "pbvexHostingNativeGates", Priority: -1000, Func: func(e *core.ServeEvent) error {
 		e.Router.Bind(&hook.Handler[*core.RequestEvent]{Id: "pbvexHostingNativePathGates", Priority: -1000, Func: func(e *core.RequestEvent) error {
-			path := strings.TrimSuffix(e.Request.URL.Path, "/")
-			method := e.Request.Method
-			backupKey := strings.TrimPrefix(path, "/api/backups/")
-			switch {
-			case path == "/api/sql" && method == http.MethodPost:
+			switch e.Request.Pattern {
+			case "POST /api/sql":
 				// Arbitrary SQL bypasses every record hook and can read the
 				// persisted settings row or rewrite system state.
 				return forbidden("Direct SQL execution is unavailable with hosting integration enabled.")
-			case path == "/api/collections/import" && method == http.MethodPost,
-				path == "/api/backups/upload" && method == http.MethodPost:
+			case "PUT /api/collections/import", "POST /api/backups/upload":
 				return forbidden("Operation restricted by hosting policy.")
-			case strings.HasPrefix(path, "/api/backups/") && method == http.MethodPost &&
-				strings.HasSuffix(backupKey, "/restore"):
+			case "POST /api/backups/{key}/restore":
 				// Deny before the restore is scheduled so the caller receives
 				// the refusal instead of an optimistic success response.
 				return forbidden("Backup restore is unavailable with hosting integration enabled.")
-			case strings.HasPrefix(path, "/api/backups/") && backupKey != "" && !strings.Contains(backupKey, "/") &&
-				(method == http.MethodGet || method == http.MethodHead):
-				// Backup archives embed the tenant database. Downloads stay
-				// provider-gated even though managed-mode archives no longer
-				// contain host secrets.
+			case "GET /api/backups/{key}":
+				// GET patterns also serve HEAD. Backup archives embed the
+				// tenant database; archives created under managed mode carry
+				// no host values, but older archives may still exist, so
+				// downloads stay provider-gated.
 				if err := require(e.Request.Context(), hosting.BackupDownload); err != nil {
 					return err
 				}
-			case path == "/api/settings/test/s3" && method == http.MethodPost && managed.storageManaged():
+			case "POST /api/settings/test/s3":
 				// The connection test would exercise the host-owned storage
 				// credentials on behalf of the tenant.
-				return forbidden("The file storage configuration is managed by the hosting platform.")
-			case path == "/api/settings/test/email" && method == http.MethodPost && managed.smtpManaged():
+				if managed.storageManaged() {
+					return forbidden("The file storage configuration is managed by the hosting platform.")
+				}
+			case "POST /api/settings/test/email":
 				// The mail test would send through the host-owned SMTP
 				// credentials to an arbitrary recipient.
-				return forbidden("The mail settings are managed by the hosting platform.")
+				if managed.smtpManaged() {
+					return forbidden("The mail settings are managed by the hosting platform.")
+				}
 			}
 			return e.Next()
 		}})

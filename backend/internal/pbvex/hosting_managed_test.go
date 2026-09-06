@@ -2,6 +2,7 @@ package pbvex
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -333,5 +334,94 @@ func TestHostManagedConfigRequiresHosting(t *testing.T) {
 	cfg.HostManagedStorageS3 = hostedManagedStorage()
 	if _, _, err := RegisterCore(app, cfg); err == nil {
 		t.Fatal("managed storage accepted without hosting integration")
+	}
+}
+
+func TestHostManagedShadowFailureFailsReload(t *testing.T) {
+	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+
+	managed := registerManagedInjection(hostedManagedStorage(), hostedManagedSMTP())
+	if managed == nil {
+		t.Fatal("expected a managed injection")
+	}
+	managed.shadow = func(*core.Settings) error { return errors.New("synthetic shadow failure") }
+	if err := managed.register(app); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reload must fail closed: a shadow failure would otherwise leave the
+	// in-memory settings on stale or neutral values, silently deactivating
+	// managed storage and mail. Failing the reload fails bootstraps and
+	// settings saves.
+	if err := app.ReloadSettings(); err == nil {
+		t.Fatal("shadow failure did not fail the settings reload")
+	}
+	// The values that were live before the failed reload remain in memory;
+	// nothing partially neutralized them.
+	if app.Settings().S3.Enabled {
+		t.Fatal("shadow failure left unexpected managed values in memory")
+	}
+}
+
+func TestHostManagedBaselineRewritesPersistedValues(t *testing.T) {
+	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+
+	// Persist tenant-owned storage/mail configuration while hosting is not
+	// registered yet: the onboarding state the baseline rewrite targets.
+	app.Settings().S3 = core.S3Config{Enabled: true, Bucket: "tenant-bucket", Region: "us-east-1", Endpoint: "https://s3.tenant.example", AccessKey: "tenant-ak", Secret: "tenant-secret"}
+	app.Settings().Backups.S3 = app.Settings().S3
+	app.Settings().SMTP = core.SMTPConfig{Enabled: true, Host: "smtp.tenant.example", Port: 587, Password: "tenant-smtp-secret"}
+	if err := app.Save(app.Settings()); err != nil {
+		t.Fatal(err)
+	}
+	row := readPersistedSettings(t, app)
+	if !row.S3.Enabled || row.S3.Secret != "tenant-secret" || !row.SMTP.Enabled {
+		t.Fatal("precondition: tenant values not persisted", row.S3.Enabled, row.SMTP.Enabled)
+	}
+
+	// Enable managed hosting and bootstrap: the baseline rewrite must replace
+	// the persisted managed categories and keep the shadow active.
+	path := filepath.Join(t.TempDir(), "p.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := hosting.NewReferenceService(8)
+	server := &http.Server{Handler: service}
+	go server.Serve(l)
+	defer server.Close()
+
+	cfg := DefaultConfig()
+	cfg.Hosting.Enabled = true
+	cfg.Hosting.SocketPath = path
+	cfg.HostManagedStorageS3 = hostedManagedStorage()
+	cfg.SMTP = hostedManagedSMTP()
+	if _, _, err := RegisterCore(app, cfg); err != nil {
+		t.Fatalf("failed to register core: %v", err)
+	}
+	if err := app.ResetBootstrapState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap with preexisting persisted values failed: %v", err)
+	}
+
+	row = readPersistedSettings(t, app)
+	if row.S3.Enabled || row.S3.Secret != "" || row.SMTP.Enabled || row.SMTP.Password != "" {
+		t.Fatalf("baseline rewrite did not neutralize the persisted row: %+v", row)
+	}
+	if got := app.Settings().S3; got != hostedManagedStorage() {
+		t.Fatalf("managed shadow not active after baseline rewrite: %+v", got)
+	}
+	if !app.Settings().SMTP.Enabled || app.Settings().SMTP.Password != hostSMTPPass {
+		t.Fatalf("managed smtp shadow not active after baseline rewrite: %+v", app.Settings().SMTP)
 	}
 }
