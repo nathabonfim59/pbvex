@@ -45,7 +45,12 @@ is created. Standard `http.Transport` reuses connections and reconnects on later
 calls. Failed calls are not automatically retried by this package. Callers may
 retry admissions/events using **identical IDs and content**, within their own
 bounded retry policy. A new application execution needs new invocation and
-admission IDs. No exactly-once delivery claim is made.
+admission IDs. No exactly-once delivery claim is made. The client exposes one
+narrow transport seam, `Client.Call(ctx, path, in, out)`, so a companion
+protocol package (the storage byte quota client) can reuse the same socket,
+connection pool and in-flight budget for its own `/v1/` endpoints; the path is
+restricted to relative token-segment endpoints and everything else is rejected
+before dialing.
 
 `POST /v1/hello` with `{}` returns:
 
@@ -250,10 +255,13 @@ maps to the `bundle.load` kind and `migration` to `migration.application`.
 
 Coverage is limited to what the runtime observes. Native PocketBase
 operations are not admitted or reported as protocol events. Changed storage,
-backup and SMTP settings categories, backup creation and backup downloads are
-capability-checked; direct SQL, collection import and backup upload are
+backup and SMTP settings categories and backup downloads are
+capability-checked; backup creation, direct SQL, collection import and backup upload are
 denied outright; superuser authentication and native record/file endpoints do
-not receive those new checks. The PocketBase JS plugin stays disabled
+not receive those new checks. Native record-file byte accounting is a
+separate storage-layer concern covered by
+[storage byte quotas](./hosting-storage-quotas.md), not by policy events.
+The PocketBase JS plugin stays disabled
 (temporary limitation below), so no `hook.load` or `hook.callback` events
 occur yet. `runtime.Config.MaxConcurrentExecutions` remains independently
 owned by the runtime; hosting policy cannot raise it.
@@ -278,14 +286,19 @@ ownership.
 | --- | --- | --- |
 | Public protocol | Public v1 wire contract, typed client, bounded reference service, lifecycle/conflict tests | Production ledger, independent third-party conformance, crash recovery, latency benchmark |
 | Runtime integration | Explicit enablement, validated bootstrap, persistent socket, startup handshake, dynamic fail-closed admin checks, central runtime observer adapter with fail-closed reporting latch and per-name environment gating; integrated backend tests pass | Provider reconciliation of unknown reservations, latency benchmark |
-| Administrative gates | Settings request compares old/new categories with host-managed locks and persisted-baseline neutralization; backup create/download gates; restore, direct SQL, collection import and backup upload denied before side effects; managed storage/SMTP injection | Full collection-schema audit, provider-allowed restore, dynamic managed-secret rotation |
+| Administrative gates | Settings request compares old/new categories with host-managed locks and persisted-baseline neutralization; backup download gate; backup creation denied outright while storage quotas are enforced; restore, direct SQL, collection import and backup upload denied before side effects; managed storage/SMTP injection | Full collection-schema audit, provider-allowed restore, dynamic managed-secret rotation |
 | Host scripting | Enabled integration skips the entire PocketBase JS plugin registration, preventing hook-file and custom JS migration loading | Dynamic optional hooks and per-callback telemetry require PocketBase execution-boundary changes; host JS remains disabled even if `host.scripts` allows |
 
 Settings capabilities are `settings.storage.write`, `settings.backups.write`,
 `settings.smtp.write`; these gate the entire changed category, not individual
 fields. `environment.read/<name>` grants per-name host environment reads to
 hosted component bindings; the reference service denies them unless each
-exact name is granted. `backup.create` and `backup.download` are dynamic.
+exact name is granted. `backup.download` is dynamic. `backup.create`
+remains part of the wire policy surface, but while storage byte quotas are
+enforced the platform denies backup creation outright and does not consult
+the provider: an allowed backup writes archive bytes with no pre-write
+size bound, so a grant cannot authorize it (see
+[storage byte quotas](./hosting-storage-quotas.md)).
 `backup.restore` is reserved: restores are unconditionally rejected before
 PocketBase's restore handler while enabled, because archives may replace
 settings/files. Standard PocketBase admin UI is retained. These checks are
@@ -298,8 +311,9 @@ Pinned PocketBase v0.40.1 has `SettingsUpdateRequestEvent.OldSettings/NewSetting
 and `OnBackupCreate/OnBackupRestore`, inspected before implementing these gates.
 Its `plugins/jsvm` owns `RunScript` loading and callback runtime pools; registration
 is not a dynamic callback gate. Do not re-enable that plugin using a startup-only
-allow check. Native collection upload quota enforcement likewise cannot be solved
-by request middleware and remains outside this foundation.
+allow check. Native collection upload quota enforcement cannot be solved by
+request middleware either; the core-hook-based coverage that does exist is
+documented in [storage byte quotas](./hosting-storage-quotas.md).
 
 **Managed-secret isolation:** `backend/internal/runtime/component.go` resolves
 component env bindings with `os.LookupEnv(binding.Name)` without a host-secret

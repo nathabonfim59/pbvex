@@ -11,26 +11,29 @@ import (
 )
 
 // newHostingClient validates the bootstrap configuration and performs the
-// mandatory startup handshake. A disabled configuration returns (nil, nil)
-// without connecting to any provider. The client is created once per
-// application and shared by the administrative gates and the runtime
-// execution observer.
-func newHostingClient(cfg hosting.Config) (*hosting.Client, error) {
+// mandatory startup handshake. A disabled configuration returns (nil, zero
+// Hello, nil) without connecting to any provider. The client is created
+// once per application and shared by the administrative gates, the runtime
+// execution observer and the storage byte quota client; the handshake
+// result carries the provider's capability list for the storage quota
+// compatibility check.
+func newHostingClient(cfg hosting.Config) (*hosting.Client, hosting.Hello, error) {
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, hosting.Hello{}, err
 	}
 	if !cfg.Enabled {
-		return nil, nil
+		return nil, hosting.Hello{}, nil
 	}
 	client, err := hosting.NewClient(cfg)
 	if err != nil {
-		return nil, err
+		return nil, hosting.Hello{}, err
 	}
-	if _, err = client.Handshake(context.Background()); err != nil {
+	hello, err := client.Handshake(context.Background())
+	if err != nil {
 		client.Close()
-		return nil, err
+		return nil, hosting.Hello{}, err
 	}
-	return client, nil
+	return client, hello, nil
 }
 
 // registerHosting installs the administrative capability gates and the
@@ -102,11 +105,16 @@ func registerHosting(app core.App, client *hosting.Client, managed *managedInjec
 		return e.Next()
 	}})
 
+	// Backup archives are written through the backups filesystem with no
+	// pre-write size bound, so they can never be covered by the storage
+	// byte quota. The provider is deliberately not consulted: a
+	// backup.create grant cannot authorize an unreserved byte write, so
+	// creation is denied outright while quotas are enforced.
+	backupQuotaUnsupported := func() error {
+		return forbidden("Backup creation is unavailable with hosting integration enabled: backup archives cannot be reserved against the storage byte quota.")
+	}
 	app.OnBackupCreate().Bind(&hook.Handler[*core.BackupEvent]{Id: "pbvexHostingBackup", Priority: -1000, Func: func(e *core.BackupEvent) error {
-		if err := require(e.Context, hosting.BackupCreate); err != nil {
-			return err
-		}
-		return e.Next()
+		return backupQuotaUnsupported()
 	}})
 	// Restores may replace settings and introduce executable files. Until those
 	// paths are independently constrained, even a provider allow cannot enable it.
@@ -140,6 +148,12 @@ func registerHosting(app core.App, client *hosting.Client, managed *managedInjec
 				return forbidden("Direct SQL execution is unavailable with hosting integration enabled.")
 			case "PUT /api/collections/import", "POST /api/backups/upload":
 				return forbidden("Operation restricted by hosting policy.")
+			case "POST /api/backups":
+				// Denied before any scheduling so the caller receives the
+				// refusal instead of an optimistic success response. The
+				// OnBackupCreate hook refusal above stays as the second
+				// layer for scheduled and programmatic creates.
+				return backupQuotaUnsupported()
 			case "POST /api/backups/{key}/restore":
 				// Deny before the restore is scheduled so the caller receives
 				// the refusal instead of an optimistic success response.

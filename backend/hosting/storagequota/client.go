@@ -1,13 +1,7 @@
 package storagequota
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
-	"net"
-	"net/http"
-	"time"
 
 	"github.com/nathabonfim59/pbvex/backend/hosting"
 )
@@ -16,106 +10,82 @@ import (
 // Client instance is shared for the process lifetime; it is safe for
 // concurrent use.
 //
-// The transport intentionally mirrors the parent hosting.Client: HTTP/1.1
-// POST with JSON bodies over a persistent Unix socket, no redirects,
-// proxies, compression or retries, bounded payload sizes, immediate
-// ErrBusy on local saturation, and identical response decoding discipline.
-// SEAM NOTE for maintainers: exporting a generic
-// `hosting.Client.Call(ctx, path, in, out)` (or a transport constructor)
-// would let this package delegate all request framing; until that seam
-// exists the small transport below stays in sync with the parent client's
-// documented behavior and tests.
+// The transport is the parent hosting.Client: HTTP/1.1 POST with JSON
+// bodies over a persistent Unix socket, no redirects, proxies, compression
+// or retries, bounded payload sizes, immediate ErrBusy on local saturation,
+// and the parent's strict response decoding discipline. Requests travel
+// through hosting.Client.Call, whose relative-endpoint path rules keep the
+// target on this client's own /v1 socket tree. A Client either owns a root
+// client (NewClient, for standalone single-protocol callers) or borrows the
+// application's policy client (NewClientFromRoot, so one socket serves both
+// protocols through a single connection pool and in-flight budget). A
+// borrowed client never closes the shared root.
 type Client struct {
-	http  *http.Client
-	slots chan struct{}
+	root  *hosting.Client
+	owned bool
 }
 
-// NewClient validates the bootstrap configuration and returns a client for
-// an enabled hosting configuration. Zero Timeout selects the 2s default;
-// zero MaxInFlight selects 32. The configuration is shared with the policy
-// protocol: one socket serves both the parent hosting endpoints and the
-// /v1/storage/ endpoints of this package.
+// NewClient validates the bootstrap configuration and returns a client that
+// owns its root transport for an enabled hosting configuration. Zero
+// Timeout selects the 2s default; zero MaxInFlight selects 32. The
+// configuration is shared with the policy protocol: one socket serves both
+// the parent hosting endpoints and the /v1/storage/ endpoints of this
+// package. Embedders that already run a policy client on the same socket
+// should prefer NewClientFromRoot so both protocols share one connection
+// pool and in-flight budget instead of duplicating connections.
 func NewClient(cfg hosting.Config) (*Client, error) {
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
 	if !cfg.Enabled {
 		return nil, hosting.ErrUnavailable
 	}
-	if cfg.Timeout == 0 {
-		cfg.Timeout = 2 * time.Second
+	root, err := hosting.NewClient(cfg)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.MaxInFlight == 0 {
-		cfg.MaxInFlight = 32
-	}
-	tr := &http.Transport{
-		Proxy: nil, MaxConnsPerHost: cfg.MaxInFlight, MaxIdleConnsPerHost: cfg.MaxInFlight,
-		IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: cfg.Timeout,
-		MaxResponseHeaderBytes: 4096, DisableCompression: true,
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: cfg.Timeout}).DialContext(ctx, "unix", cfg.SocketPath)
-		},
-	}
-	return &Client{
-		http:  &http.Client{Transport: tr, Timeout: cfg.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		slots: make(chan struct{}, cfg.MaxInFlight),
-	}, nil
+	return &Client{root: root, owned: true}, nil
 }
 
-// Close releases idle socket connections.
-func (c *Client) Close() { c.http.CloseIdleConnections() }
-
-// call performs one bounded request. Each call has a total deadline from
-// the client configuration and the caller context; cancellation may
-// shorten it. Capacity is bounded: saturation returns hosting.ErrBusy
-// without queueing.
-func (c *Client) call(ctx context.Context, path string, in, out any) error {
-	select {
-	case c.slots <- struct{}{}:
-		defer func() { <-c.slots }()
-	default:
-		return hosting.ErrBusy
+// NewClientFromRoot returns a storage quota client that sends its requests
+// through an already-running policy client for the same socket. The root
+// client is borrowed: its connection pool, in-flight budget and Close
+// remain owned by the caller, and this client's Close is deliberately a
+// no-op so shutting down one protocol cannot close the other's transport. A
+// nil root returns hosting.ErrUnavailable.
+func NewClientFromRoot(root *hosting.Client) (*Client, error) {
+	if root == nil {
+		return nil, hosting.ErrUnavailable
 	}
-	b, err := json.Marshal(in)
-	if err != nil || len(b) > hosting.MaxPayload {
-		return hosting.ErrProtocol
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://policy/v1/"+path, bytes.NewReader(b))
-	if err != nil {
-		return hosting.ErrProtocol
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := c.http.Do(req)
-	if err != nil {
-		return hosting.ErrUnavailable
-	}
-	defer res.Body.Close()
-	// Drain the bounded body before checking the status so the persistent
-	// connection can be reused without a salvage race (see parent client).
-	b, err = io.ReadAll(io.LimitReader(res.Body, hosting.MaxPayload+1))
-	if res.StatusCode != http.StatusOK {
-		return hosting.ErrUnavailable
-	}
-	if err != nil || len(b) > hosting.MaxPayload {
-		return hosting.ErrProtocol
-	}
-	return decode(b, out)
+	return &Client{root: root}, nil
 }
 
-func decode(b []byte, out any) error {
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.DisallowUnknownFields()
-	if d.Decode(out) != nil || d.Decode(new(any)) != io.EOF {
-		return hosting.ErrProtocol
+// Close releases idle socket connections of an owned root client. A
+// borrowed client (NewClientFromRoot) leaves the shared root untouched.
+func (c *Client) Close() {
+	if c.owned {
+		c.root.Close()
 	}
-	return nil
+}
+
+// SupportsReserve reports whether a successful handshake lists the
+// storage.reserve capability. Embedders must require it before installing
+// quota enforcement: an enabled deployment whose provider cannot account
+// bytes must fail startup instead of silently relying on a provider that
+// denies (or cannot serve) every reservation.
+func SupportsReserve(h hosting.Hello) bool {
+	for _, c := range h.Capabilities {
+		if c == CapabilityStorageReserve {
+			return true
+		}
+	}
+	return false
 }
 
 // Handshake performs the shared /v1/hello handshake. A version other than
 // the supported one is a protocol error; there is no silent downgrade.
+// Providers that serve storage quotas list the storage.reserve capability
+// (check with SupportsReserve).
 func (c *Client) Handshake(ctx context.Context) (hosting.Hello, error) {
 	var h hosting.Hello
-	err := c.call(ctx, "hello", struct{}{}, &h)
+	err := c.root.Call(ctx, "hello", struct{}{}, &h)
 	if err == nil && h.Version != hosting.Version {
 		err = hosting.ErrProtocol
 	}
@@ -132,7 +102,7 @@ func (c *Client) ReserveStorage(ctx context.Context, r ReserveStorageRequest) (R
 	if !validReserve(r) {
 		return d, hosting.ErrProtocol
 	}
-	err := c.call(ctx, "storage/reserve", r, &d)
+	err := c.root.Call(ctx, "storage/reserve", r, &d)
 	if err == nil && !validReserveDecision(d) {
 		err = hosting.ErrProtocol
 	}
@@ -140,13 +110,15 @@ func (c *Client) ReserveStorage(ctx context.Context, r ReserveStorageRequest) (R
 }
 
 // SettleStorage transitions a reservation to the actual stored byte count.
-// Retries must reuse identical IDs and content.
+// Retries must reuse identical IDs and content. A provider must reject a
+// settlement above the reserved bound as a conflict and keep the
+// reservation for reconciliation instead of acknowledging an undercount.
 func (c *Client) SettleStorage(ctx context.Context, r SettleStorageRequest) (SettleStorageAck, error) {
 	var a SettleStorageAck
 	if !validSettle(r) {
 		return a, hosting.ErrProtocol
 	}
-	err := c.call(ctx, "storage/settle", r, &a)
+	err := c.root.Call(ctx, "storage/settle", r, &a)
 	if err == nil && (a.ReservationID != r.ReservationID || a.ChargedBytes < 0 || a.ChargedBytes > r.Bytes) {
 		err = hosting.ErrProtocol
 	}
@@ -160,7 +132,7 @@ func (c *Client) ReleaseStorage(ctx context.Context, r ReleaseStorageRequest) (R
 	if !validRelease(r) {
 		return a, hosting.ErrProtocol
 	}
-	err := c.call(ctx, "storage/release", r, &a)
+	err := c.root.Call(ctx, "storage/release", r, &a)
 	if err == nil && a.ReservationID != r.ReservationID {
 		err = hosting.ErrProtocol
 	}
@@ -174,7 +146,7 @@ func (c *Client) CreditStorage(ctx context.Context, r CreditStorageRequest) (Cre
 	if !validCredit(r) {
 		return a, hosting.ErrProtocol
 	}
-	err := c.call(ctx, "storage/credit", r, &a)
+	err := c.root.Call(ctx, "storage/credit", r, &a)
 	if err == nil && a.EventID != r.EventID {
 		err = hosting.ErrProtocol
 	}

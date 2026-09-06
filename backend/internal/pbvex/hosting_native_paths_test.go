@@ -5,10 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nathabonfim59/pbvex/backend/hosting"
@@ -16,74 +16,68 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-func TestHostedBackupArchiveContainsNoManagedSecrets(t *testing.T) {
-	// Managed SMTP only: with managed storage the backups filesystem itself
-	// points at the host bucket, which needs a real S3 endpoint. The archive
-	// neutrality of managed storage values is covered by the persisted-row
-	// assertions, because archives embed the persisted database row.
-	app, service, _, mux := newHostedTestApp(t, func(c *Config) {
+// writeBackupArchive places a minimal archive directly in the backups
+// directory. Backup creation itself is denied while hosting is enabled (it
+// would write unreserved bytes), so download-gate tests place a
+// pre-existing archive the way a pre-hosting or provider-side artifact
+// would exist.
+func writeBackupArchive(t *testing.T, app *tests.TestApp, name string) {
+	t.Helper()
+	dir := filepath.Join(app.DataDir(), "backups")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	if _, err := zw.Create("data.db"); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHostedBackupCreationDeniedDespiteGrant(t *testing.T) {
+	// Backup archives are written with no pre-write size bound, so they can
+	// never be covered by the storage byte quota. Creation is denied
+	// outright: a backup.create grant must not enable it, the API refuses
+	// before scheduling, and the OnBackupCreate hook refuses the scheduled
+	// and programmatic paths.
+	app, service, _, _, mux := newHostedTestApp(t, func(c *Config) {
 		c.SMTP = hostedManagedSMTP()
-	})
-	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true}); err != nil {
+	}, true)
+	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true, hosting.BackupDownload: true}); err != nil {
 		t.Fatal(err)
 	}
 
 	rr := hostedJSONRequest(t, mux, app, http.MethodPost, "/api/backups", `{"name":"tenantbackup.zip"}`)
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("backup create status = %d body %s", rr.Code, rr.Body.String())
-	}
-
-	archive, err := os.Open(filepath.Join(app.DataDir(), "backups", "tenantbackup.zip"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer archive.Close()
-	stat, err := archive.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader, err := zip.NewReader(archive, stat.Size())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var dataDB []byte
-	for _, file := range reader.File {
-		if file.Name != "data.db" {
-			continue
-		}
-		rc, err := file.Open()
-		if err != nil {
-			t.Fatal(err)
-		}
-		dataDB, err = io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if dataDB == nil {
-		t.Fatal("backup archive is missing data.db")
-	}
-	for _, secret := range []string{hostSMTPPass, "smtp.host-managed.example", "host-mail-user"} {
-		if bytes.Contains(dataDB, []byte(secret)) {
-			t.Fatalf("backup archive contains managed value %q", secret)
-		}
-	}
-
-	// Downloads stay provider-gated even though the archive carries no host
-	// secrets: archives embed the tenant database and pre-hosting archives
-	// may still exist in the backups storage.
-	token := superuserFileToken(t, app)
-	rr = hostedJSONRequest(t, mux, app, http.MethodGet, "/api/backups/tenantbackup.zip?token="+token, "")
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("backup download without grant status = %d", rr.Code)
+		t.Fatalf("backup create with grant status = %d body %s", rr.Code, rr.Body.String())
 	}
-	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true, hosting.BackupDownload: true}); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(rr.Body.String(), "storage byte quota") {
+		t.Fatalf("expected the explicit quota rationale, got %s", rr.Body.String())
 	}
-	rr = hostedJSONRequest(t, mux, app, http.MethodGet, "/api/backups/tenantbackup.zip?token="+token, "")
-	if rr.Code != http.StatusOK {
-		t.Fatalf("backup download with grant status = %d body %s", rr.Code, rr.Body.String())
+	if _, err := os.Stat(filepath.Join(app.DataDir(), "backups", "tenantbackup.zip")); !os.IsNotExist(err) {
+		t.Fatal("denied backup create must not write an archive")
+	}
+
+	// The hook refusal covers scheduled and programmatic creation too.
+	if err := app.CreateBackup(context.Background(), "scheduled.zip"); err == nil {
+		t.Fatal("scheduled backup creation must be denied by the OnBackupCreate hook")
+	}
+	if _, err := os.Stat(filepath.Join(app.DataDir(), "backups", "scheduled.zip")); !os.IsNotExist(err) {
+		t.Fatal("denied scheduled backup must not write an archive")
+	}
+
+	// The archive-neutrality intent of managed injection is still visible
+	// in the artifact backups embed: the persisted settings row stays
+	// neutral.
+	row := readPersistedSettings(t, app)
+	if row.SMTP.Enabled || row.SMTP.Password != "" || row.SMTP.Host != "" {
+		t.Fatalf("persisted SMTP settings are not neutral: %+v", row.SMTP)
 	}
 }
 
@@ -92,13 +86,8 @@ func TestHostedBackupDownloadGatesEncodedPaths(t *testing.T) {
 	// reaches the route through percent-encoding (an encoded dot, or an
 	// encoded slash that the wildcard matches as one escaped segment) must
 	// stay gated; a raw URL-path check would miss the encoded-slash form.
-	app, service, _, mux := newHostedTestApp(t, nil)
-	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := app.CreateBackup(context.Background(), "encoded.zip"); err != nil {
-		t.Fatal(err)
-	}
+	app, service, _, _, mux := newHostedTestApp(t, nil, true)
+	writeBackupArchive(t, app, "encoded.zip")
 	token := superuserFileToken(t, app)
 	for _, key := range []string{"encoded%2Ezip", "no-such%2Fkey.zip"} {
 		rr := hostedJSONRequest(t, mux, app, http.MethodGet, "/api/backups/"+key+"?token="+token, "")
@@ -107,7 +96,7 @@ func TestHostedBackupDownloadGatesEncodedPaths(t *testing.T) {
 		}
 	}
 	// With the grant, the plain route serves the archive.
-	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true, hosting.BackupDownload: true}); err != nil {
+	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupDownload: true}); err != nil {
 		t.Fatal(err)
 	}
 	rr := hostedJSONRequest(t, mux, app, http.MethodGet, "/api/backups/encoded.zip?token="+token, "")
@@ -117,13 +106,8 @@ func TestHostedBackupDownloadGatesEncodedPaths(t *testing.T) {
 }
 
 func TestHostedBackupDownloadFailsClosedWithoutProvider(t *testing.T) {
-	app, service, server, mux := newHostedTestApp(t, nil)
-	if err := service.SetPolicy("v2", map[string]bool{hosting.BackupCreate: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := app.CreateBackup(context.Background(), "offline.zip"); err != nil {
-		t.Fatal(err)
-	}
+	app, _, _, server, mux := newHostedTestApp(t, nil, true)
+	writeBackupArchive(t, app, "offline.zip")
 	token := superuserFileToken(t, app)
 	if err := server.Close(); err != nil {
 		t.Fatal(err)
@@ -135,7 +119,7 @@ func TestHostedBackupDownloadFailsClosedWithoutProvider(t *testing.T) {
 }
 
 func TestHostedNativePathDenials(t *testing.T) {
-	app, _, _, mux := newHostedTestApp(t, nil)
+	app, _, _, _, mux := newHostedTestApp(t, nil, true)
 
 	// Direct SQL can read the persisted settings row and bypass every
 	// record-level protection, so it is unavailable in hosted mode.
@@ -211,10 +195,10 @@ func TestHostedNativePathDenials(t *testing.T) {
 }
 
 func TestHostedDiagnosticEndpointsDeniedOnlyWhenManaged(t *testing.T) {
-	app, _, _, mux := newHostedTestApp(t, func(c *Config) {
+	app, _, _, _, mux := newHostedTestApp(t, func(c *Config) {
 		c.HostManagedStorageS3 = hostedManagedStorage()
 		c.SMTP = hostedManagedSMTP()
-	})
+	}, true)
 	rr := hostedJSONRequest(t, mux, app, http.MethodPost, "/api/settings/test/s3", `{"filesystem":"storage"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("managed s3 test status = %d body %s", rr.Code, rr.Body.String())
@@ -227,7 +211,7 @@ func TestHostedDiagnosticEndpointsDeniedOnlyWhenManaged(t *testing.T) {
 	// Without managed configuration the diagnostic endpoints keep their
 	// normal behavior (they fail validation here, which proves the hosting
 	// gate did not deny them).
-	app2, _, _, mux2 := newHostedTestApp(t, nil)
+	app2, _, _, _, mux2 := newHostedTestApp(t, nil, true)
 	rr = hostedJSONRequest(t, mux2, app2, http.MethodPost, "/api/settings/test/s3", `{"filesystem":"storage"}`)
 	if rr.Code == http.StatusForbidden {
 		t.Fatal("unmanaged s3 test denied by hosting gate")

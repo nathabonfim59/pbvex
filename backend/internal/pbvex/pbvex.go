@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/nathabonfim59/pbvex/backend/hosting"
+	"github.com/nathabonfim59/pbvex/backend/hosting/storagequota"
 	"github.com/nathabonfim59/pbvex/backend/internal/api"
 	"github.com/nathabonfim59/pbvex/backend/internal/deploy"
 	"github.com/nathabonfim59/pbvex/backend/internal/realtime"
@@ -119,12 +120,33 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 	if err := cfg.HostManagedStorageS3.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("invalid host-managed storage configuration: %w", err)
 	}
-	client, err := newHostingClient(cfg.Hosting)
+	client, hello, err := newHostingClient(cfg.Hosting)
 	if err != nil {
 		return nil, nil, err
 	}
 	var managed *managedInjection
+	var quotaClient *storagequota.Client
 	if client != nil {
+		// Hosting enabled enforces storage byte quotas: the same provider
+		// must serve the /v1/storage/ routes on the shared socket and list
+		// the storage.reserve capability in the startup handshake. Without
+		// this check an enabled deployment would silently depend on a
+		// provider that cannot account bytes, so startup fails instead —
+		// there is no silent downgrade and no separate bootstrap flag. A
+		// provider extends its endpoint by serving the storage routes and
+		// adding the capability; see docs/hosting-storage-quotas.md.
+		if !storagequota.SupportsReserve(hello) {
+			client.Close()
+			return nil, nil, errors.New("hosting provider does not support storage byte quotas (missing storage.reserve handshake capability)")
+		}
+		// The quota client borrows the policy client's transport: one
+		// socket, one connection pool, one in-flight budget per app. It is
+		// closed with the root client at terminate and never closed here.
+		quotaClient, err = storagequota.NewClientFromRoot(client)
+		if err != nil {
+			client.Close()
+			return nil, nil, err
+		}
 		managed = registerManagedInjection(cfg.HostManagedStorageS3, cfg.SMTP)
 		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { client.Close(); return e.Next() })
 		if err := registerHosting(app, client, managed); err != nil {
@@ -148,6 +170,16 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 	storageService, err := storage.NewService(app, storage.NewRepo(), cfg.Storage)
 	if err != nil {
 		return nil, nil, err
+	}
+	if quotaClient != nil {
+		// Install the quota observer and the native hooks before the
+		// service is started (the bootstrap handler below calls Start), so
+		// no upload, variant or native record write can run unaccounted
+		// and the thumbnail gate is in place before the router is built.
+		storageService.SetQuotaObserver(storage.NewHostedQuotaObserver(quotaClient))
+		if err := storageService.InstallNativeQuotaHooks(app); err != nil {
+			return nil, nil, err
+		}
 	}
 	manager.AddContextExtender(storageExtender(storageService))
 	manager.AddContextExtender(emailExtender())

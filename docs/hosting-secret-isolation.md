@@ -13,8 +13,10 @@ limitations section before treating any claim as complete.
 Hosted mode combines three layers:
 
 1. **Capability gates** (policy protocol): dynamic provider checks for
-   changed storage, backups, and SMTP settings categories, backup creation,
-   and backup downloads. A provider outage fails closed.
+   changed storage, backups, and SMTP settings categories, and backup
+   downloads. A provider outage fails closed. Backup creation is not
+   provider-gated — it is denied outright while storage quotas are
+   enforced, because an allowed archive writes unreserved bytes.
 2. **Host-managed injection**: host-owned storage and mail configuration is
    supplied through the process environment, applied to the running app, and
    never persisted in the tenant database. The corresponding settings
@@ -111,9 +113,11 @@ capability, as in standalone mode.
   rendered as configured; see limitations.
 - Backup archives embed the tenant database, so archive confidentiality
   follows the persisted settings, not the in-memory shadow. Values supplied
-  while managed mode is active are neutralized before persistence, and
-  archives created under managed mode contain neither host secrets nor
-  managed connection fields.
+  while managed mode is active are neutralized before persistence, so the
+  persisted row — the content any archive would embed — carries neither
+  host secrets nor managed connection fields. While hosting is enabled no
+  new archives are created at all: backup creation is denied because
+  archives cannot be reserved against the storage byte quota.
 - This invariant is scoped to the current logical settings. It is not
   retroactive: secrets persisted before hosting or managed mode was enabled
   can survive in older backup archives, in SQLite freelist and WAL pages of
@@ -131,7 +135,7 @@ of the operation:
 
 | Route | Behavior in hosted mode |
 | --- | --- |
-| `POST /api/backups` | `backup.create` capability check (existing) |
+| `POST /api/backups` | Denied before scheduling with a `403` response: backup archives would write bytes with no pre-write storage-quota reservation, so the `backup.create` capability grant is not consulted; the `OnBackupCreate` hook refusal covers scheduled and programmatic creates |
 | `GET/HEAD /api/backups/{key}` | `backup.download` capability check; denied when the provider is unavailable |
 | `POST /api/backups/{key}/restore` | Denied before scheduling, with a `403` response; the `OnBackupRestore` hook refusal remains as a second layer |
 | `POST /api/backups/upload` | Denied: restore is unavailable, so an uploaded archive has no legitimate use and would turn the backups storage into blob storage |
@@ -195,8 +199,10 @@ tenant superuser.
   error messages visible to the tenant.
 - **Managed storage and backups share one configuration.** A dedicated
   backups bucket with its own credentials is not yet configurable; the
-  managed bucket receives both record files (`storage/` keys) and backup
-  archives (root-level keys).
+  managed bucket receives record files (`storage/` keys). While hosting is
+  enabled, backup creation is denied outright (above), so no new archives
+  are written anywhere; historical archives that already exist remain
+  provider-gated for downloads and are rejected for restore and upload.
 - **Static injection only.** Changing the managed storage or SMTP
   configuration requires a process restart. There is no tenant-readable
   secret store and no dynamic secret rotation socket yet.

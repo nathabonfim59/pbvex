@@ -20,6 +20,7 @@ Package hosting implements the provider\-neutral PBVex local policy protocol.
 - [type Client](<#Client>)
   - [func NewClient\(cfg Config\) \(\*Client, error\)](<#NewClient>)
   - [func \(c \*Client\) Admit\(ctx context.Context, r AdmissionRequest\) \(Decision, error\)](<#Client.Admit>)
+  - [func \(c \*Client\) Call\(ctx context.Context, path string, in, out any\) error](<#Client.Call>)
   - [func \(c \*Client\) Check\(ctx context.Context, capability string\) \(Decision, error\)](<#Client.Check>)
   - [func \(c \*Client\) Close\(\)](<#Client.Close>)
   - [func \(c \*Client\) Handshake\(ctx context.Context\) \(Hello, error\)](<#Client.Handshake>)
@@ -49,7 +50,11 @@ const (
     SettingsBackups = "settings.backups.write"
     SettingsSMTP    = "settings.smtp.write"
     BackupRestore   = "backup.restore"
-    BackupCreate    = "backup.create"
+    // BackupCreate remains part of the wire policy surface, but hosted
+    // deployments deny backup creation outright while storage byte quotas
+    // are enforced: an allowed backup writes archive bytes with no
+    // pre-write size bound, so a grant cannot authorize it.
+    BackupCreate = "backup.create"
     // BackupDownload gates superuser backup archive downloads. Archives
     // contain the tenant database, so hosted deployments keep this
     // capability denied unless the provider explicitly grants it.
@@ -96,7 +101,7 @@ var ErrUnavailable = errors.New("hosting policy unavailable")
 ```
 
 <a name="NewID"></a>
-## func [NewID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L115>)
+## func [NewID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L120>)
 
 ```go
 func NewID() string
@@ -105,7 +110,7 @@ func NewID() string
 
 
 <a name="ValidToken"></a>
-## func [ValidToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L248>)
+## func [ValidToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L292>)
 
 ```go
 func ValidToken(s string) bool
@@ -114,7 +119,7 @@ func ValidToken(s string) bool
 ValidToken reports whether s satisfies the protocol identifier rules \(1\-128 ASCII letters/digits or \_ \- . : /\). Callers composing capability or operation identifiers from external input should validate them with this check before sending.
 
 <a name="Ack"></a>
-## type [Ack](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L109-L111>)
+## type [Ack](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L114-L116>)
 
 
 
@@ -125,7 +130,7 @@ type Ack struct {
 ```
 
 <a name="AdmissionRequest"></a>
-## type [AdmissionRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L91-L95>)
+## type [AdmissionRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L96-L100>)
 
 
 
@@ -138,7 +143,7 @@ type AdmissionRequest struct {
 ```
 
 <a name="CheckRequest"></a>
-## type [CheckRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L66-L68>)
+## type [CheckRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L71-L73>)
 
 
 
@@ -149,9 +154,9 @@ type CheckRequest struct {
 ```
 
 <a name="Client"></a>
-## type [Client](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L123-L126>)
+## type [Client](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L134-L137>)
 
-
+Client is the bounded policy\-protocol transport for one Unix socket. It is safe for concurrent use and must be kept for the process lifetime. The exported Call method lets a companion protocol package \(the storage byte quota client\) send its requests through this same transport, so one socket shares a single connection pool, in\-flight budget and response discipline across the policy and storage endpoints.
 
 ```go
 type Client struct {
@@ -160,7 +165,7 @@ type Client struct {
 ```
 
 <a name="NewClient"></a>
-### func [NewClient](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L128>)
+### func [NewClient](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L139>)
 
 ```go
 func NewClient(cfg Config) (*Client, error)
@@ -169,7 +174,7 @@ func NewClient(cfg Config) (*Client, error)
 
 
 <a name="Client.Admit"></a>
-### func \(\*Client\) [Admit](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L219>)
+### func \(\*Client\) [Admit](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L263>)
 
 ```go
 func (c *Client) Admit(ctx context.Context, r AdmissionRequest) (Decision, error)
@@ -177,8 +182,17 @@ func (c *Client) Admit(ctx context.Context, r AdmissionRequest) (Decision, error
 
 
 
+<a name="Client.Call"></a>
+### func \(\*Client\) [Call](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L213>)
+
+```go
+func (c *Client) Call(ctx context.Context, path string, in, out any) error
+```
+
+Call performs one bounded POST against the /v1 endpoint tree of this client's own socket. It is the narrow transport seam for a companion protocol package: the path must be a relative endpoint below /v1, and the request URL is always "http://policy/v1/\<path\>" on this client's configured Unix socket. A path that could name any other destination — empty, over 1024 bytes, not a slash\-separated sequence of protocol token segments, or containing a "." or ".." segment, a leading or trailing slash, or any query, fragment or authority component — is rejected with ErrProtocol before any bytes are sent. Everything else \(framing, payload bounds, draining, saturation and error mapping\) is identical to the methods above.
+
 <a name="Client.Check"></a>
-### func \(\*Client\) [Check](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L201>)
+### func \(\*Client\) [Check](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L245>)
 
 ```go
 func (c *Client) Check(ctx context.Context, capability string) (Decision, error)
@@ -187,7 +201,7 @@ func (c *Client) Check(ctx context.Context, capability string) (Decision, error)
 
 
 <a name="Client.Close"></a>
-### func \(\*Client\) [Close](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L147>)
+### func \(\*Client\) [Close](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L158>)
 
 ```go
 func (c *Client) Close()
@@ -196,7 +210,7 @@ func (c *Client) Close()
 
 
 <a name="Client.Handshake"></a>
-### func \(\*Client\) [Handshake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L190>)
+### func \(\*Client\) [Handshake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L234>)
 
 ```go
 func (c *Client) Handshake(ctx context.Context) (Hello, error)
@@ -205,7 +219,7 @@ func (c *Client) Handshake(ctx context.Context) (Hello, error)
 
 
 <a name="Client.Report"></a>
-### func \(\*Client\) [Report](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L230>)
+### func \(\*Client\) [Report](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L274>)
 
 ```go
 func (c *Client) Report(ctx context.Context, e Event) error
@@ -214,7 +228,7 @@ func (c *Client) Report(ctx context.Context, e Event) error
 
 
 <a name="Client.Require"></a>
-### func \(\*Client\) [Require](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L209>)
+### func \(\*Client\) [Require](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L253>)
 
 ```go
 func (c *Client) Require(ctx context.Context, capability string) error
@@ -223,7 +237,7 @@ func (c *Client) Require(ctx context.Context, capability string) error
 
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L43-L48>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L48-L53>)
 
 Config contains bootstrap configuration only. The service owns dynamic policy.
 
@@ -237,7 +251,7 @@ type Config struct {
 ```
 
 <a name="Config.Validate"></a>
-### func \(Config\) [Validate](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L50>)
+### func \(Config\) [Validate](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L55>)
 
 ```go
 func (c Config) Validate() error
@@ -246,7 +260,7 @@ func (c Config) Validate() error
 
 
 <a name="Decision"></a>
-## type [Decision](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L69-L74>)
+## type [Decision](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L74-L79>)
 
 
 
@@ -260,7 +274,7 @@ type Decision struct {
 ```
 
 <a name="DeniedError"></a>
-## type [DeniedError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L112>)
+## type [DeniedError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L117>)
 
 
 
@@ -269,7 +283,7 @@ type DeniedError struct{ Code string }
 ```
 
 <a name="DeniedError.Error"></a>
-### func \(\*DeniedError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L114>)
+### func \(\*DeniedError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L119>)
 
 ```go
 func (e *DeniedError) Error() string
@@ -278,7 +292,7 @@ func (e *DeniedError) Error() string
 
 
 <a name="Event"></a>
-## type [Event](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L98-L108>)
+## type [Event](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L103-L113>)
 
 Event deliberately has no arbitrary payload or error\-message field.
 
@@ -297,7 +311,7 @@ type Event struct {
 ```
 
 <a name="Hello"></a>
-## type [Hello](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L75-L79>)
+## type [Hello](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L80-L84>)
 
 
 
@@ -310,7 +324,7 @@ type Hello struct {
 ```
 
 <a name="Operation"></a>
-## type [Operation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L80-L90>)
+## type [Operation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L85-L95>)
 
 
 

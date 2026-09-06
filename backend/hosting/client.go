@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -22,7 +23,11 @@ const (
 	SettingsBackups = "settings.backups.write"
 	SettingsSMTP    = "settings.smtp.write"
 	BackupRestore   = "backup.restore"
-	BackupCreate    = "backup.create"
+	// BackupCreate remains part of the wire policy surface, but hosted
+	// deployments deny backup creation outright while storage byte quotas
+	// are enforced: an allowed backup writes archive bytes with no
+	// pre-write size bound, so a grant cannot authorize it.
+	BackupCreate = "backup.create"
 	// BackupDownload gates superuser backup archive downloads. Archives
 	// contain the tenant database, so hosted deployments keep this
 	// capability denied unless the provider explicitly grants it.
@@ -120,6 +125,12 @@ func NewID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// Client is the bounded policy-protocol transport for one Unix socket. It
+// is safe for concurrent use and must be kept for the process lifetime. The
+// exported Call method lets a companion protocol package (the storage byte
+// quota client) send its requests through this same transport, so one
+// socket shares a single connection pool, in-flight budget and response
+// discipline across the policy and storage endpoints.
 type Client struct {
 	http  *http.Client
 	slots chan struct{}
@@ -187,6 +198,39 @@ func decode(b []byte, out any) error {
 	}
 	return nil
 }
+
+// Call performs one bounded POST against the /v1 endpoint tree of this
+// client's own socket. It is the narrow transport seam for a companion
+// protocol package: the path must be a relative endpoint below /v1, and the
+// request URL is always "http://policy/v1/<path>" on this client's
+// configured Unix socket. A path that could name any other destination —
+// empty, over 1024 bytes, not a slash-separated sequence of protocol token
+// segments, or containing a "." or ".." segment, a leading or trailing
+// slash, or any query, fragment or authority component — is rejected with
+// ErrProtocol before any bytes are sent. Everything else (framing, payload
+// bounds, draining, saturation and error mapping) is identical to the
+// methods above.
+func (c *Client) Call(ctx context.Context, path string, in, out any) error {
+	if !validEndpointPath(path) {
+		return ErrProtocol
+	}
+	return c.call(ctx, path, in, out)
+}
+
+// validEndpointPath reports whether p is a safe relative /v1 endpoint: only
+// protocol-token segments, no dot segments, no empty segments.
+func validEndpointPath(p string) bool {
+	if len(p) == 0 || len(p) > 1024 {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." || !token(seg) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Client) Handshake(ctx context.Context) (Hello, error) {
 	var h Hello
 	err := c.call(ctx, "hello", struct{}{}, &h)

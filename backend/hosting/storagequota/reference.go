@@ -159,14 +159,19 @@ func (s *ReferenceQuotaService) ServeHTTP(w http.ResponseWriter, r *http.Request
 			}
 			out = SettleStorageAck{ReservationID: req.ReservationID, ChargedBytes: res.Charged}
 		case referenceReserved:
-			charged := req.Bytes
-			if charged > res.Bytes {
-				charged = res.Bytes
+			if req.Bytes > res.Bytes {
+				// Above-bound settlement: the stored-count report exceeds
+				// the reservation, which violates the exact-bound
+				// contract. Reject it and keep the reservation and its
+				// usage reserved for reconciliation rather than silently
+				// acknowledging an undercount.
+				fail(409)
+				return
 			}
 			res.Status = referenceSettled
-			res.Charged = charged
-			s.usedBytes += charged
-			out = SettleStorageAck{ReservationID: req.ReservationID, ChargedBytes: charged}
+			res.Charged = req.Bytes
+			s.usedBytes += req.Bytes
+			out = SettleStorageAck{ReservationID: req.ReservationID, ChargedBytes: req.Bytes}
 		default: // released or otherwise terminal
 			fail(409)
 			return

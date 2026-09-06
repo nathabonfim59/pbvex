@@ -8,13 +8,34 @@ entries are intentionally not duplicated in this changelog.
 
 ### Added
 
+- Experimental public `backend/hosting/storagequota` storage byte quota
+  protocol riding the same Unix-socket transport, trust model and bootstrap
+  as the hosting policy protocol, with a bounded in-memory reference
+  service. Hosting-enabled deployments enforce storage quotas by default:
+  the provider must serve the `/v1/storage/` routes and list the
+  `storage.reserve` handshake capability on the shared socket (startup
+  fails otherwise, and there is no separate flag), PBVex uploads, lazy
+  image variants and native record files reserve exact or worst-case bytes
+  before any write and settle after the commit through one shared client
+  and in-flight budget, deletions credit only verified removals, native
+  record deletion keeps usage reserved for reconciliation, native
+  thumbnail generation is denied while quotas are enforced, and backup
+  creation is denied outright because archive bytes cannot be reserved.
+  Standalone deployments are unchanged. Providers reject settlements above
+  a reservation as conflicts and keep the reservation and its usage
+  reserved for reconciliation instead of acknowledging an undercount. See
+  `docs/hosting-storage-quotas.md` for the wire contract and gaps.
 - Experimental public `backend/hosting` Unix-socket policy/admission/event
   protocol, bounded reference service and explicit hosting bootstrap flags.
-  Enabled mode adds dynamic settings/backup-create gates, rejects restores and
-  disables custom PocketBase host JS. Runtime execution admission/reporting,
+  Enabled mode adds dynamic settings/backup-download gates, denies restores
+  and custom PocketBase host JS outright, and (with the storage byte quota
+  protocol above) enforces byte reservations on every storage write.
+  Runtime execution admission/reporting,
   instance-wide concurrency controls and per-name component environment gates
-  are integrated. Durable telemetry and managed-secret/native-upload isolation
-  remain integration gaps; see
+  are integrated. Durable telemetry, dynamic managed-secret rotation and
+  provider reconciliation sweeps remain integration gaps; native record
+  uploads are quota-covered with documented limitations (asynchronous
+  record-deletion credits, denied on-demand thumbnail generation). See
   `docs/hosting-policy-protocol.md` for the exact scope.
 
 - `PBVEX_SMTP_*` server environment variables configure PocketBase's mail

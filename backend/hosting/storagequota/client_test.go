@@ -2,12 +2,15 @@ package storagequota
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,8 +18,9 @@ import (
 )
 
 // newQuotaTestServer binds a reference service on a fresh Unix socket and
-// returns a connected client plus the service for assertions.
-func newQuotaTestServer(t *testing.T, limit int, capacityBytes int64) (*Client, *ReferenceQuotaService) {
+// returns a connected client plus the service for assertions. An optional
+// final argument overrides the client's local MaxInFlight budget.
+func newQuotaTestServer(t *testing.T, limit int, capacityBytes int64, maxInFlight ...int) (*Client, *ReferenceQuotaService) {
 	t.Helper()
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "quota.sock")
@@ -32,11 +36,15 @@ func newQuotaTestServer(t *testing.T, limit int, capacityBytes int64) (*Client, 
 		_ = ln.Close()
 	})
 
+	inFlight := 8
+	if len(maxInFlight) > 0 && maxInFlight[0] > 0 {
+		inFlight = maxInFlight[0]
+	}
 	client, err := NewClient(hosting.Config{
 		Enabled:     true,
 		SocketPath:  socket,
 		Timeout:     2 * time.Second,
-		MaxInFlight: 8,
+		MaxInFlight: inFlight,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,8 +96,18 @@ func TestReserveSettleReleaseCreditRoundtrip(t *testing.T) {
 		t.Fatalf("unexpected decision: %+v", d)
 	}
 
-	// A settle above the reserved bound is clamped.
-	a, err := client.SettleStorage(ctx, SettleStorageRequest{ReservationID: d.ReservationID, Bytes: 500})
+	// A settle above the reserved bound is rejected as a protocol
+	// conflict: the reservation and its usage stay reserved for
+	// reconciliation instead of being acknowledged at an undercount.
+	if _, err := client.SettleStorage(ctx, SettleStorageRequest{ReservationID: d.ReservationID, Bytes: 500}); !errors.Is(err, hosting.ErrUnavailable) {
+		t.Fatalf("expected above-bound settle rejection, got %v", err)
+	}
+	if got := svc.UsedBytes(); got != 0 {
+		t.Fatalf("above-bound settlement must not charge, used=%d", got)
+	}
+
+	// The preserved reservation settles to its exact stored count.
+	a, err := client.SettleStorage(ctx, SettleStorageRequest{ReservationID: d.ReservationID, Bytes: 400})
 	if err != nil || a.ChargedBytes != 400 {
 		t.Fatalf("settle: %v ack=%+v", err, a)
 	}
@@ -195,7 +213,7 @@ func TestCreditDedupConflictAndFloor(t *testing.T) {
 	}
 }
 
-func TestSettleAboveBoundAndCapacityCannotRaiseChargedUsage(t *testing.T) {
+func TestSettleAboveBoundKeepsReservationAndCapacityForReconciliation(t *testing.T) {
 	client, svc := newQuotaTestServer(t, 100, 500)
 	ctx := context.Background()
 
@@ -205,36 +223,33 @@ func TestSettleAboveBoundAndCapacityCannotRaiseChargedUsage(t *testing.T) {
 	if err != nil || !d.Allowed {
 		t.Fatalf("reserve: %v %+v", err, d)
 	}
-	// A settlement above the reserved bound is clamped: the provider must
-	// never let the caller raise its own charge.
-	a, err := client.SettleStorage(ctx, SettleStorageRequest{ReservationID: d.ReservationID, Bytes: 1 << 20})
-	if err != nil {
-		t.Fatal(err)
+	// A settlement above the reserved bound is a protocol error: the
+	// provider must never let the caller raise its own charge, and it must
+	// not silently acknowledge an undercount either. The reservation (and
+	// its held capacity) stays reserved for provider reconciliation.
+	if _, err := client.SettleStorage(ctx, SettleStorageRequest{ReservationID: d.ReservationID, Bytes: 1 << 20}); !errors.Is(err, hosting.ErrUnavailable) {
+		t.Fatalf("expected above-bound settlement rejection, got %v", err)
 	}
-	if a.ChargedBytes != 200 {
-		t.Fatalf("expected settlement clamped to the reserved 200, got %d", a.ChargedBytes)
+	if got := svc.UsedBytes(); got != 0 {
+		t.Fatalf("above-bound settlement must not charge, used=%d", got)
 	}
-	if got := svc.UsedBytes(); got != 200 {
-		t.Fatalf("expected used 200, got %d", got)
+	// The rejected reservation still holds its inflight bound: a second
+	// 200-byte reservation fits, a third does not.
+	d2, err := client.ReserveStorage(ctx, ReserveStorageRequest{RequestID: "rq-2", Purpose: PurposeUpload, Bytes: 200})
+	if err != nil || !d2.Allowed {
+		t.Fatalf("expected 200 to fit the remaining capacity: %v %+v", err, d2)
 	}
-	// Inflight reservations keep the capacity bound: no combination of
-	// concurrent reserves and settlements can exceed it.
-	for i := 0; i < 3; i++ {
-		d2, err := client.ReserveStorage(ctx, ReserveStorageRequest{
-			RequestID: fmt.Sprintf("rq-%d", i+2), Purpose: PurposeUpload, Bytes: 200,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if i < 1 && !d2.Allowed {
-			t.Fatalf("expected 200 to fit remaining capacity, got %+v", d2)
-		}
-		if i >= 1 && d2.Allowed {
-			t.Fatalf("expected capacity exhaustion, got %+v", d2)
-		}
+	d3, err := client.ReserveStorage(ctx, ReserveStorageRequest{RequestID: "rq-3", Purpose: PurposeUpload, Bytes: 200})
+	if err != nil || d3.Allowed || d3.Code != CodeQuotaExhausted {
+		t.Fatalf("expected capacity exhaustion, got %v %+v", err, d3)
+	}
+	// The preserved reservation still settles to its exact stored count.
+	a, err := client.SettleStorage(ctx, SettleStorageRequest{ReservationID: d.ReservationID, Bytes: 200})
+	if err != nil || a.ChargedBytes != 200 {
+		t.Fatalf("settle after rejection: %v ack=%+v", err, a)
 	}
 	if got := svc.UsedBytes(); got != 200 {
-		t.Fatalf("inflight-only reservations must not charge, used=%d", got)
+		t.Fatalf("expected used 200 after exact settlement, got %d", got)
 	}
 }
 
@@ -244,10 +259,7 @@ func TestConcurrentReservesNeverExceedCapacity(t *testing.T) {
 		perTicket = int64(100)
 		total     = 40
 	)
-	client, svc := newQuotaTestServer(t, 1000, capacity)
-	// Raise the local in-flight allowance so the 40 concurrent attempts
-	// exercise service capacity, not client saturation.
-	client.slots = make(chan struct{}, total)
+	client, svc := newQuotaTestServer(t, 1000, capacity, total)
 	ctx := context.Background()
 
 	var mu sync.Mutex
@@ -424,5 +436,210 @@ func TestClientSaturationReturnsBusyWithoutQueue(t *testing.T) {
 	once.Do(func() { close(release) })
 	if err := <-done; err != nil {
 		t.Fatalf("first call should succeed: %v", err)
+	}
+}
+
+// newComposedQuotaServer serves one socket with the policy reference
+// service and the storage quota routes behind a single handler — the same
+// composition as backend/examples/policy-service. The returned counter
+// tracks how many transport connections the server has accepted.
+func newComposedQuotaServer(t *testing.T, maxInFlight int) (*hosting.Client, *hosting.ReferenceService, *ReferenceQuotaService, *atomic.Int32) {
+	t.Helper()
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "combined.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := hosting.NewReferenceService(64)
+	if err := policy.SetPolicy("p1", map[string]bool{hosting.FunctionExecute: true}); err != nil {
+		t.Fatal(err)
+	}
+	quota := NewReferenceQuotaService(64, 1<<20)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/hello":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(hosting.Hello{
+				Version:        hosting.Version,
+				Implementation: "test-composed",
+				Capabilities:   []string{hosting.FunctionExecute, CapabilityStorageReserve},
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/storage/"):
+			quota.ServeHTTP(w, r)
+		default:
+			policy.ServeHTTP(w, r)
+		}
+	})
+	var connections atomic.Int32
+	server := &http.Server{Handler: handler, ConnState: func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() { _ = server.Close(); _ = ln.Close() })
+
+	root, err := hosting.NewClient(hosting.Config{Enabled: true, SocketPath: socket, Timeout: 2 * time.Second, MaxInFlight: maxInFlight})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(root.Close)
+	return root, policy, quota, &connections
+}
+
+func TestBorrowedClientReusesRootConnections(t *testing.T) {
+	root, _, _, connections := newComposedQuotaServer(t, 8)
+	borrowed, err := NewClientFromRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// Interleaved policy and storage calls share one persistent transport:
+	// no connection duplication between the two protocols.
+	for i := 0; i < 5; i++ {
+		if _, err := root.Check(ctx, hosting.FunctionExecute); err != nil {
+			t.Fatalf("policy check %d: %v", i, err)
+		}
+		d, err := borrowed.ReserveStorage(ctx, ReserveStorageRequest{
+			RequestID: fmt.Sprintf("rq-%d", i), Purpose: PurposeUpload, Bytes: 1,
+		})
+		if err != nil || !d.Allowed {
+			t.Fatalf("storage reserve %d: %v %+v", i, err, d)
+		}
+	}
+	if n := connections.Load(); n != 1 {
+		t.Fatalf("expected one shared persistent connection, got %d", n)
+	}
+
+	// A borrowed client must not close the shared root: both protocols
+	// keep working after its Close, which is a deliberate no-op.
+	borrowed.Close()
+	if _, err := root.Check(ctx, hosting.FunctionExecute); err != nil {
+		t.Fatalf("borrowed Close must not close the shared root: %v", err)
+	}
+	if _, err := borrowed.ReserveStorage(ctx, ReserveStorageRequest{RequestID: "rq-after-close", Purpose: PurposeUpload, Bytes: 1}); err != nil {
+		t.Fatalf("borrowed client must keep working after Close: %v", err)
+	}
+	if n := connections.Load(); n != 1 {
+		t.Fatalf("expected the shared connection to survive the borrowed Close, got %d connections", n)
+	}
+}
+
+func TestBorrowedClientSharesRootInFlightBudget(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "shared.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	release := make(chan struct{})
+	var connections atomic.Int32
+	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, ConnState: func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/check":
+			// Hold the only slot so the concurrent storage call must
+			// observe the shared budget.
+			<-release
+			_, _ = w.Write([]byte(`{"allowed":true,"code":"allowed","policyVersion":"p1"}`))
+		case "/v1/storage/reserve":
+			_, _ = w.Write([]byte(`{"allowed":true,"code":"allowed","policyVersion":"p1","reservationId":"r1"}`))
+		default:
+			w.WriteHeader(http.StatusTeapot)
+		}
+	})}
+	go func() { _ = server.Serve(ln) }()
+	var once sync.Once
+	t.Cleanup(func() {
+		_ = server.Close()
+		once.Do(func() { close(release) })
+	})
+
+	root, err := hosting.NewClient(hosting.Config{Enabled: true, SocketPath: socket, Timeout: 2 * time.Second, MaxInFlight: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(root.Close)
+	borrowed, err := NewClientFromRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := root.Check(ctx, hosting.FunctionExecute)
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	// The storage client saturates on the ROOT budget: it must return
+	// ErrBusy instead of opening a second transport connection.
+	if _, err := borrowed.ReserveStorage(ctx, ReserveStorageRequest{RequestID: "rq-1", Purpose: PurposeUpload, Bytes: 1}); !errors.Is(err, hosting.ErrBusy) {
+		t.Fatalf("expected shared ErrBusy saturation, got %v", err)
+	}
+	once.Do(func() { close(release) })
+	if err := <-done; err != nil {
+		t.Fatalf("policy call should succeed: %v", err)
+	}
+	// After the slot frees, the storage client uses the same connection.
+	if _, err := borrowed.ReserveStorage(ctx, ReserveStorageRequest{RequestID: "rq-2", Purpose: PurposeUpload, Bytes: 1}); err != nil {
+		t.Fatalf("reserve after slot freed: %v", err)
+	}
+	if n := connections.Load(); n != 1 {
+		t.Fatalf("expected a single shared transport connection, got %d", n)
+	}
+}
+
+func TestBorrowedClientInvalidResponseFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "bad.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	var connections atomic.Int32
+	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, ConnState: func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/storage/reserve":
+			// Unknown field: must map to ErrProtocol, never permission.
+			_, _ = w.Write([]byte(`{"allowed":true,"code":"allowed","policyVersion":"p1","reservationId":"r1","extra":1}`))
+		default:
+			w.WriteHeader(http.StatusTeapot)
+		}
+	})}
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	root, err := hosting.NewClient(hosting.Config{Enabled: true, SocketPath: socket, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(root.Close)
+	borrowed, err := NewClientFromRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := borrowed.ReserveStorage(ctx, ReserveStorageRequest{RequestID: "rq", Purpose: PurposeUpload, Bytes: 1}); !errors.Is(err, hosting.ErrProtocol) {
+		t.Fatalf("expected malformed response as ErrProtocol, got %v", err)
+	}
+}
+
+func TestNewClientFromRootNil(t *testing.T) {
+	if _, err := NewClientFromRoot(nil); !errors.Is(err, hosting.ErrUnavailable) {
+		t.Fatalf("expected nil root rejection, got %v", err)
 	}
 }

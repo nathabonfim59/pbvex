@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nathabonfim59/pbvex/backend/hosting"
+	"github.com/nathabonfim59/pbvex/backend/hosting/storagequota"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -78,9 +79,14 @@ func readPersistedSettings(t *testing.T, app *tests.TestApp) hostedSettingsRow {
 }
 
 // newHostedTestApp boots a full test app with hosting integration enabled
-// against an in-process reference policy service, and exposes the built
-// PocketBase router so native endpoints can be exercised.
-func newHostedTestApp(t *testing.T, mutate func(*Config)) (*tests.TestApp, *hosting.ReferenceService, *http.Server, http.Handler) {
+// against an in-process provider on one Unix socket and exposes the built
+// PocketBase router so native endpoints can be exercised. With withQuota
+// the provider is the example-compatible composition: the policy reference
+// service and the storage byte quota reference service share the socket,
+// and the composed /v1/hello lists both capabilities, exactly like
+// backend/examples/policy-service. Without it the socket serves the
+// policy-only reference service, so RegisterCore must refuse startup.
+func newHostedTestApp(t *testing.T, mutate func(*Config), withQuota bool) (*tests.TestApp, *hosting.ReferenceService, *storagequota.ReferenceQuotaService, *http.Server, http.Handler) {
 	t.Helper()
 	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{})
 	if err != nil {
@@ -93,7 +99,16 @@ func newHostedTestApp(t *testing.T, mutate func(*Config)) (*tests.TestApp, *host
 		t.Fatal(err)
 	}
 	service := hosting.NewReferenceService(64)
-	server := &http.Server{Handler: service}
+	if err := service.SetPolicy("p1", map[string]bool{hosting.FunctionExecute: true}); err != nil {
+		t.Fatal(err)
+	}
+	var quota *storagequota.ReferenceQuotaService
+	var provider http.Handler = service
+	if withQuota {
+		quota = storagequota.NewReferenceQuotaService(64, hostedDemoQuotaCapacity)
+		provider = composedProviderHandler(service, quota)
+	}
+	server := &http.Server{Handler: provider, ReadHeaderTimeout: 5 * time.Second}
 	go server.Serve(l)
 
 	cfg := DefaultConfig()
@@ -144,7 +159,7 @@ func newHostedTestApp(t *testing.T, mutate func(*Config)) (*tests.TestApp, *host
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { server.Close(); app.Cleanup() })
-	return app, service, server, mux
+	return app, service, quota, server, mux
 }
 
 func hostedJSONRequest(t *testing.T, mux http.Handler, app *tests.TestApp, method, path, body string) *httptest.ResponseRecorder {
@@ -161,9 +176,9 @@ func hostedJSONRequest(t *testing.T, mux http.Handler, app *tests.TestApp, metho
 }
 
 func TestHostManagedStorageShadowAndPersistedBaseline(t *testing.T) {
-	app, _, _, mux := newHostedTestApp(t, func(c *Config) {
+	app, _, _, _, mux := newHostedTestApp(t, func(c *Config) {
 		c.HostManagedStorageS3 = hostedManagedStorage()
-	})
+	}, true)
 
 	// Runtime view: the in-memory settings carry the host values so native
 	// consumers (filesystems, mailer) use them.
@@ -200,9 +215,9 @@ func TestHostManagedStorageShadowAndPersistedBaseline(t *testing.T) {
 }
 
 func TestHostManagedSMTPShadowAndMailClient(t *testing.T) {
-	app, _, _, mux := newHostedTestApp(t, func(c *Config) {
+	app, _, _, _, mux := newHostedTestApp(t, func(c *Config) {
 		c.SMTP = hostedManagedSMTP()
-	})
+	}, true)
 
 	if !app.Settings().SMTP.Enabled || app.Settings().SMTP.Password != hostSMTPPass {
 		t.Fatalf("shadowed SMTP settings = %+v", app.Settings().SMTP)
@@ -228,10 +243,10 @@ func TestHostManagedSMTPShadowAndMailClient(t *testing.T) {
 }
 
 func TestHostManagedSettingsEditBoundaries(t *testing.T) {
-	app, service, _, mux := newHostedTestApp(t, func(c *Config) {
+	app, service, _, _, mux := newHostedTestApp(t, func(c *Config) {
 		c.HostManagedStorageS3 = hostedManagedStorage()
 		c.SMTP = hostedManagedSMTP()
-	})
+	}, true)
 
 	// An unrelated settings edit is allowed and keeps the managed values out
 	// of the database while the runtime keeps using them.
@@ -301,10 +316,10 @@ func TestHostManagedSettingsEditBoundaries(t *testing.T) {
 }
 
 func TestHostManagedWholeSettingsSaveStaysNeutral(t *testing.T) {
-	app, _, _, _ := newHostedTestApp(t, func(c *Config) {
+	app, _, _, _, _ := newHostedTestApp(t, func(c *Config) {
 		c.HostManagedStorageS3 = hostedManagedStorage()
 		c.SMTP = hostedManagedSMTP()
-	})
+	}, true)
 
 	// Internal code paths persist the whole in-memory settings object (for
 	// example the rate limit relabeling hook in PocketBase). The managed
@@ -395,7 +410,8 @@ func TestHostManagedBaselineRewritesPersistedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := hosting.NewReferenceService(8)
-	server := &http.Server{Handler: service}
+	quota := storagequota.NewReferenceQuotaService(8, hostedDemoQuotaCapacity)
+	server := &http.Server{Handler: composedProviderHandler(service, quota)}
 	go server.Serve(l)
 	defer server.Close()
 

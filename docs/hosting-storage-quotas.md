@@ -14,9 +14,11 @@ configuration as the local policy protocol in
 JSON over a persistent Unix socket, `--hostingEnabled`/`--hostingSocket`
 bootstrap, one service endpoint per tenant, 16,384-byte payloads, bounded
 client capacity (`ErrBusy`, no waiting queue), and **no silent downgrade**.
-A single provider socket can serve both the `/v1` policy routes and the
-`/v1/storage/` routes below. The same `hosting.Config` bootstraps both
-clients.
+A single provider socket serves both the `/v1` policy routes and the
+`/v1/storage/` routes below through one shared client, connection pool and
+in-flight budget. Hosting enabled enforces storage quotas: the provider
+must serve the storage routes and list the `storage.reserve` capability in
+the shared handshake, or startup fails (see the wiring section below).
 
 ## Guarantees and non-guarantees
 
@@ -45,8 +47,9 @@ clients.
   persisted, and native thumbnail generation is denied outright while
   quotas are enforced (see coverage below). Settled usage may only be
   freed by a verified credit or provider reconciliation; the provider
-  clamps settlements to the reserved bound, so a caller cannot raise its
-  own charge.
+  rejects a settlement above the reserved bound as a protocol conflict
+  and keeps the reservation for reconciliation, so a caller cannot raise
+  its own charge or silently acknowledge an undercount.
 - **Sanitized diagnostics.** Provider, transport and custom observer errors
   are never logged or returned verbatim; only fixed classifications and
   protocol identifiers cross the log stream.
@@ -54,10 +57,11 @@ clients.
   periods, reservation expiry and the production provider itself. The
   reference service below is a bounded in-memory compatibility fixture, not
   a durable ledger. **Backup archives are not covered by reservations**:
-  while quotas are enforced, the platform must deny `backup.create` (the
-  policy protocol's capability gate) because an allowed backup writes
-  archive bytes with no pre-write size bound. Restores remain
-  unconditionally rejected while hosting is enabled.
+  an allowed backup writes archive bytes with no pre-write size bound, so
+  while quotas are enforced the platform denies backup creation outright —
+  the `backup.create` capability grant is deliberately not consulted
+  because it could bypass the byte quota. Restores remain unconditionally
+  rejected while hosting is enabled.
 
 ## Wire contract (version 1)
 
@@ -91,8 +95,11 @@ when allowed and a bounded code when denied (`quota_exhausted`,
 `denied`, `suspended` are recommended).
 
 `POST /v1/storage/settle` — `{"reservationId":"r1","bytes":4096}` —
-transitions the reservation to the actual stored count (clamped to the
-reserved bound) and acknowledges `{"reservationId":"r1","chargedBytes":4096}`.
+transitions the reservation to the actual stored count and acknowledges
+`{"reservationId":"r1","chargedBytes":4096}`. A settlement above the
+reserved bound is a protocol conflict (HTTP 409): the provider rejects it
+and keeps the reservation and its usage reserved for reconciliation
+instead of acknowledging an undercount.
 `POST /v1/storage/release` — `{"reservationId":"r1"}` — returns a
 reservation whose write definitively did not persist. Settling a released
 reservation, releasing a settled one, or conflicting bodies under the same
@@ -188,13 +195,15 @@ no longer write, never allow an unreserved write.
 
 ## Documented gaps
 
-- **Backup archives are not reserved.** An allowed backup creation writes a
-  zip archive through the backups filesystem with no pre-write size bound.
-  Until this path is covered, the platform must deny the `backup.create`
-  capability whenever storage quotas are enforced; the quota layer itself
-  does not and cannot cover it. Restores remain unconditionally rejected
-  while hosting is enabled, so a restore cannot write unreserved bytes
-  either.
+- **Backup archives are not reserved.** An allowed backup creation would
+  write a zip archive through the backups filesystem with no pre-write
+  size bound, so it can never be covered by this quota layer. The platform
+  therefore denies backup creation outright whenever hosting is enabled:
+  the API refuses before scheduling and the `OnBackupCreate` hook refuses
+  scheduled and programmatic creates, and the `backup.create` capability
+  grant is deliberately not consulted because it could bypass the byte
+  quota. Restores remain unconditionally rejected while hosting is
+  enabled, so a restore cannot write unreserved bytes either.
 - **Record deletion keeps usage reserved.** Because upstream cleanup is
   asynchronous, deleted record bytes stay charged until the provider
   reconciles the object store; the quota layer never credits unverified
@@ -230,19 +239,49 @@ svc := storagequota.NewReferenceQuotaService(1000, 1<<30) // 1000 records, 1 GiB
 ```
 
 It keeps bounded in-memory records, never evicts live ones (full means 503
-while identical retries still work), loses everything on restart, and
-performs no reconciliation. **It is not a production durable ledger or
-quota implementation.**
+while identical retries still work), loses everything on restart, performs
+no reconciliation, and rejects above-bound settlements as conflicts.
+**It is not a production durable ledger or quota implementation.** A single
+socket can serve the policy routes and the storage routes behind one
+handler that dispatches `/v1/storage/*` to the quota service and composes
+the handshake so the capability list covers both protocols — exactly what
+`go run ./examples/policy-service` does with its in-memory demo capacity
+(flags `--quotaRecords` and `--quotaBytes`; state is lost on restart).
 
-The embedding side wires three calls (the parent application owns the
-configuration surface):
+### Wiring and handshake compatibility
+
+Hosting enabled enforces storage quotas; there is no separate bootstrap
+flag and no silent downgrade. At startup the shared `/v1/hello` handshake
+must list the `storage.reserve` capability, and startup fails with an
+explicit error otherwise, so an enabled deployment can never silently
+depend on a provider that cannot account bytes. Providers extend a
+policy-only endpoint by serving the `/v1/storage/` routes and adding the
+capability to the composed hello; the protocol version string is shared,
+so a future incompatible quota protocol would be a new version.
+
+The embedding wiring (the `pbvex` binary does this inside `RegisterCore`;
+the parent application owns the configuration surface):
 
 ```go
-client, err := storagequota.NewClient(cfg.Hosting) // hosting.Config, enabled
-observer := storage.NewHostedQuotaObserver(client)
-storageService.SetQuotaObserver(observer)
-storageService.InstallNativeQuotaHooks(app) // core.App: native record hooks + thumb gate
+client, hello, _ := newHostingClient(cfg.Hosting) // handshake, fail on error
+if !storagequota.SupportsReserve(hello) { /* fail startup */ }
+quotaClient, _ := storagequota.NewClientFromRoot(client) // borrowed transport
+storageService.SetQuotaObserver(storage.NewHostedQuotaObserver(quotaClient))
+storageService.InstallNativeQuotaHooks(app) // native record hooks + thumb gate
 ```
+
+The observer and the native hooks are installed before the storage service
+starts, so no write path can run unaccounted. `NewClientFromRoot` sends
+storage requests through `hosting.Client.Call(ctx, path, in, out)` — the
+policy client's own bounded transport — so one socket, one persistent
+connection pool and one in-flight budget are shared per application; the
+borrowed client's `Close` is a no-op and terminate closes the root client
+once. `Call` accepts only relative endpoints below `/v1` (protocol-token
+segments, no traversal, query, fragment or authority) and rejects anything
+else with a protocol error before dialing. Standalone single-protocol
+callers (compatibility tests, providers without the policy routes) can use
+`storagequota.NewClient(cfg.Hosting)`, which owns its root transport and
+closes it.
 
 `NewHostedQuotaObserver` maps denials to `storage.ErrQuotaDenied` and
 everything else — transport failures, saturation, malformed responses, any
@@ -253,7 +292,15 @@ write closed. Focused validation lives in `backend/internal/storage`
 exact variant reservations, deletion crediting only on verified removal,
 record-deletion usage retention, concurrent uploads against a
 capacity-limited observer, native record hooks and the thumbnail gate
-exercised end to end through the real router) and in
+exercised end to end through the real router), in
 `backend/hosting/storagequota` (wire round-trips, idempotent replays,
-conflicts, settlement clamping to the reserved bound, atomic capacity under
-concurrency, saturation and malformed responses).
+conflicts, above-bound settlement rejection preserving the reservation,
+atomic capacity under concurrency, saturation, malformed responses, and
+shared-transport reuse, budget and close semantics), in
+`backend/hosting` (endpoint path constraints of `Call`), and in
+`backend/internal/pbvex` (startup handshake compatibility against a
+policy-only provider, full startup smoke over the example-compatible
+composed provider with uploads, variants and native record files through
+the real router, fail-closed denial before writes, native thumbnail
+denial with cached variants still served, unchanged standalone behavior,
+and terminate closing the shared transport).

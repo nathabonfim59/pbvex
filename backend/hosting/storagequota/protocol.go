@@ -74,7 +74,8 @@ type SettleStorageRequest struct {
 }
 
 // SettleStorageAck acknowledges one settlement. ChargedBytes echoes what
-// the provider actually charged after clamping to the reserved bound.
+// the provider actually charged; a settlement above the reserved bound is
+// rejected as a conflict, so it never exceeds the reservation.
 type SettleStorageAck struct {
 	ReservationID string `json:"reservationId"`
 	ChargedBytes  int64  `json:"chargedBytes"`
