@@ -178,7 +178,10 @@ __pbvex.registerFunction({name:"write",type:"mutation",visibility:"internal",mod
 __pbvex.registerFunction({name:"read",type:"query",visibility:"internal",modulePath:"pbvex/components/widget/store.ts",exportName:"read"}, async function(ctx,args){ const user=await ctx.auth.getUserIdentity(); const doc=ctx.db.get(args.id); return {owner:doc.owner,subject:user.subject,token:user.tokenIdentifier}; });
 __pbvex.registerFunction({name:"outer",type:"action",visibility:"public",modulePath:"pbvex/root.ts",exportName:"outer"}, async function(ctx){ const id=await ctx.runMutation("write",{}); return ctx.runQuery("read",{id:id}); });
 })();`
-	manager := NewManager(DefaultConfig())
+	observer := &executionRecorder{}
+	config := DefaultConfig()
+	config.ExecutionObserver, config.MaxConcurrentExecutions = observer, 1
+	manager := NewManager(config)
 	if err := manager.Compile("components-auth", bundle, descriptors, deploy.DefaultDeploymentConfig); err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +197,28 @@ __pbvex.registerFunction({name:"outer",type:"action",visibility:"public",moduleP
 	}
 	if count, err := backingRecordCountForTest(app, physical); err != nil || count != 1 {
 		t.Fatalf("component write did not use its physical collection: count=%d err=%v", count, err)
+	}
+	var root ExecutionInfo
+	children := 0
+	for _, info := range observer.starts {
+		if info.FunctionName == "outer" {
+			root = info
+		}
+	}
+	for _, info := range observer.starts {
+		if info.FunctionName != "write" && info.FunctionName != "read" {
+			continue
+		}
+		children++
+		if info.Namespace != namespaces["widget"].ID || info.ParentID != root.ID || info.RootID != root.ID || info.Depth != 1 {
+			t.Fatalf("component execution correlation lost: %#v", info)
+		}
+		if len(observer.ends[info.ID]) != 1 || observer.ends[info.ID][0].Err != nil {
+			t.Fatalf("component completion lost: %#v", observer.ends[info.ID])
+		}
+	}
+	if children != 2 {
+		t.Fatalf("component executions missing: %#v", observer.starts)
 	}
 }
 

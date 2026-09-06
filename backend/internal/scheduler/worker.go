@@ -344,10 +344,19 @@ func (w *Worker) runJob(record *core.Record) {
 	}
 	defer execCancel()
 
-	result, err := w.service.executor.InvokeDeploymentSnapshot(execCtx, deploymentID, bundleHash, functionName, args)
+	result, err := w.service.executor.InvokeDeploymentSnapshot(deploy.WithExecutionOrigin(execCtx, "scheduler"), deploymentID, bundleHash, functionName, args)
 	renewCancel()
 	renewWg.Wait()
 	if err != nil {
+		var admission *deploy.ExecutionAdmissionError
+		if errors.As(err, &admission) {
+			if admission.Started {
+				w.fail(record, err)
+			} else {
+				w.deferAdmission(record)
+			}
+			return
+		}
 		if deploy.IsExpectedApplicationError(err) {
 			err = &handledHandlerFailure{err: err}
 		} else if w.service.app != nil && deploy.LogUnexpectedHandlerFailure(w.service.app, err, deploy.HandlerFailureContext{
@@ -595,6 +604,35 @@ func (w *Worker) retry(record *core.Record) {
 	}
 }
 
+// Admission failure is not a user-code retry. Defer at least a minute, refund
+// the claimed attempt and retain the pinned snapshot. The lease CAS prevents
+// a stale worker from changing a newer attempt. Cron still has no backfill.
+func (w *Worker) deferAdmission(record *core.Record) {
+	delay := w.service.config.RetryMaxDelay
+	if delay < time.Minute {
+		delay = time.Minute
+	}
+	attempts := record.GetInt(schema.FieldAttempts) - 1
+	if attempts < 0 {
+		attempts = 0
+	}
+	now := w.clock.Now()
+	_, err := w.service.app.DB().Update(schema.CollectionJobs, dbx.Params{
+		schema.FieldStatus:         JobStatusPending,
+		schema.FieldScheduledAt:    dateTime(now.Add(delay)),
+		schema.FieldAttempts:       attempts,
+		schema.FieldLease:          "",
+		schema.FieldLeaseExpiresAt: types.DateTime{},
+		schema.FieldUpdated:        dateTime(now),
+		schema.FieldError:          "Execution admission unavailable or denied.",
+	}, dbx.NewExp("id = {:id} AND status = {:running} AND lease = {:lease}", dbx.Params{
+		"id": record.Id, "running": JobStatusRunning, "lease": record.GetString(schema.FieldLease),
+	})).Execute()
+	if err != nil {
+		w.service.app.Logger().Warn("job admission deferral failed", "jobId", record.Id, "error", err)
+	}
+}
+
 func (w *Worker) release(record *core.Record) {
 	now := dateTime(w.clock.Now())
 	res, err := w.service.app.DB().Update(
@@ -629,6 +667,9 @@ func (w *Worker) release(record *core.Record) {
 func errorType(err error) string {
 	if err == nil {
 		return ""
+	}
+	if deploy.IsExecutionAdmissionError(err) {
+		return "execution_admission"
 	}
 	if errors.Is(err, errMaxAttemptsExceeded) {
 		return "max_attempts"

@@ -24,6 +24,8 @@ const (
 // It is immutable except for the context/deadline information and the nested
 // call bookkeeping.
 type Invocation struct {
+	finishExecution    func(error)
+	stopExecutionTimer func() bool
 	// Ctx is the caller context for cancellation and deadlines.
 	Ctx context.Context
 

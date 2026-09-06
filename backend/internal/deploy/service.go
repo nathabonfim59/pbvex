@@ -294,7 +294,7 @@ func (s *Service) UploadContext(ctx context.Context, raw any) (*DeploymentUpload
 	bundleJS := string(bundleBytes)
 
 	if err := verifyRuntime(s.invoker, ctx, manifest.DeploymentID, bundleJS, manifest.Functions, manifest.Migrations); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidBundle, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidBundle, err)
 	}
 
 	existing, err := s.repo.GetDeployment(s.internalCtxFrom(ctx), s.app, manifest.DeploymentID)
@@ -438,7 +438,7 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 
 	deploymentID := record.GetString(schema.FieldDeploymentID)
 	if err := verifyRuntime(s.invoker, ctx, deploymentID, bundleJS, manifest.Functions, manifest.Migrations); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrActivationFailed, err)
 	}
 	if err := compileRuntime(s.invoker, deploymentID, bundleJS, manifest.Functions, manifest.Migrations, NormalizeConfig(manifest.Config)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
@@ -498,7 +498,7 @@ func (s *Service) ActivateContext(ctx context.Context, id string, atomic bool) (
 		}
 		budget := &migrationBudget{}
 		if err := s.applyMigrationPlans(internalCtx, txApp, deploymentID, "up", manifest, plans, now, budget); err != nil {
-			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+			return fmt.Errorf("%w: %w", ErrActivationFailed, err)
 		}
 		materializeCtx := withMigrationMaterialization(internalCtx, budget, skipMaterialization)
 		if err := materializeSchema(materializeCtx, txApp, manifest); err != nil {
@@ -1358,7 +1358,7 @@ func (s *Service) RollbackContext(ctx context.Context, id string) (*DeploymentRo
 		return nil, err
 	}
 	if err := verifyRuntime(s.invoker, ctx, id, currentBundle, currentManifest.Functions, currentManifest.Migrations); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrActivationFailed, err)
 	}
 	if err := compileRuntime(s.invoker, id, currentBundle, currentManifest.Functions, currentManifest.Migrations, NormalizeConfig(currentManifest.Config)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrActivationFailed, err)
@@ -1396,7 +1396,7 @@ func (s *Service) RollbackContext(ctx context.Context, id string) (*DeploymentRo
 		}
 		budget := &migrationBudget{}
 		if err := s.applyMigrationPlans(internalCtx, txApp, id, "down", restoredManifest, plans, now, budget); err != nil {
-			return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+			return fmt.Errorf("%w: %w", ErrActivationFailed, err)
 		}
 		if err := materializeSchema(withMigrationMaterialization(internalCtx, budget, skipMaterialization), txApp, restoredManifest); err != nil {
 			return err
@@ -1852,7 +1852,7 @@ func (s *Service) WarmActive() error {
 		return fmt.Errorf("%w: %v", ErrActivationFailed, err)
 	}
 	if err := verifyRuntime(s.invoker, context.Background(), deploymentID, bundleJS, manifest.Functions, manifest.Migrations); err != nil {
-		return fmt.Errorf("%w: %v", ErrActivationFailed, err)
+		return fmt.Errorf("%w: %w", ErrActivationFailed, err)
 	}
 	if s.activationObserver != nil {
 		s.activationObserver.ActiveDeploymentChanged(deploymentID, manifest)
