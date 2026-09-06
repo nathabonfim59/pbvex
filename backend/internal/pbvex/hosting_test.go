@@ -28,7 +28,12 @@ func TestHostingSettingsAndRestore(t *testing.T) {
 	server := &http.Server{Handler: service}
 	go server.Serve(l)
 	defer server.Close()
-	if err := registerHosting(app, hosting.Config{Enabled: true, SocketPath: path}); err != nil {
+	client, err := newHostingClient(hosting.Config{Enabled: true, SocketPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err := registerHosting(app, client); err != nil {
 		t.Fatal(err)
 	}
 	check := func(changed bool) error {
@@ -70,10 +75,14 @@ func TestHostingDisabledAndUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Cleanup()
-	if err := registerHosting(app, hosting.Config{}); err != nil {
+	client, err := newHostingClient(hosting.Config{})
+	if err != nil || client != nil {
+		t.Fatal("disabled configuration must not create a client", err)
+	}
+	if err := registerHosting(app, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := registerHosting(app, hosting.Config{Enabled: true, SocketPath: filepath.Join(t.TempDir(), "absent")}); err == nil {
+	if _, err := newHostingClient(hosting.Config{Enabled: true, SocketPath: filepath.Join(t.TempDir(), "absent")}); err == nil {
 		t.Fatal("enabled startup allowed missing provider")
 	}
 }

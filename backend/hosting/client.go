@@ -228,6 +228,13 @@ func (c *Client) Report(ctx context.Context, e Event) error {
 	}
 	return nil
 }
+
+// ValidToken reports whether s satisfies the protocol identifier rules
+// (1-128 ASCII letters/digits or _ - . : /). Callers composing capability or
+// operation identifiers from external input should validate them with this
+// check before sending.
+func ValidToken(s string) bool { return token(s) }
+
 func token(s string) bool {
 	if len(s) == 0 || len(s) > 128 {
 		return false

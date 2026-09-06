@@ -10,20 +10,35 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 )
 
-func registerHosting(app core.App, cfg hosting.Config) error {
+// newHostingClient validates the bootstrap configuration and performs the
+// mandatory startup handshake. A disabled configuration returns (nil, nil)
+// without connecting to any provider. The client is created once per
+// application and shared by the administrative gates and the runtime
+// execution observer.
+func newHostingClient(cfg hosting.Config) (*hosting.Client, error) {
 	if err := cfg.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	if !cfg.Enabled {
-		return nil
+		return nil, nil
 	}
 	client, err := hosting.NewClient(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err = client.Handshake(context.Background()); err != nil {
 		client.Close()
-		return err
+		return nil, err
+	}
+	return client, nil
+}
+
+// registerHosting installs the administrative capability gates. Administrative
+// PocketBase operations stay check-gated only: they are never admitted or
+// reported as protocol events.
+func registerHosting(app core.App, client *hosting.Client) error {
+	if client == nil {
+		return nil
 	}
 	require := func(ctx context.Context, capability string) error {
 		if ctx == nil {
@@ -34,7 +49,6 @@ func registerHosting(app core.App, cfg hosting.Config) error {
 		}
 		return nil
 	}
-	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { client.Close(); return e.Next() })
 	app.OnSettingsUpdateRequest().Bind(&hook.Handler[*core.SettingsUpdateRequestEvent]{Id: "pbvexHostingSettings", Priority: -1000, Func: func(e *core.SettingsUpdateRequestEvent) error {
 		for _, change := range []struct {
 			changed    bool

@@ -103,8 +103,19 @@ func Register(app *pocketbase.PocketBase, cfg Config) error {
 
 // RegisterCore wires PBVex core behavior into any core.App implementation.
 func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator, error) {
-	if err := registerHosting(app, cfg.Hosting); err != nil {
+	client, err := newHostingClient(cfg.Hosting)
+	if err != nil {
 		return nil, nil, err
+	}
+	if client != nil {
+		app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error { client.Close(); return e.Next() })
+		if err := registerHosting(app, client); err != nil {
+			return nil, nil, err
+		}
+		// One shared client gates administrative operations and meters every
+		// observed runtime execution. An externally supplied observer is
+		// composed (external Begin first), never silently overwritten.
+		cfg.Runtime.ExecutionObserver = newHostingExecutionObserver(app.Logger(), client, cfg.Runtime.ExecutionObserver)
 	}
 	repo := deploy.NewRepo()
 	manager := runtime.NewManager(cfg.Runtime)
