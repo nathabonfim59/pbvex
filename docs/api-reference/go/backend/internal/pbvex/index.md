@@ -29,7 +29,7 @@ func ApplySMTPSettings(app core.App, cfg SMTPConfig) error
 ApplySMTPSettings writes the PBVEX\_SMTP\_\* overrides onto the app mail settings and persists them. It is a no\-op when no variable is provided or when every provided value already matches the persisted settings. Saving runs PocketBase's settings validation, so an invalid combination \(for example enabling SMTP without a host\) fails the bootstrap.
 
 <a name="Register"></a>
-## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L66>)
+## func [Register](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L73>)
 
 ```go
 func Register(app *pocketbase.PocketBase, cfg Config) error
@@ -38,7 +38,7 @@ func Register(app *pocketbase.PocketBase, cfg Config) error
 Register wires PBVex behavior into the provided PocketBase application.
 
 <a name="RegisterCore"></a>
-## func [RegisterCore](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L105>)
+## func [RegisterCore](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L112>)
 
 ```go
 func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator, error)
@@ -47,7 +47,7 @@ func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator
 RegisterCore wires PBVex core behavior into any core.App implementation.
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L27-L46>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L29-L53>)
 
 Config configures PBVex registration.
 
@@ -67,7 +67,12 @@ type Config struct {
     Scheduler     scheduler.Config
     Storage       storage.Config
     SMTP          SMTPConfig
-    CORS          api.CORSConfig
+    // HostManagedStorageS3 configures host-owned S3 storage for record files
+    // and backups. It is honored only with hosting integration enabled and
+    // only when Enabled is true; the values are injected into the running
+    // app without being persisted in the tenant database.
+    HostManagedStorageS3 core.S3Config
+    CORS                 api.CORSConfig
     // DevDeployToken grants deployment-only access from loopback requests while
     // it is configured. It must never be configured for a production server.
     DevDeployToken string
@@ -75,7 +80,7 @@ type Config struct {
 ```
 
 <a name="DefaultConfig"></a>
-### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L49>)
+### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/pbvex/pbvex.go#L56>)
 
 ```go
 func DefaultConfig() Config

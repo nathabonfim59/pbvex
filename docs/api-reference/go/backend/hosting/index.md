@@ -50,6 +50,10 @@ const (
     SettingsSMTP    = "settings.smtp.write"
     BackupRestore   = "backup.restore"
     BackupCreate    = "backup.create"
+    // BackupDownload gates superuser backup archive downloads. Archives
+    // contain the tenant database, so hosted deployments keep this
+    // capability denied unless the provider explicitly grants it.
+    BackupDownload  = "backup.download"
     HostScripts     = "host.scripts"
     FunctionExecute = "function.execute"
     // EnvironmentRead is the capability prefix for per-name host environment
@@ -92,7 +96,7 @@ var ErrUnavailable = errors.New("hosting policy unavailable")
 ```
 
 <a name="NewID"></a>
-## func [NewID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L111>)
+## func [NewID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L115>)
 
 ```go
 func NewID() string
@@ -101,7 +105,7 @@ func NewID() string
 
 
 <a name="ValidToken"></a>
-## func [ValidToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L244>)
+## func [ValidToken](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L248>)
 
 ```go
 func ValidToken(s string) bool
@@ -110,7 +114,7 @@ func ValidToken(s string) bool
 ValidToken reports whether s satisfies the protocol identifier rules \(1\-128 ASCII letters/digits or \_ \- . : /\). Callers composing capability or operation identifiers from external input should validate them with this check before sending.
 
 <a name="Ack"></a>
-## type [Ack](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L105-L107>)
+## type [Ack](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L109-L111>)
 
 
 
@@ -121,7 +125,7 @@ type Ack struct {
 ```
 
 <a name="AdmissionRequest"></a>
-## type [AdmissionRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L87-L91>)
+## type [AdmissionRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L91-L95>)
 
 
 
@@ -134,7 +138,7 @@ type AdmissionRequest struct {
 ```
 
 <a name="CheckRequest"></a>
-## type [CheckRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L62-L64>)
+## type [CheckRequest](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L66-L68>)
 
 
 
@@ -145,7 +149,7 @@ type CheckRequest struct {
 ```
 
 <a name="Client"></a>
-## type [Client](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L119-L122>)
+## type [Client](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L123-L126>)
 
 
 
@@ -156,7 +160,7 @@ type Client struct {
 ```
 
 <a name="NewClient"></a>
-### func [NewClient](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L124>)
+### func [NewClient](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L128>)
 
 ```go
 func NewClient(cfg Config) (*Client, error)
@@ -165,7 +169,7 @@ func NewClient(cfg Config) (*Client, error)
 
 
 <a name="Client.Admit"></a>
-### func \(\*Client\) [Admit](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L215>)
+### func \(\*Client\) [Admit](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L219>)
 
 ```go
 func (c *Client) Admit(ctx context.Context, r AdmissionRequest) (Decision, error)
@@ -174,7 +178,7 @@ func (c *Client) Admit(ctx context.Context, r AdmissionRequest) (Decision, error
 
 
 <a name="Client.Check"></a>
-### func \(\*Client\) [Check](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L197>)
+### func \(\*Client\) [Check](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L201>)
 
 ```go
 func (c *Client) Check(ctx context.Context, capability string) (Decision, error)
@@ -183,7 +187,7 @@ func (c *Client) Check(ctx context.Context, capability string) (Decision, error)
 
 
 <a name="Client.Close"></a>
-### func \(\*Client\) [Close](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L143>)
+### func \(\*Client\) [Close](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L147>)
 
 ```go
 func (c *Client) Close()
@@ -192,7 +196,7 @@ func (c *Client) Close()
 
 
 <a name="Client.Handshake"></a>
-### func \(\*Client\) [Handshake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L186>)
+### func \(\*Client\) [Handshake](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L190>)
 
 ```go
 func (c *Client) Handshake(ctx context.Context) (Hello, error)
@@ -201,7 +205,7 @@ func (c *Client) Handshake(ctx context.Context) (Hello, error)
 
 
 <a name="Client.Report"></a>
-### func \(\*Client\) [Report](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L226>)
+### func \(\*Client\) [Report](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L230>)
 
 ```go
 func (c *Client) Report(ctx context.Context, e Event) error
@@ -210,7 +214,7 @@ func (c *Client) Report(ctx context.Context, e Event) error
 
 
 <a name="Client.Require"></a>
-### func \(\*Client\) [Require](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L205>)
+### func \(\*Client\) [Require](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L209>)
 
 ```go
 func (c *Client) Require(ctx context.Context, capability string) error
@@ -219,7 +223,7 @@ func (c *Client) Require(ctx context.Context, capability string) error
 
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L39-L44>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L43-L48>)
 
 Config contains bootstrap configuration only. The service owns dynamic policy.
 
@@ -233,7 +237,7 @@ type Config struct {
 ```
 
 <a name="Config.Validate"></a>
-### func \(Config\) [Validate](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L46>)
+### func \(Config\) [Validate](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L50>)
 
 ```go
 func (c Config) Validate() error
@@ -242,7 +246,7 @@ func (c Config) Validate() error
 
 
 <a name="Decision"></a>
-## type [Decision](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L65-L70>)
+## type [Decision](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L69-L74>)
 
 
 
@@ -256,7 +260,7 @@ type Decision struct {
 ```
 
 <a name="DeniedError"></a>
-## type [DeniedError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L108>)
+## type [DeniedError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L112>)
 
 
 
@@ -265,7 +269,7 @@ type DeniedError struct{ Code string }
 ```
 
 <a name="DeniedError.Error"></a>
-### func \(\*DeniedError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L110>)
+### func \(\*DeniedError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L114>)
 
 ```go
 func (e *DeniedError) Error() string
@@ -274,7 +278,7 @@ func (e *DeniedError) Error() string
 
 
 <a name="Event"></a>
-## type [Event](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L94-L104>)
+## type [Event](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L98-L108>)
 
 Event deliberately has no arbitrary payload or error\-message field.
 
@@ -293,7 +297,7 @@ type Event struct {
 ```
 
 <a name="Hello"></a>
-## type [Hello](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L71-L75>)
+## type [Hello](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L75-L79>)
 
 
 
@@ -306,7 +310,7 @@ type Hello struct {
 ```
 
 <a name="Operation"></a>
-## type [Operation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L76-L86>)
+## type [Operation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/hosting/client.go#L80-L90>)
 
 
 
