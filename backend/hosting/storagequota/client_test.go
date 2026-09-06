@@ -195,6 +195,49 @@ func TestCreditDedupConflictAndFloor(t *testing.T) {
 	}
 }
 
+func TestSettleAboveBoundAndCapacityCannotRaiseChargedUsage(t *testing.T) {
+	client, svc := newQuotaTestServer(t, 100, 500)
+	ctx := context.Background()
+
+	d, err := client.ReserveStorage(ctx, ReserveStorageRequest{
+		RequestID: "rq-1", Purpose: PurposeUpload, Bytes: 200,
+	})
+	if err != nil || !d.Allowed {
+		t.Fatalf("reserve: %v %+v", err, d)
+	}
+	// A settlement above the reserved bound is clamped: the provider must
+	// never let the caller raise its own charge.
+	a, err := client.SettleStorage(ctx, SettleStorageRequest{ReservationID: d.ReservationID, Bytes: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ChargedBytes != 200 {
+		t.Fatalf("expected settlement clamped to the reserved 200, got %d", a.ChargedBytes)
+	}
+	if got := svc.UsedBytes(); got != 200 {
+		t.Fatalf("expected used 200, got %d", got)
+	}
+	// Inflight reservations keep the capacity bound: no combination of
+	// concurrent reserves and settlements can exceed it.
+	for i := 0; i < 3; i++ {
+		d2, err := client.ReserveStorage(ctx, ReserveStorageRequest{
+			RequestID: fmt.Sprintf("rq-%d", i+2), Purpose: PurposeUpload, Bytes: 200,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i < 1 && !d2.Allowed {
+			t.Fatalf("expected 200 to fit remaining capacity, got %+v", d2)
+		}
+		if i >= 1 && d2.Allowed {
+			t.Fatalf("expected capacity exhaustion, got %+v", d2)
+		}
+	}
+	if got := svc.UsedBytes(); got != 200 {
+		t.Fatalf("inflight-only reservations must not charge, used=%d", got)
+	}
+}
+
 func TestConcurrentReservesNeverExceedCapacity(t *testing.T) {
 	const (
 		capacity  = int64(1000)

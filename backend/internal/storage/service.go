@@ -69,10 +69,6 @@ type Service struct {
 	// SetQuotaObserver before the service starts serving traffic.
 	quota QuotaObserver
 
-	// nativeVariants shares thumbnail reservations between concurrent
-	// native files-route requests. Initialized by InstallNativeQuotaHooks.
-	nativeVariants *nativeVariantGate
-
 	thumbPending singleflight.Group
 	thumbSem     *semaphore.Weighted
 }
@@ -317,7 +313,7 @@ func (s *Service) deleteBlob(record *core.Record, fileKey string) error {
 	storageID := record.GetString(schema.FieldStorageID)
 	if listErr != nil {
 		s.app.Logger().Warn("storage deletion bytes not credited; listing failed",
-			"storageId", storageID, "error", listErr)
+			"storageId", storageID, "classification", classifyQuotaError(listErr))
 	} else {
 		s.quotaCredit(QuotaCreditRequest{
 			OpID:      quotaDeleteOpID(storageID),

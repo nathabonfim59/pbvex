@@ -225,7 +225,7 @@ func TestNativeUpdateReplacementSettlesAndCredits(t *testing.T) {
 	}
 }
 
-func TestNativeRecordDeleteCredits(t *testing.T) {
+func TestNativeRecordDeleteRetainsUsageUntilReconciliation(t *testing.T) {
 	obs := newFakeQuotaObserver()
 	app, _, collection := newNativeQuotaApp(t, obs)
 
@@ -243,10 +243,59 @@ func TestNativeRecordDeleteCredits(t *testing.T) {
 	if err := app.Delete(stored); err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
+	// Upstream deletes the record files asynchronously, so absence cannot
+	// be verified synchronously: the conservative hard-quota behavior
+	// retains the settled usage (no credit) for provider reconciliation.
 	_, credited, _ := obs.totals()
-	if credited != 210 {
-		t.Fatalf("expected credited %d, got %d (log: %v)", 210, credited, obs.callLog())
+	if credited != 0 {
+		t.Fatalf("record deletion must not free the allowance, credited=%d (log: %v)", credited, obs.callLog())
 	}
+	if n := obs.callCount("credit("); n != 0 {
+		t.Fatalf("expected no credit reports on record deletion, log: %v", obs.callLog())
+	}
+}
+
+func TestNativeConfirmedRemovalVerificationIsConservative(t *testing.T) {
+	obs := newFakeQuotaObserver()
+	app, svc, collection := newNativeQuotaApp(t, obs)
+
+	record := core.NewRecord(collection)
+	record.Set("slug", "verify")
+	record.Set("doc", []*filesystem.File{nativeTempFile(t, 150)})
+	if err := app.Save(record); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := app.FindRecordById(collection, record.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := nativePlainNames(stored.GetRaw("doc"))
+	if len(names) != 1 {
+		t.Fatalf("expected one stored file, got %v", names)
+	}
+	captured, ok := svc.nativeRemovalOf(app, stored, names[0])
+	if !ok || captured.Size != 150 {
+		t.Fatalf("expected captured removal of 150 bytes, got %+v ok=%v", captured, ok)
+	}
+
+	// While the object is still present (upstream removal failed), the
+	// verification must free nothing.
+	if freed := svc.nativeConfirmedRemovalBytes(app, stored, captured); freed != 0 {
+		t.Fatalf("existing object must not be credited, freed=%d", freed)
+	}
+	// After the object is verifiably gone the captured bytes are freed.
+	fs, err := app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Delete(stored.BaseFilesPath() + "/" + names[0]); err != nil {
+		t.Fatal(err)
+	}
+	fs.Close()
+	if freed := svc.nativeConfirmedRemovalBytes(app, stored, captured); freed != 150 {
+		t.Fatalf("expected confirmed removal to free 150 bytes, got %d", freed)
+	}
+	_ = obs
 }
 
 // newNativePhotoCollection extends the qfiles collection with a
@@ -299,56 +348,8 @@ func nativeServeRouter(t *testing.T, app core.App) http.Handler {
 	return mux
 }
 
-func TestNativeThumbGateReservesGeneratesAndSettles(t *testing.T) {
+func TestNativeThumbGateFailsClosedWhenQuotaEnforced(t *testing.T) {
 	obs := newFakeQuotaObserver()
-	app, svc, collection := newNativeQuotaApp(t, obs)
-	newNativePhotoCollection(t, app, collection)
-	record := newNativePhotoRecord(t, app, collection, "photo", 32, 24)
-	stored := record.GetStringSlice("photo")
-	if len(stored) != 1 {
-		t.Fatalf("expected one stored photo, got %v", stored)
-	}
-	_ = svc
-
-	mux := nativeServeRouter(t, app)
-	url := fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0])
-
-	// First request: the gate reserves, upstream generates, settle follows.
-	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, url, nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected served thumb, got status %d: %s", rr.Code, rr.Body.String())
-	}
-	if n := obs.callCount("settle(native-variant-"); n != 1 {
-		t.Fatalf("expected one native variant settlement, log: %v", obs.callLog())
-	}
-	settled, _, _ := obs.totals()
-	if settled <= int64(len(testPNGBytes(t, 32, 24))) {
-		t.Fatalf("expected variant bytes settled beyond the original, settled=%d", settled)
-	}
-
-	// A second request is served from the existing variant: no new write.
-	before := obs.callCount("reserve(")
-	rr2 := httptest.NewRecorder()
-	mux.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, url, nil))
-	if rr2.Code != http.StatusOK {
-		t.Fatalf("expected cached thumb, got %d", rr2.Code)
-	}
-	if after := obs.callCount("reserve("); after != before {
-		t.Fatal("existing variant must not reserve again")
-	}
-
-	// Requests without a thumb parameter never consult the gate.
-	rr3 := httptest.NewRecorder()
-	mux.ServeHTTP(rr3, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/files/qfiles/%s/%s", record.Id, stored[0]), nil))
-	if rr3.Code != http.StatusOK {
-		t.Fatalf("expected served original, got %d", rr3.Code)
-	}
-}
-
-func TestNativeThumbGateDeniedFailsClosed(t *testing.T) {
-	obs := newFakeQuotaObserver()
-	obs.denyVariant = true
 	app, svc, collection := newNativeQuotaApp(t, obs)
 	newNativePhotoCollection(t, app, collection)
 	record := newNativePhotoRecord(t, app, collection, "deniedphoto", 16, 12)
@@ -356,10 +357,20 @@ func TestNativeThumbGateDeniedFailsClosed(t *testing.T) {
 	_ = svc
 
 	mux := nativeServeRouter(t, app)
+	url := fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0])
+
+	// Snapshot the upload-phase reservations: the denied generation must
+	// not add any quota activity of its own.
+	beforeLog := len(obs.callLog())
 	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0]), nil))
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, url, nil))
+	// No exact reservation is possible on the unhookable native generation
+	// path: it must be denied before any bytes are written.
 	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected fail-closed 500 for denied variant, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf("expected fail-closed 500 for native generation, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(obs.callLog()) != beforeLog {
+		t.Fatalf("the native gate must not pretend an approximate reservation, log: %v", obs.callLog())
 	}
 	fs, err := app.NewFilesystem()
 	if err != nil {
@@ -375,7 +386,84 @@ func TestNativeThumbGateDeniedFailsClosed(t *testing.T) {
 	}
 }
 
-func TestNativeThumbGateConcurrentRequestsShareOneReservation(t *testing.T) {
+func TestNativeThumbCachedVariantServesWhenQuotaEnforced(t *testing.T) {
+	obs := newFakeQuotaObserver()
+	app, svc, collection := newNativeQuotaApp(t, obs)
+	newNativePhotoCollection(t, app, collection)
+	record := newNativePhotoRecord(t, app, collection, "cached", 32, 24)
+	stored := record.GetStringSlice("photo")
+	_ = svc
+
+	// Pre-create the variant on the backend (as an earlier generation
+	// would have): it must keep being served under enforced quotas.
+	fs, err := app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	thumbKey := fmt.Sprintf("%s/thumbs_%s/64x64_%s", record.BaseFilesPath(), stored[0], stored[0])
+	if err := fs.CreateThumb(record.BaseFilesPath()+"/"+stored[0], thumbKey, "64x64"); err != nil {
+		t.Fatal(err)
+	}
+	fs.Close()
+
+	mux := nativeServeRouter(t, app)
+	rr := httptest.NewRecorder()
+	before := len(obs.callLog())
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0]), nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected cached variant to be served, got %d", rr.Code)
+	}
+	if len(obs.callLog()) != before {
+		t.Fatalf("serving a cached variant must not reserve, log: %v", obs.callLog())
+	}
+}
+
+func TestNativeThumbStandaloneStillGenerates(t *testing.T) {
+	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	cfg := DefaultConfig()
+	svc, err := NewService(app, NewRepo(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No observer attached: installing the hooks must be a no-op so the
+	// native generation path behaves exactly as upstream.
+	if err := svc.InstallNativeQuotaHooks(app); err != nil {
+		t.Fatal(err)
+	}
+	collection := core.NewCollection(core.CollectionTypeBase, "qfiles")
+	collection.Fields.Add(&core.TextField{Name: "slug", Max: 100})
+	collection.Fields.Add(&core.FileField{Name: "photo", MaxSelect: 1, MaxSize: 1 << 20, Thumbs: []string{"64x64"}})
+	if err := app.Save(collection); err != nil {
+		t.Fatal(err)
+	}
+	record := newNativePhotoRecord(t, app, collection, "standalone", 32, 24)
+	stored := record.GetStringSlice("photo")
+
+	mux := nativeServeRouter(t, app)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/files/qfiles/%s/%s?thumb=64x64", record.Id, stored[0]), nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected standalone generation to work, got %d: %s", rr.Code, rr.Body.String())
+	}
+	fs, err := app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	exists, err := fs.Exists(fmt.Sprintf("%s/thumbs_%s/64x64_%s", record.BaseFilesPath(), stored[0], stored[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("expected the standalone variant to be generated")
+	}
+}
+
+func TestNativeThumbGateConcurrentRequestsAllFailClosed(t *testing.T) {
 	obs := newFakeQuotaObserver()
 	app, svc, collection := newNativeQuotaApp(t, obs)
 	newNativePhotoCollection(t, app, collection)
@@ -401,17 +489,38 @@ func TestNativeThumbGateConcurrentRequestsShareOneReservation(t *testing.T) {
 	wg.Wait()
 	close(codes)
 	for code := range codes {
-		if code != http.StatusOK {
-			t.Fatalf("expected all requests served, got %d", code)
+		if code != http.StatusInternalServerError {
+			t.Fatalf("expected every concurrent request to fail closed, got %d", code)
 		}
 	}
-	// All requests share one generation: exactly one reservation and one
-	// settlement for the variant.
-	if n := obs.callCount("reserve(native-variant-"); n != 1 {
-		t.Fatalf("expected one shared variant reservation, log: %v", obs.callLog())
+	// No request may reserve or write on this path.
+	before := obs.callCount("reserve(")
+	_ = before
+	if n := obs.callCount("settle(native-variant-"); n != 0 {
+		t.Fatalf("expected no gate settlements, log: %v", obs.callLog())
 	}
-	if n := obs.callCount("settle(native-variant-"); n != 1 {
-		t.Fatalf("expected one variant settlement, log: %v", obs.callLog())
+	obs.mu.Lock()
+	variants := 0
+	for id := range obs.reservations {
+		if strings.HasPrefix(id, "variant-") || strings.HasPrefix(id, "native-variant") {
+			variants++
+		}
+	}
+	obs.mu.Unlock()
+	if variants != 0 {
+		t.Fatalf("expected no gate reservations, found %d", variants)
+	}
+	fs, err := app.NewFilesystem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	objects, err := fs.List(record.BaseFilesPath() + "/thumbs_" + stored[0] + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) > 0 {
+		t.Fatalf("no variant may be written on the denied path, found %d objects", len(objects))
 	}
 }
 

@@ -5,18 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"image"
-	_ "image/gif" // register decoders for image.DecodeConfig
-	_ "image/png"
-	"io"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nathabonfim59/pbvex/backend/internal/schema"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/filesystem"
 )
 
 // QuotaPurpose classifies the storage write a byte reservation covers.
@@ -102,19 +96,26 @@ func (s *Service) SetQuotaObserver(observer QuotaObserver) {
 func (s *Service) hasQuota() bool { return s.quota != nil }
 
 // quotaReserve reserves worst-case bytes through the observer, or returns a
-// no-op reservation when no observer is attached.
+// no-op reservation when no observer is attached. Observer errors are
+// sanitized to the quota sentinels here — the single choke point for all
+// call sites — so raw provider or custom observer error text can never
+// propagate into errors or logs.
 func (s *Service) quotaReserve(ctx context.Context, req QuotaReservationRequest) (QuotaReservation, error) {
 	if s.quota == nil {
 		return noopQuotaReservation{}, nil
 	}
 	res, err := s.quota.Reserve(ctx, req)
-	if err != nil {
-		return nil, err
+	switch {
+	case err == nil:
+		if res == nil {
+			return nil, ErrQuotaUnavailable
+		}
+		return res, nil
+	case errors.Is(err, ErrQuotaDenied):
+		return nil, ErrQuotaDenied
+	default:
+		return nil, ErrQuotaUnavailable
 	}
-	if res == nil {
-		return nil, fmt.Errorf("quota observer returned nil reservation: %w", ErrQuotaUnavailable)
-	}
-	return res, nil
 }
 
 // quotaSettle reports the actual stored bytes for a reservation. It is
@@ -140,7 +141,7 @@ func (s *Service) quotaSettle(res QuotaReservation, actualBytes int64) {
 		}
 	}
 	s.app.Logger().Warn("storage quota settlement failed; provider reconciliation required",
-		"reservationId", res.ID(), "bytes", actualBytes, "error", err)
+		"reservationId", res.ID(), "bytes", actualBytes, "classification", classifyQuotaError(err))
 }
 
 // quotaRelease returns a reservation because the write definitively did not
@@ -165,7 +166,24 @@ func (s *Service) quotaRelease(res QuotaReservation) {
 		}
 	}
 	s.app.Logger().Warn("storage quota release failed; provider reconciliation required",
-		"reservationId", res.ID(), "error", err)
+		"reservationId", res.ID(), "classification", classifyQuotaError(err))
+}
+
+// classifyQuotaError maps an observer or transport error onto a fixed
+// classification label for logging. Provider and observer errors are never
+// logged verbatim: they may carry implementation detail or secrets, and
+// only the sanitized classification crosses the log stream.
+func classifyQuotaError(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, ErrQuotaDenied):
+		return "denied"
+	case errors.Is(err, ErrQuotaUnavailable):
+		return "unavailable"
+	default:
+		return "unavailable"
+	}
 }
 
 // quotaCredit reports confirmed freed bytes for a deletion. It is
@@ -187,7 +205,7 @@ func (s *Service) quotaCredit(req QuotaCreditRequest) {
 		}
 	}
 	s.app.Logger().Warn("storage quota credit failed; provider reconciliation required",
-		"opId", req.OpID, "storageId", req.StorageID, "bytes", req.Bytes, "error", err)
+		"opId", req.OpID, "storageId", req.StorageID, "bytes", req.Bytes, "classification", classifyQuotaError(err))
 }
 
 // releaseReservationIfGone releases the reservation only when the object
@@ -202,7 +220,7 @@ func (s *Service) releaseReservationIfGone(app core.App, key string, res QuotaRe
 	if err != nil || exists {
 		if err != nil {
 			s.app.Logger().Warn("storage quota reservation kept for unreadable object",
-				"reservationId", res.ID(), "error", err)
+				"reservationId", res.ID(), "classification", classifyQuotaError(err))
 		} else {
 			s.app.Logger().Warn("storage quota reservation kept for uncertain write",
 				"reservationId", res.ID())
@@ -250,52 +268,34 @@ func newQuotaOpID(prefix string) string {
 	return prefix + "-" + hex.EncodeToString(b[:])
 }
 
-// worstCaseThumbBytes returns a conservative upper bound for a generated
-// image variant stored by filesystem.CreateThumb. Variants are re-encoded
-// in the original's format (JPEG or PNG). Decoded RGBA pixels (4 bytes per
-// pixel) plus a 6.25% encoder and header overhead safely bound both
-// encoders at the validated variant dimensions.
-func worstCaseThumbBytes(selector string, originalWidth, originalHeight int) int64 {
-	width, height, ok := effectiveThumbDimensions(selector, originalWidth, originalHeight)
-	if !ok || width <= 0 || height <= 0 {
-		return 0
+// reserveQuotaForVariant reserves bytes for one derived image variant
+// before the persistent object is written. The exact encoded size is known
+// because the variant is generated into a bounded local temporary
+// filesystem first; the reservation therefore equals the bytes that will be
+// stored, and the persistent write cannot exceed it. It returns a nil
+// reservation in standalone mode. Denials map to the typed storage-full
+// upload error; unavailability fails closed as an internal upload error. In
+// both cases the caller must abort before persisting anything.
+func (s *Service) reserveQuotaForVariant(ctx context.Context, storageID, thumbKey string, exactBytes int64) (QuotaReservation, error) {
+	if !s.hasQuota() {
+		return nil, nil
 	}
-	raw := int64(width) * int64(height) * 4
-	return raw + raw/16 + 4096
-}
-
-// effectiveThumbDimensions mirrors validateThumbForImage: it derives the
-// final variant pixel size from the selector and the original aspect ratio.
-func effectiveThumbDimensions(selector string, originalWidth, originalHeight int) (int, int, bool) {
-	match := filesystem.ThumbSizeRegex.FindStringSubmatch(selector)
-	if len(match) == 0 || originalWidth <= 0 || originalHeight <= 0 {
-		return 0, 0, false
+	res, err := s.quotaReserve(ctx, QuotaReservationRequest{
+		OpID:      newQuotaOpID("variant"),
+		Purpose:   QuotaPurposeVariant,
+		StorageID: storageID,
+		Key:       thumbKey,
+		WorstCase: exactBytes,
+	})
+	if err == nil {
+		return res, nil
 	}
-	width, widthErr := strconv.Atoi(match[1])
-	height, heightErr := strconv.Atoi(match[2])
-	if widthErr != nil || heightErr != nil {
-		return 0, 0, false
+	if errors.Is(err, ErrQuotaDenied) {
+		s.app.Logger().Info("storage variant denied by quota",
+			"storageId", storageID, "bytes", exactBytes)
+		return nil, &UploadError{Code: ErrorCodeStorageFull, Message: "storage quota exhausted", Err: ErrQuotaDenied}
 	}
-	if width == 0 {
-		width = int((int64(originalWidth)*int64(height) + int64(originalHeight) - 1) / int64(originalHeight))
-	} else if height == 0 {
-		height = int((int64(originalHeight)*int64(width) + int64(originalWidth) - 1) / int64(originalWidth))
-	}
-	return width, height, width > 0 && height > 0
-}
-
-// imageDimensions reads the pixel size of a stored image without decoding
-// the full body. It is used to bound variant reservations on paths without
-// persisted metadata. The caller must pass a fresh reader.
-func imageDimensions(r io.Reader) (int, int, bool) {
-	if r == nil {
-		return 0, 0, false
-	}
-	config, _, err := image.DecodeConfig(r)
-	if err != nil || config.Width <= 0 || config.Height <= 0 {
-		return 0, 0, false
-	}
-	return config.Width, config.Height, true
+	return nil, &UploadError{Code: ErrorCodeInternal, Message: "storage quota check failed", Err: ErrQuotaUnavailable}
 }
 
 // objectExists reports whether an object key exists in the app filesystem.
@@ -379,44 +379,6 @@ func (s *Service) quotaKeepForUncertainWrite(res QuotaReservation, key string) {
 		"reservationId", res.ID(), "key", key)
 }
 
-// reserveQuotaForVariant reserves the worst-case bytes for one derived image
-// variant before generation starts. It returns a nil reservation in
-// standalone mode. The bound derives from the persisted image metadata; a
-// record without usable metadata cannot be bounded and fails closed.
-func (s *Service) reserveQuotaForVariant(ctx context.Context, storageID, thumbKey, selector string) (QuotaReservation, error) {
-	if !s.hasQuota() {
-		return nil, nil
-	}
-	record, err := s.repo.GetFile(schema.WithInternalContext(ctx), s.app, storageID)
-	if err != nil {
-		return nil, err
-	}
-	meta, err := imageMetadataFromRecord(record)
-	if err != nil || meta == nil {
-		return nil, &UploadError{Code: ErrorCodeInternal, Message: "variant size cannot be bounded", Err: err}
-	}
-	worstCase := worstCaseThumbBytes(selector, meta.Width, meta.Height)
-	if worstCase <= 0 {
-		return nil, &UploadError{Code: ErrorCodeBadRequest, Message: "invalid image thumb"}
-	}
-	res, err := s.quotaReserve(ctx, QuotaReservationRequest{
-		OpID:      newQuotaOpID("variant"),
-		Purpose:   QuotaPurposeVariant,
-		StorageID: storageID,
-		Key:       thumbKey,
-		WorstCase: worstCase,
-	})
-	if err == nil {
-		return res, nil
-	}
-	if errors.Is(err, ErrQuotaDenied) {
-		s.app.Logger().Info("storage variant denied by quota",
-			"storageId", storageID, "thumb", selector, "worstCase", worstCase)
-		return nil, &UploadError{Code: ErrorCodeStorageFull, Message: "storage quota exhausted", Err: ErrQuotaDenied}
-	}
-	return nil, &UploadError{Code: ErrorCodeInternal, Message: "storage quota check failed", Err: err}
-}
-
 // quotaPrefixFor returns the object prefix that holds a PBVex object and
 // its derived variants for a file key ("prefix/<id>/blob" or the stage key).
 func quotaPrefixFor(fileKey string) string {
@@ -425,20 +387,4 @@ func quotaPrefixFor(fileKey string) string {
 		trimmed = trimmed[:idx]
 	}
 	return strings.TrimRight(trimmed, "/") + "/"
-}
-
-// quotaSettledBytesFrom reads the actual size of a stored object for
-// settlement. A read failure returns -1 so callers keep the reservation
-// unsettled rather than reporting a wrong value.
-func quotaSettledBytesFrom(app core.App, key string) int64 {
-	fs, err := app.NewFilesystem()
-	if err != nil {
-		return -1
-	}
-	defer fs.Close()
-	attrs, err := fs.Attributes(key)
-	if err != nil || attrs == nil || attrs.Size < 0 {
-		return -1
-	}
-	return attrs.Size
 }

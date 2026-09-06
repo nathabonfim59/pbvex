@@ -21,31 +21,43 @@ clients.
 ## Guarantees and non-guarantees
 
 - **Atomic host-authoritative reservations.** The provider must durably
-  reserve the worst-case byte bound before acknowledging an allow, under a
-  lock or equivalent, so concurrent reservations cannot exceed the tenant
+  reserve the byte bound before acknowledging an allow, under a lock or
+  equivalent, so concurrent reservations cannot exceed the tenant
   allowance. Neither a successful transport nor a reservation is an actual
   write.
-- **Worst-case before writes, actual after.** Callers reserve an upper bound
-  before each write and settle to the actual stored byte count after the
-  metadata commit. The provider clamps the charge to the reserved bound.
+- **Exact bound before the persistent write.** PBVex variants are encoded
+  into a bounded local temporary filesystem first, so the reservation is
+  taken with the exact encoded size before any persistent bytes exist;
+  native upload reservations use the exact multipart spool sizes. The
+  persisted object can therefore never exceed its reservation.
+- **Usage only shrinks on verified absence.** Credits are reported only
+  after a deletion is verifiably complete (PBVex prefix deletions and
+  synchronous native update removals). Deletion paths whose cleanup cannot
+  be verified synchronously — record deletion, uncertain failed writes —
+  keep the usage reserved for provider reconciliation instead of guessing.
 - **Idempotent retries preserve identity.** Reservations are identified by
   the caller's request ID; settlements and releases by reservation ID;
   deletion credits by event ID. Retries reuse identical IDs and content and
   receive the original acknowledgement. A new attempt needs a new ID. No
   exactly-once delivery claim is made.
-- **Uncertain writes are never released.** A reservation ends in exactly one
-  of `settle` (bytes persisted) or `release` (the write definitively did not
-  persist). When the outcome is unknown — a possibly partial write, a failed
-  cleanup, a crash — the reservation stays unsettled and the provider
-  reconciles it. Fail-closed callers abort instead of writing unreserved
-  bytes.
 - **Fail-closed.** Denials and unavailability prevent the write. A denied
-  upload never enters the storage backend, and a denied variant generation
-  fails the download instead of storing an unbounded derived object.
+  upload never enters the storage backend, a denied variant is never
+  persisted, and native thumbnail generation is denied outright while
+  quotas are enforced (see coverage below). Settled usage may only be
+  freed by a verified credit or provider reconciliation; the provider
+  clamps settlements to the reserved bound, so a caller cannot raise its
+  own charge.
+- **Sanitized diagnostics.** Provider, transport and custom observer errors
+  are never logged or returned verbatim; only fixed classifications and
+  protocol identifiers cross the log stream.
 - **Not covered here:** durable ledgers, reconciliation sweeps, billing
   periods, reservation expiry and the production provider itself. The
   reference service below is a bounded in-memory compatibility fixture, not
-  a durable ledger.
+  a durable ledger. **Backup archives are not covered by reservations**:
+  while quotas are enforced, the platform must deny `backup.create` (the
+  policy protocol's capability gate) because an allowed backup writes
+  archive bytes with no pre-write size bound. Restores remain
+  unconditionally rejected while hosting is enabled.
 
 ## Wire contract (version 1)
 
@@ -100,15 +112,16 @@ the event ID and the provider floors its usage total at zero.
 | Write path | Reservation boundary | Settlement |
 | --- | --- | --- |
 | PBVex single-use upload | Worst-case per-attempt staging cap reserved before the body is staged | Actual size settled after the metadata commit |
-| PBVex image variant | Worst-case derived-image bound reserved before generation | Actual object size settled after the write |
-| PBVex deletion | — | Confirmed freed bytes credited (original + variants) |
-| Native record create/update uploads | Exact multipart sizes reserved before upstream writes the files | Stored sizes settled after the record commit |
-| Native update file replacements | New bytes reserved before the write | New bytes settled; old bytes credited after the synchronous removal |
-| Native record deletion | — | Captured bytes credited at the deletion commit (see gap below) |
-| Native on-demand thumbnails | Reserved before upstream generates a missing variant | Actual size settled after the request |
+| PBVex image variant | EXACT encoded size reserved after generation into a local temp filesystem, before the persistent write | Actual (equals the reservation) settled after the write |
+| PBVex deletion | — | Confirmed freed bytes credited (verified prefix deletion) |
+| Native record create/update uploads | Exact multipart spool sizes reserved before upstream writes the files | Stored sizes settled after the record commit |
+| Native update file replacements | New bytes reserved before the write | New bytes settled; old bytes credited only after verified removal |
+| Native record deletion | — | NOT credited: upstream cleanup is asynchronous, so usage stays reserved for reconciliation |
+| Native on-demand thumbnails | Generation DENIED while quotas are enforced (no reservation is possible) | Cached variants keep serving |
 
-Standalone behavior is unchanged: with no observer attached, no reservation,
-settlement or credit happens, and no native hooks are installed.
+Standalone behavior is unchanged: with no observer attached, no byte
+accounting is performed, no native hooks are installed, and thumbnail
+generation works as upstream ships it.
 
 ### PBVex storage paths
 
@@ -116,13 +129,18 @@ The storage service accepts a quota observer (`Service.SetQuotaObserver`).
 Uploads reserve the effective staging cap before the request body is read;
 staging failures release the reservation, failures after the backend persist
 keep it when the stage object may still exist, and the metadata commit
-settles the actual size. Lazy variants reserve a derived-image bound before
-generation — a denied variant fails that download closed rather than storing
-unreserved bytes — and settle the stored object size. Deletions credit the
-byte total of the removed prefix (original plus variants) under the stable
-`delete-<storageId>` identity. Reports use a cancellation-independent
-context with a small bounded retry budget, so a caller timeout does not lose
-a settlement; a lost report is logged for provider reconciliation.
+settles the actual size. Lazy variants are generated through the unchanged
+upstream generation path into a private local temporary filesystem (disk
+backed, like the existing upload staging); the exact encoded size is then
+reserved and only afterwards is the staged object persisted to the storage
+backend, so the stored bytes can never exceed the reservation. A denied
+variant aborts before any persistent bytes exist and fails that download
+closed. Deletions credit the byte total of the removed prefix (original plus
+variants) under the stable `delete-<storageId>` identity, reported only when
+the prefix deletion completed without error. Reports use a
+cancellation-independent context with a small bounded retry budget, so a
+caller timeout does not lose a settlement; a lost report is logged with a
+sanitized classification for provider reconciliation.
 
 ### Native PocketBase record files
 
@@ -134,60 +152,70 @@ boundaries: reservations run before any upload write, settlements and
 credits run after the upstream commit or cleanup step, and failure handlers
 release a reservation only when every uploaded object is verified absent —
 an object that failed cleanup keeps its reservation for reconciliation.
-Saves without file changes never consult the quota service. Denials abort
-the save before any write and before the record exists.
+Update-time file replacements are credited only after the removed objects
+and their variant prefixes are verifiably absent. Saves without file changes
+never consult the quota service. Denials abort the save before any write and
+before the record exists.
 
-Native record deletion is different upstream: the whole record files prefix
-is deleted asynchronously after the delete transaction (`FireAndForget`),
-so a synchronous absence check is impossible. The credit therefore reports
-the captured byte total at the deletion commit; a background deletion that
-later fails can transiently over-credit until the provider reconciles the
-object store.
+The reserved upload sizes are trusted because they are measured, not
+declared: PB builds multipart uploads through
+`filesystem.NewFileFromMultipart`, whose `Size` the Go standard library
+computes from the bytes it actually spooled for the part (the part is
+terminated by its boundary, so the reader the upload streams later yields
+exactly that many bytes).
+
+Record deletion is different upstream: the whole record files prefix is
+deleted asynchronously after the delete transaction (`FireAndForget`), so a
+synchronous absence check is impossible without racing the cleanup. Under
+the hard quota contract no credit is reported on this path — the tenant's
+usage stays reserved until the provider reconciles the object store.
 
 ### Native on-demand thumbnails
 
 Upstream generates missing record thumbnails inside the files download
-route, after routing and authorization but before serving, with no core hook
-in between (`OnFileDownloadRequest` fires after generation). The installed
-global request middleware reserves before that write by replicating the
-upstream generation conditions exactly — selector validated against the
-field thumbs and the built-in default, original present, image content type,
-variant missing — so requests that upstream serves without writing are never
-blocked or double-counted. Requests that would write share one reservation
-through an in-process gate keyed by the variant; a denied or failed
-generation denies the concurrent followers closed instead of letting them
-retry the write unreserved. The bound derives from the original's decoded
-dimensions (RGBA pixels plus encoder overhead) and settles to the stored
-object size.
+route — after routing and authorization but before serving — with no core
+hook in between (`OnFileDownloadRequest` fires after generation) and no
+size-carrying writer hook, so no exact reservation is possible on this
+path. While a quota observer is attached, the installed global request
+middleware therefore fails closed: any request upstream would serve by
+GENERATING a variant is denied before the write. Cached variants keep
+serving, requests upstream serves without writing (invalid selector,
+missing original, non-image original) keep their upstream behavior, and
+standalone deployments (no observer) generate exactly as upstream ships.
+The generation conditions mirror the pinned upstream route; if upstream
+changes them, the gate errs closed — it may deny a request upstream would
+no longer write, never allow an unreserved write.
 
 ## Documented gaps
 
-- **Backup archives are not reserved.** Allowed backup creation writes a zip
-  archive through the backups filesystem with no pre-write size bound; the
-  `backup.create` policy capability is the intended throttle. Restores
-  remain unconditionally rejected while hosting is enabled, so a restore
-  cannot write unreserved bytes either.
+- **Backup archives are not reserved.** An allowed backup creation writes a
+  zip archive through the backups filesystem with no pre-write size bound.
+  Until this path is covered, the platform must deny the `backup.create`
+  capability whenever storage quotas are enforced; the quota layer itself
+  does not and cannot cover it. Restores remain unconditionally rejected
+  while hosting is enabled, so a restore cannot write unreserved bytes
+  either.
+- **Record deletion keeps usage reserved.** Because upstream cleanup is
+  asynchronous, deleted record bytes stay charged until the provider
+  reconciles the object store; the quota layer never credits unverified
+  deletions.
 - **Failed native cleanups keep reservations.** If upstream cannot delete a
   failed upload's objects, the reservation stays unsettled by design; the
   bytes may still exist and providers reconcile.
-- **Record-delete credits are optimistic.** Because the upstream deletion of
-  record files is asynchronous, the credit is committed when the metadata
-  deletion commits and can transiently over-credit if the background
-  deletion fails.
-- **Variant bounds are approximations.** The pre-generation bound is a
-  conservative encoder bound at the validated variant dimensions; the
-  settlement trims the charge to the actual object size.
 - **Reconciliation is a provider duty.** Unknown-settled reservations
   (process crash between reserve and settle), lost reports after exhausted
-  bounded retries, and failed background deletions all require the
+  bounded retries, and retained record-deletion usage all require the
   documented provider reconciliation pass over the actual object store.
   The protocol supports reconciliation; it does not fake a durable host
   service.
-- **Native thumbnail gate is route-level.** Because upstream lacks a core
-  hook before thumbnail generation, the gate is a request middleware that
-  mirrors upstream's route behavior. Upstream changes to the files route
-  conditions must be mirrored; the pinned version is documented in the
-  implementation.
+- **Native thumbnail gate is route-level and denies closed.** Because
+  upstream lacks a core hook before thumbnail generation (and its writer
+  hook carries no byte count), enforced-mode deployments cannot serve
+  freshly generated native thumbnails; the gate denies the generation and
+  the platform should surface this as an expected restriction. Upstream
+  changes to the files route conditions must be mirrored; the pinned
+  version is documented in the implementation. PBVex's own variant path
+  (encode-then-reserve) is not affected.
 
 ## Public Go API
 
@@ -217,13 +245,15 @@ storageService.InstallNativeQuotaHooks(app) // core.App: native record hooks + t
 ```
 
 `NewHostedQuotaObserver` maps denials to `storage.ErrQuotaDenied` and
-unavailability to `storage.ErrQuotaUnavailable`; both fail the write closed.
-A client that cannot reach the socket on a dead path produces the same
-fail-closed behavior. Focused validation lives in
-`backend/internal/storage` (reservation ordering, denial fail-closed,
-uncertain-write retention, variant and deletion accounting, concurrent
-uploads against a capacity-limited observer, native record hooks and the
-thumbnail gate against the real router) and in
+everything else — transport failures, saturation, malformed responses, any
+custom observer error — to `storage.ErrQuotaUnavailable`; raw provider
+error text never propagates into errors or logs. Both outcomes fail the
+write closed. Focused validation lives in `backend/internal/storage`
+(reservation ordering, denial fail-closed, uncertain-write retention,
+exact variant reservations, deletion crediting only on verified removal,
+record-deletion usage retention, concurrent uploads against a
+capacity-limited observer, native record hooks and the thumbnail gate
+exercised end to end through the real router) and in
 `backend/hosting/storagequota` (wire round-trips, idempotent replays,
-conflicts, clamping, atomic capacity under concurrency, saturation and
-malformed responses).
+conflicts, settlement clamping to the reserved bound, atomic capacity under
+concurrency, saturation and malformed responses).

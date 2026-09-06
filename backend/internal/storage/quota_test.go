@@ -36,10 +36,11 @@ type fakeQuotaObserver struct {
 	credited int64
 
 	maxObservedInflight int
+	reservations        map[string]*fakeReservation
 }
 
 func newFakeQuotaObserver() *fakeQuotaObserver {
-	return &fakeQuotaObserver{}
+	return &fakeQuotaObserver{reservations: map[string]*fakeReservation{}}
 }
 
 // External records a non-quota storage event (for example the backend
@@ -71,7 +72,9 @@ func (f *fakeQuotaObserver) Reserve(ctx context.Context, req QuotaReservationReq
 	if f.inflight > f.maxObservedInflight {
 		f.maxObservedInflight = f.inflight
 	}
-	return &fakeReservation{id: req.OpID, obs: f, worstCase: req.WorstCase}, nil
+	res := &fakeReservation{id: req.OpID, obs: f, worstCase: req.WorstCase}
+	f.reservations[req.OpID] = res
+	return res, nil
 }
 
 func (f *fakeQuotaObserver) Credit(ctx context.Context, req QuotaCreditRequest) error {
@@ -129,12 +132,30 @@ func (f *fakeQuotaObserver) indexOf(substr string) int {
 	return -1
 }
 
+// assertNoOvershoot verifies the hard quota invariants: no settled bytes
+// may exceed the reserved worst-case bound, and every reservation is
+// resolved (settled or released).
+func (f *fakeQuotaObserver) assertNoOvershoot(t *testing.T) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, res := range f.reservations {
+		if res.settledBytes > res.worstCase {
+			t.Fatalf("reservation %s settled %d beyond its reserved %d", id, res.settledBytes, res.worstCase)
+		}
+		if !res.settled && !res.released {
+			t.Fatalf("reservation %s left unresolved", id)
+		}
+	}
+}
+
 type fakeReservation struct {
-	id        string
-	obs       *fakeQuotaObserver
-	worstCase int64
-	settled   bool
-	released  bool
+	id           string
+	obs          *fakeQuotaObserver
+	worstCase    int64
+	settledBytes int64
+	settled      bool
+	released     bool
 }
 
 func (r *fakeReservation) ID() string { return r.id }
@@ -148,6 +169,7 @@ func (r *fakeReservation) Settle(ctx context.Context, actualBytes int64) error {
 	r.obs.seq++
 	r.obs.calls = append(r.obs.calls, fmt.Sprintf("%d:settle(%s,%d)", r.obs.seq, r.id, actualBytes))
 	r.settled = true
+	r.settledBytes = actualBytes
 	r.obs.reserved -= r.worstCase
 	r.obs.inflight--
 	r.obs.settled += actualBytes
@@ -304,6 +326,28 @@ func TestUploadUnavailableFailsClosed(t *testing.T) {
 	}
 }
 
+func TestCustomObserverErrorTextIsSanitized(t *testing.T) {
+	obs := newFakeQuotaObserver()
+	obs.failReserve = errors.New("provider secret internal state leak")
+	_, svc := newStorageTestApp(t)
+	svc.SetQuotaObserver(obs)
+
+	uploadURL, err := svc.GenerateUploadURL(context.Background(), AuthContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Upload(context.Background(), extractToken(uploadURL), bytes.NewReader([]byte("x")), "text/plain", "a.txt", 1)
+	if err == nil {
+		t.Fatal("expected fail-closed error")
+	}
+	if strings.Contains(fmt.Sprint(err), "provider secret") {
+		t.Fatalf("custom observer error text leaked: %v", err)
+	}
+	if !errors.Is(err, ErrQuotaUnavailable) {
+		t.Fatalf("expected sanitized unavailable classification, got %v", err)
+	}
+}
+
 func TestUploadQuotaCapacityDeniesThenRecovers(t *testing.T) {
 	obs := newFakeQuotaObserver()
 	obs.capacity = 2048
@@ -387,6 +431,18 @@ func TestVariantReservationDeniedAndAllowed(t *testing.T) {
 	if inflight := obs.inflightCount(); inflight != 0 {
 		t.Fatalf("expected all reservations settled, inflight=%d", inflight)
 	}
+	// The variant reservation is taken from the staged encode and must be
+	// EXACT: reserved bound equals settled bytes, never less.
+	obs.mu.Lock()
+	for id, res := range obs.reservations {
+		if strings.HasPrefix(id, "variant-") && res.settled {
+			if res.settledBytes != res.worstCase {
+				t.Fatalf("expected exact variant reservation, reserved=%d settled=%d", res.worstCase, res.settledBytes)
+			}
+		}
+	}
+	obs.mu.Unlock()
+	obs.assertNoOvershoot(t)
 }
 
 func quotaTestThumbExists(t *testing.T, svc *Service, id, thumb string) bool {

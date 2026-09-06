@@ -2,9 +2,7 @@ package storage
 
 import (
 	"context"
-	"errors"
 
-	"github.com/nathabonfim59/pbvex/backend/hosting"
 	"github.com/nathabonfim59/pbvex/backend/hosting/storagequota"
 )
 
@@ -95,14 +93,11 @@ func (r hostedQuotaReservation) Release(ctx context.Context) error {
 	return nil
 }
 
-// normalizeQuotaClientError maps bounded client errors onto the two quota
-// error sentinels.
+// normalizeQuotaClientError maps every bounded client error onto the two
+// quota error sentinels. Raw provider, transport or custom observer errors
+// are never propagated: they may carry implementation detail or secrets,
+// and callers only classify (fail closed) either way. Denials are mapped
+// by the Reserve caller before this helper.
 func normalizeQuotaClientError(err error) error {
-	if errors.Is(err, hosting.ErrUnavailable) || errors.Is(err, hosting.ErrBusy) {
-		return ErrQuotaUnavailable
-	}
-	if errors.Is(err, hosting.ErrProtocol) {
-		return ErrQuotaUnavailable
-	}
-	return err
+	return ErrQuotaUnavailable
 }
