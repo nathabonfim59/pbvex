@@ -8,6 +8,13 @@ entries are intentionally not duplicated in this changelog.
 
 ### Added
 
+- Experimental public `backend/hosting` Unix-socket policy/admission/event
+  protocol, bounded reference service and explicit hosting bootstrap flags.
+  Enabled mode adds dynamic settings/backup-create gates, rejects restores and
+  disables custom PocketBase host JS. Runtime wiring, durable telemetry and
+  managed-secret/native-upload isolation remain integration gaps; see
+  `docs/hosting-policy-protocol.md` for the exact scope.
+
 - `PBVEX_SMTP_*` server environment variables configure PocketBase's mail
   settings at startup. Only provided variables are applied, so
   dashboard-managed values for absent variables survive restarts, while a

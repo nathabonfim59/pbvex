@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/router"
 
+	"github.com/nathabonfim59/pbvex/backend/hosting"
 	"github.com/nathabonfim59/pbvex/backend/internal/api"
 	"github.com/nathabonfim59/pbvex/backend/internal/deploy"
 	"github.com/nathabonfim59/pbvex/backend/internal/realtime"
@@ -24,6 +25,7 @@ import (
 
 // Config configures PBVex registration.
 type Config struct {
+	Hosting       hosting.Config
 	PublicDir     string
 	IndexFallback bool
 	HooksDir      string
@@ -67,12 +69,14 @@ func Register(app *pocketbase.PocketBase, cfg Config) error {
 	}
 
 	// Optional plugins.
-	jsvm.MustRegister(app, jsvm.Config{
-		MigrationsDir: cfg.MigrationsDir,
-		HooksDir:      cfg.HooksDir,
-		HooksWatch:    cfg.HooksWatch,
-		HooksPoolSize: cfg.HooksPool,
-	})
+	if !cfg.Hosting.Enabled {
+		jsvm.MustRegister(app, jsvm.Config{
+			MigrationsDir: cfg.MigrationsDir,
+			HooksDir:      cfg.HooksDir,
+			HooksWatch:    cfg.HooksWatch,
+			HooksPoolSize: cfg.HooksPool,
+		})
+	}
 
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
 		TemplateLang: migratecmd.TemplateLangJS,
@@ -99,6 +103,9 @@ func Register(app *pocketbase.PocketBase, cfg Config) error {
 
 // RegisterCore wires PBVex core behavior into any core.App implementation.
 func RegisterCore(app core.App, cfg Config) (*deploy.Service, deploy.Invalidator, error) {
+	if err := registerHosting(app, cfg.Hosting); err != nil {
+		return nil, nil, err
+	}
 	repo := deploy.NewRepo()
 	manager := runtime.NewManager(cfg.Runtime)
 	storageService, err := storage.NewService(app, storage.NewRepo(), cfg.Storage)
