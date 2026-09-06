@@ -92,6 +92,30 @@ func newHostedTestApp(t *testing.T, mutate func(*Config), withQuota bool) (*test
 	if err != nil {
 		t.Fatalf("failed to create test app: %v", err)
 	}
+	// Disable the PocketBase request activity logger for these in-process
+	// router tests. In PocketBase v0.40.1 (still on master) the logger reads
+	// app.Settings().Logs.MaxDays without taking the settings lock from the
+	// fire-and-forget goroutine that records each finished request
+	// (apis.logRequest -> logger.BatchHandler.Handle -> the initLogger
+	// BeforeAddFunc at core/base.go:1492), while every settings save rewrites
+	// the same fields under that lock (core.Settings.loadParam through
+	// ReloadSettings). The settings boundaries test below deliberately issues
+	// denied settings PATCHes next to accepted ones, so the asynchronous
+	// request logs overlap the reload write and -race reports a data race
+	// whose read and write sides both live in PocketBase; no PBVex-local
+	// lock can synchronize them. Logs.MaxDays = 0 is the documented
+	// activity-logger switch (see apis.activityLogger): no request is logged,
+	// the batch store stays empty, and the settings are then only touched by
+	// the goroutine that also performs the reloads. Production binaries keep
+	// the default retention and inherit this unresolved upstream race: a
+	// settings save concurrent with request logging can still be reported by
+	// -race (and is formally a torn read per the Go memory model) until
+	// PocketBase synchronizes its logger-side settings reads.
+	app.Settings().Logs.MaxDays = 0
+	if err := app.Save(app.Settings()); err != nil {
+		app.Cleanup()
+		t.Fatalf("failed to disable the request activity logger: %v", err)
+	}
 	path := filepath.Join(t.TempDir(), "p.sock")
 	l, err := net.Listen("unix", path)
 	if err != nil {
