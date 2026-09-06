@@ -291,3 +291,21 @@ func TestCapabilityNamespaces(t *testing.T) {
 		t.Fatal("invalid token accepted")
 	}
 }
+
+func TestPersistentTransportAcrossRejections(t *testing.T) {
+	// Rejection bodies like the ones the reference service sends must be fully
+	// consumed so the transport keeps the single policy socket connection.
+	c, connections := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte(`{"code":"rejected"}`))
+	}))
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := c.Require(ctx, FunctionExecute); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("rejection %d err = %v, want ErrUnavailable", i, err)
+		}
+	}
+	if connections.Load() != 1 {
+		t.Fatalf("connections = %d; expected persistent transport across rejections", connections.Load())
+	}
+}

@@ -162,10 +162,14 @@ func (c *Client) call(ctx context.Context, path string, in, out any) error {
 		return ErrUnavailable
 	}
 	defer res.Body.Close()
+	// Drain the bounded body before checking the status. Returning with an
+	// undrained body leaves net/http salvage-draining in the background while
+	// the next request races it for the idle connection, which can silently
+	// open a second transport connection to the policy socket.
+	b, err = io.ReadAll(io.LimitReader(res.Body, MaxPayload+1))
 	if res.StatusCode != http.StatusOK {
 		return ErrUnavailable
 	}
-	b, err = io.ReadAll(io.LimitReader(res.Body, MaxPayload+1))
 	if err != nil || len(b) > MaxPayload {
 		return ErrProtocol
 	}
