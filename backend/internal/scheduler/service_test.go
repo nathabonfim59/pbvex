@@ -203,6 +203,51 @@ func waitForStatus(t *testing.T, ctx context.Context, svc *Service, id string, w
 	return JobStatus{}
 }
 
+// waitForRenewedLease blocks until the stored lease expiry of the job is past
+// fake now+d (or the job is no longer running). Advancing a fake clock can
+// otherwise outrun the heartbeat goroutine: a dropped ticker tick would leave
+// the recorded lease expired and let the poller legally steal the job even
+// though the test intends to exercise healthy renewal. Synchronize simulated
+// time with persisted renewal rather than relying on goroutine scheduling.
+func waitForRenewedLease(t *testing.T, ctx context.Context, svc *Service, id string, clock *FakeClock, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := svc.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("failed to get job: %v", err)
+		}
+		if status.Status != JobStatusRunning || status.LeaseExpiresAt.After(clock.Now().Add(d)) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("lease did not stay ahead of the fake clock for job %s", id)
+}
+
+// waitForJobClaimed blocks until the worker's durable claim has landed. The
+// claim CAS can lag the test goroutine under -race; advancing the fake clock
+// before the lease exists would give it an expiry already in the past and let
+// queued poll ticks steal the job without any heartbeat misbehavior.
+func waitForJobClaimed(t *testing.T, ctx context.Context, svc *Service, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := svc.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("failed to get job: %v", err)
+		}
+		switch status.Status {
+		case JobStatusRunning:
+			return
+		case JobStatusFailed, JobStatusCanceled:
+			t.Fatalf("job ended before claim: %s (%s)", status.Status, status.Error)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("job %s was never claimed", id)
+}
+
 func waitGroupWait(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) {
 	t.Helper()
 	done := make(chan struct{})
@@ -718,11 +763,14 @@ func TestSchedulerLongJobBeyondLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitForJobClaimed(t, ctx, svc, id)
 
-	// Advance the clock to trigger several renew ticks.
+	// Advance the clock to trigger several renew ticks. Each step waits for
+	// the heartbeat to keep the lease ahead of the prospective fake time.
+	step := 50 * time.Millisecond
 	for i := 0; i < 10; i++ {
-		clock.Advance(50 * time.Millisecond)
-		time.Sleep(5 * time.Millisecond)
+		waitForRenewedLease(t, ctx, svc, id, clock, step)
+		clock.Advance(step)
 	}
 
 	status := waitForStatus(t, ctx, svc, id, JobStatusCompleted, 2*time.Second)

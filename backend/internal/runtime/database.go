@@ -158,7 +158,7 @@ func databaseScope(ctx context.Context, app core.App, manifest deploy.Deployment
 	return db
 }
 
-func newInvocationContext(vm *goja.Runtime, ctx context.Context, app core.App, manifest deploy.DeploymentManifest, fd deploy.FunctionDescriptor, function string, args any, jsArgs goja.Value, extenders []ContextExtender) (*goja.Object, error) {
+func newInvocationContext(vm *goja.Runtime, ctx context.Context, app core.App, manifest deploy.DeploymentManifest, fd deploy.FunctionDescriptor, function string, args any, jsArgs goja.Value, extenders []ContextExtender, envResolver EnvironmentResolver) (*goja.Object, error) {
 	ctx = context.WithValue(ctx, manifestContextKey{}, manifest)
 	o := vm.NewObject()
 	namespace, mounted := deploy.NamespaceForModule(manifest, fd.ModulePath)
@@ -182,7 +182,7 @@ func newInvocationContext(vm *goja.Runtime, ctx context.Context, app core.App, m
 		} else if err := o.Set("args", goja.Undefined()); err != nil {
 			return nil, err
 		}
-		env, err := resolveComponentEnv(namespace)
+		env, err := resolveComponentEnv(ctx, namespace, envResolver)
 		if err != nil {
 			return nil, err
 		}

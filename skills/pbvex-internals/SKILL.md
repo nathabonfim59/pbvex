@@ -37,6 +37,12 @@ Use PocketBase migrations/collections through the separate host lifecycle. Appli
 
 ## Single binary and tests
 
+The experimental public `backend/hosting` package defines local provider-neutral
+policy/admission/events. Read `docs/hosting-policy-protocol.md` before integrating
+execution observers or administrative gates. Enabled mode fails closed and skips
+the PocketBase JS plugin; do not mistake registration checks for per-callback
+enforcement. Preserve the documented secret/env binding and native upload gaps.
+
 Build with `(cd backend && go build ./cmd/pbvex)`; run it from the working directory that owns `./pb_data` (or pass `--dir`). The runtime needs no Node.js, repository checkout, or TypeScript package at runtime. Run exactly one process for a data directory—there is no multi-node locking, scheduler coordination, or realtime clustering.
 
 Add focused package tests and use existing end-to-end tests around routing, activation, auth, realtime, scheduler, and storage. Protocol changes also require `pbvex-protocol`. From the repository's `backend/` directory, run `test -z "$(gofmt -l .)"`, `go vet ./...`, `go test -count=1 ./...`, `CGO_ENABLED=1 go test -race -count=1 ./...`, and `go build ./cmd/pbvex` before a PR, as documented in `CONTRIBUTING.md`. Preserve the disabled upstream self-update behavior: releases replace the PBVex binary through its release process.

@@ -31,8 +31,9 @@ type Subscription struct {
 	done         chan struct{}
 	pingInterval time.Duration
 
-	lastSent     string
-	maxEventSize int64
+	lastSent        string
+	maxEventSize    int64
+	admissionPaused bool
 }
 
 func (s *Subscription) run() {
@@ -50,7 +51,7 @@ func (s *Subscription) run() {
 
 		select {
 		case <-s.notify:
-			pending = true
+			pending = !s.admissionPaused
 		case <-ticker.C:
 			s.sendPing()
 		case <-s.ctx.Done():
@@ -60,7 +61,7 @@ func (s *Subscription) run() {
 }
 
 func (s *Subscription) runOnce() {
-	if s.ctx.Err() != nil {
+	if s.ctx.Err() != nil || s.admissionPaused {
 		return
 	}
 
@@ -73,7 +74,12 @@ func (s *Subscription) runOnce() {
 	// admission time. maxEventSize never changes mid-connection; activation
 	// of a new deployment triggers ReconnectAll so the client reconnects
 	// and re-negotiates.
-	result, err := s.service.InvokeSnapshot(s.ctx, s.snap, s.args)
+	result, err := s.service.InvokeSnapshot(deploy.WithExecutionOrigin(s.ctx, "realtime"), s.snap, s.args)
+	if deploy.IsExecutionAdmissionError(err) {
+		// Keep the SSE connection alive but pause reruns until explicit client
+		// resubscription. Closing here would trigger automatic reconnect loops.
+		s.admissionPaused = true
+	}
 
 	if s.ctx.Err() != nil {
 		return
@@ -101,6 +107,9 @@ func (s *Subscription) runOnce() {
 }
 
 func (s *Subscription) executionErrorPayload(err error) map[string]any {
+	if deploy.IsExecutionAdmissionError(err) {
+		return s.errorPayload(err)
+	}
 	s.service.LogUnexpectedHandlerFailure(err, deploy.HandlerFailureContext{
 		RequestID: s.requestID, SubscriptionID: s.id, FunctionName: s.path,
 		FunctionType: deploy.FunctionTypeQuery,
@@ -166,6 +175,9 @@ func (s *Subscription) sendPing() {
 }
 
 func (s *Subscription) errorPayload(err error) map[string]any {
+	if deploy.IsExecutionAdmissionError(err) {
+		return structuredErrorPayload(deploy.ErrorCodeInternal, "Execution admission unavailable or denied; subscription paused.", s.requestID)
+	}
 	var applicationErr *deploy.ApplicationError
 	if errors.As(err, &applicationErr) {
 		payload := structuredErrorPayload(deploy.ErrorCode(applicationErr.Category), applicationErrorMessage(applicationErr.Category), s.requestID)

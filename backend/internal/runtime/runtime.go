@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,10 +19,27 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// EnvironmentResolver resolves a named host environment variable for a
+// component env binding. provided reports whether the host supplied the
+// variable, and err reports a host-side denial or lookup failure. The runtime
+// consults the resolver on every binding resolution and never caches results,
+// so hosted policy can gate each operation dynamically.
+type EnvironmentResolver func(ctx context.Context, name string) (value string, provided bool, err error)
+
 // Config controls the Goja runtime pool.
 type Config struct {
-	PoolSize int
-	Timeout  time.Duration
+	PoolSize          int
+	Timeout           time.Duration
+	ExecutionObserver ExecutionObserver
+	// MaxConcurrentExecutions bounds roots across all deployment pools. Zero
+	// preserves the existing per-pool behavior; nested work shares a root slot.
+	MaxConcurrentExecutions int
+	// EnvironmentResolver optionally owns component environment lookups. Nil
+	// preserves standalone behavior: declared env bindings read the process
+	// environment directly. When set, every binding resolution goes through
+	// the resolver; failures fail the invocation before the handler runs and
+	// never surface resolver diagnostics, variable values, or names.
+	EnvironmentResolver EnvironmentResolver
 }
 
 // DefaultConfig returns the default runtime pool configuration.
@@ -56,11 +74,12 @@ type Scheduler interface {
 
 // Manager is a registry of bounded Goja runtime pools keyed by deployment id.
 type Manager struct {
-	config    Config
-	mu        sync.RWMutex
-	pools     map[string]*Pool
-	Scheduler Scheduler
-	extenders []ContextExtender
+	config         Config
+	mu             sync.RWMutex
+	pools          map[string]*Pool
+	Scheduler      Scheduler
+	extenders      []ContextExtender
+	executionSlots chan struct{}
 }
 
 // NewManager creates a new runtime manager.
@@ -71,10 +90,14 @@ func NewManager(config Config) *Manager {
 	if config.Timeout <= 0 {
 		config.Timeout = DefaultConfig().Timeout
 	}
-	return &Manager{
+	m := &Manager{
 		config: config,
 		pools:  make(map[string]*Pool),
 	}
+	if config.MaxConcurrentExecutions > 0 {
+		m.executionSlots = make(chan struct{}, config.MaxConcurrentExecutions)
+	}
+	return m
 }
 
 // Compile compiles and stores the bundle program for a deployment.
@@ -102,7 +125,8 @@ func (m *Manager) CompileDeployment(deploymentID, bundle string, descriptors []d
 	}
 
 	extenders := append([]ContextExtender(nil), m.extenders...)
-	m.pools[deploymentID] = newPool(m.config.PoolSize, m.config.Timeout, program, descriptors, migrations, config, fingerprint, m.Scheduler, deploymentID, extenders)
+	m.pools[deploymentID] = newPool(m.config.PoolSize, m.config.Timeout, program, descriptors, migrations, config, fingerprint, m.Scheduler, deploymentID, extenders, m.config.EnvironmentResolver)
+	m.pools[deploymentID].manager = m
 	return nil
 }
 
@@ -159,6 +183,13 @@ func (m *Manager) VerifyDeployment(ctx context.Context, deploymentID, bundle str
 	defer cancel()
 
 	e := newEntry(program, descriptors, migrations, deploy.DefaultDeploymentConfig)
+	e.manager, e.deploymentID = m, deploymentID
+	e.envResolver = m.config.EnvironmentResolver
+	release, err := m.acquireRoot(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	if err := e.load(ctx, program); err != nil {
 		return err
@@ -177,6 +208,11 @@ func (m *Manager) InvokeMigration(ctx context.Context, deploymentID, migrationID
 	}
 	ctx, cancel := contextWithTimeout(ctx, m.config.Timeout)
 	defer cancel()
+	release, err := m.acquireRoot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	e, err := pool.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -211,6 +247,11 @@ func (m *Manager) Invoke(ctx context.Context, deploymentID, functionName string,
 		Work:           new(int),
 	}
 
+	release, err := m.acquireRoot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return pool.invoke(invocation, functionName, args)
 }
 
@@ -233,6 +274,13 @@ func (m *Manager) InvokeWithDatabase(ctx context.Context, deploymentID, function
 	if err != nil {
 		return nil, err
 	}
+	// Take the instance slot before waiting for a database transaction, so
+	// concurrent mutations cannot form an unbounded pre-admission DB queue.
+	release, err := m.acquireRoot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	ctx = withRuntimeAuth(ctx, identity, requestID)
 	cfg := deploy.NormalizeConfig(manifest.Config)
 	invocation := &Invocation{
@@ -362,6 +410,7 @@ func contextWithTimeout(ctx context.Context, timeout time.Duration) (context.Con
 
 // Pool is a bounded concurrency gate for Goja runtimes for a single deployment.
 type Pool struct {
+	manager      *Manager
 	program      *goja.Program
 	descriptors  []deploy.FunctionDescriptor
 	migrations   []deploy.MigrationDescriptor
@@ -372,9 +421,10 @@ type Pool struct {
 	scheduler    Scheduler
 	deploymentID string
 	extenders    []ContextExtender
+	envResolver  EnvironmentResolver
 }
 
-func newPool(maxSize int, timeout time.Duration, program *goja.Program, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, config deploy.DeploymentConfig, fingerprint string, scheduler Scheduler, deploymentID string, extenders []ContextExtender) *Pool {
+func newPool(maxSize int, timeout time.Duration, program *goja.Program, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, config deploy.DeploymentConfig, fingerprint string, scheduler Scheduler, deploymentID string, extenders []ContextExtender, envResolver EnvironmentResolver) *Pool {
 	return &Pool{
 		program:      program,
 		descriptors:  descriptors,
@@ -386,16 +436,27 @@ func newPool(maxSize int, timeout time.Duration, program *goja.Program, descript
 		scheduler:    scheduler,
 		deploymentID: deploymentID,
 		extenders:    extenders,
+		envResolver:  envResolver,
 	}
 }
 
 func (p *Pool) acquire(ctx context.Context) (*entry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	select {
 	case p.sem <- struct{}{}:
-		return newEntry(p.program, p.descriptors, p.migrations, p.config, p.scheduler, p.deploymentID, p.extenders), nil
+		return p.newEntry(), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (p *Pool) newEntry() *entry {
+	e := newEntry(p.program, p.descriptors, p.migrations, p.config, p.scheduler, p.deploymentID, p.extenders)
+	e.manager = p.manager
+	e.envResolver = p.envResolver
+	return e
 }
 
 func (p *Pool) release() {
@@ -450,7 +511,7 @@ func (p *Pool) invokeNested(parent *Invocation, functionName string, targetType 
 	}
 	child.Namespace = namespaceForDescriptor(parent.Manifest, descriptor)
 	invoke := func() (any, error) {
-		e := newEntry(p.program, p.descriptors, p.migrations, p.config, p.scheduler, p.deploymentID, p.extenders)
+		e := p.newEntry()
 		return e.invoke(child, functionName, args)
 	}
 	if targetType == deploy.FunctionTypeMutation && parent.FunctionType != deploy.FunctionTypeMutation && parent.App != nil {
@@ -460,8 +521,8 @@ func (p *Pool) invokeNested(parent *Invocation, functionName string, targetType 
 			child.Ctx = schema.WithApp(parent.Ctx, txApp)
 			var invokeErr error
 			result, invokeErr = invoke()
-			if invokeErr == nil && child.Ctx.Err() != nil {
-				invokeErr = child.Ctx.Err()
+			if invokeErr == nil && parent.Ctx.Err() != nil {
+				invokeErr = parent.Ctx.Err()
 			}
 			return invokeErr
 		})
@@ -471,6 +532,12 @@ func (p *Pool) invokeNested(parent *Invocation, functionName string, targetType 
 }
 
 func (p *Pool) invokeHTTP(invocation *Invocation, functionName string, httpEnvelope *deploy.HTTPRequestEnvelope) (*deploy.HTTPResponseEnvelope, error) {
+	release, err := p.manager.acquireRoot(invocation.Ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	invocation.Ctx = deploy.WithExecutionOrigin(invocation.Ctx, "http_action")
 	e, err := p.acquire(invocation.Ctx)
 	if err != nil {
 		return nil, err
@@ -496,6 +563,7 @@ func (p *Pool) verify(ctx context.Context, descriptors []deploy.FunctionDescript
 }
 
 type entry struct {
+	manager           *Manager
 	loop              *eventloop.EventLoop
 	vm                *goja.Runtime
 	bridge            *Bridge
@@ -508,7 +576,9 @@ type entry struct {
 	scheduler         Scheduler
 	deploymentID      string
 	extenders         []ContextExtender
+	envResolver       EnvironmentResolver
 	applicationErrors map[*goja.Object]registeredApplicationError
+	admissionErrors   map[*goja.Object]error
 }
 
 type registeredApplicationError struct {
@@ -542,6 +612,7 @@ func newEntry(program *goja.Program, descriptors []deploy.FunctionDescriptor, ar
 		bridge:            bridge,
 		program:           program,
 		applicationErrors: make(map[*goja.Object]registeredApplicationError),
+		admissionErrors:   make(map[*goja.Object]error),
 	}
 	if len(extra) >= 4 {
 		e.scheduler, _ = extra[1].(Scheduler)
@@ -573,10 +644,13 @@ func (e *entry) load(ctx context.Context, program *goja.Program) error {
 	e.loop.Run(func(vm *goja.Runtime) {
 		e.vm = vm
 		stop = e.startTimer(ctx, vm)
-		err = e.loadInLoop(vm, program)
+		err = e.loadInLoop(ctx, vm, program)
 	})
 	if stop != nil {
 		stop()
+	}
+	if deploy.IsExecutionAdmissionError(err) {
+		return err
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -584,7 +658,7 @@ func (e *entry) load(ctx context.Context, program *goja.Program) error {
 	return err
 }
 
-func (e *entry) loadInLoop(vm *goja.Runtime, program *goja.Program) error {
+func (e *entry) loadInLoop(ctx context.Context, vm *goja.Runtime, program *goja.Program) (resultErr error) {
 	if e.loaded || program == nil {
 		return nil
 	}
@@ -608,27 +682,49 @@ func (e *entry) loadInLoop(vm *goja.Runtime, program *goja.Program) error {
 		"createApplicationError": e.createApplicationError,
 	})
 
+	ctx, finish, err := e.manager.beginExecution(ctx, ExecutionInfo{
+		DeploymentID: e.deploymentID, FunctionName: "bundle", Namespace: deploy.RootNamespace, Origin: "bundle_load",
+	})
+	if err != nil {
+		return err
+	}
+	defer finishObservedExecution(finish, &resultErr)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	stop := e.startTimer(ctx, vm)
+	defer stop()
 	if _, err := vm.RunProgram(program); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("failed to load bundle: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	e.loaded = true
 	return nil
 }
 
-func (e *entry) invoke(invocation *Invocation, functionName string, args any) (any, error) {
+func (e *entry) invoke(invocation *Invocation, functionName string, args any) (result any, resultErr error) {
+	defer invocation.endExecution(&resultErr)
 	var raw goja.Value
 	var err error
 	var stop func() bool
 	e.loop.Run(func(vm *goja.Runtime) {
 		e.vm = vm
 		stop = e.startTimer(invocation.Ctx, vm)
-		if err = e.loadInLoop(vm, e.program); err != nil {
+		if err = e.loadInLoop(invocation.Ctx, vm, e.program); err != nil {
 			return
 		}
 		raw, err = e.invokeRaw(invocation, functionName, args)
 	})
 	if stop != nil {
 		stop()
+	}
+	if deploy.IsExecutionAdmissionError(err) {
+		return nil, err
 	}
 	if invocation.Ctx.Err() != nil {
 		return nil, invocation.Ctx.Err()
@@ -639,20 +735,24 @@ func (e *entry) invoke(invocation *Invocation, functionName string, args any) (a
 	return e.encodeResult(raw, invocation)
 }
 
-func (e *entry) invokeHTTP(invocation *Invocation, functionName string, httpEnvelope *deploy.HTTPRequestEnvelope) (*deploy.HTTPResponseEnvelope, error) {
+func (e *entry) invokeHTTP(invocation *Invocation, functionName string, httpEnvelope *deploy.HTTPRequestEnvelope) (result *deploy.HTTPResponseEnvelope, resultErr error) {
+	defer invocation.endExecution(&resultErr)
 	var raw goja.Value
 	var err error
 	var stop func() bool
 	e.loop.Run(func(vm *goja.Runtime) {
 		e.vm = vm
 		stop = e.startTimer(invocation.Ctx, vm)
-		if err = e.loadInLoop(vm, e.program); err != nil {
+		if err = e.loadInLoop(invocation.Ctx, vm, e.program); err != nil {
 			return
 		}
 		raw, err = e.invokeHTTPRaw(invocation, functionName, httpEnvelope)
 	})
 	if stop != nil {
 		stop()
+	}
+	if deploy.IsExecutionAdmissionError(err) {
+		return nil, err
 	}
 	if invocation.Ctx.Err() != nil {
 		return nil, invocation.Ctx.Err()
@@ -666,14 +766,20 @@ func (e *entry) invokeHTTP(invocation *Invocation, functionName string, httpEnve
 	return e.toHTTPResponse(raw, invocation)
 }
 
-func (e *entry) invokeMigration(ctx context.Context, migrationID, direction string, document any, activationTime int64) (any, error) {
+func (e *entry) invokeMigration(ctx context.Context, migrationID, direction string, document any, activationTime int64) (result any, resultErr error) {
+	var finish func(error)
+	defer finishObservedExecution(func(err error) {
+		if finish != nil {
+			finish(err)
+		}
+	}, &resultErr)
 	var raw goja.Value
 	var err error
 	var stop func() bool
 	e.loop.Run(func(vm *goja.Runtime) {
 		e.vm = vm
 		stop = e.startTimer(ctx, vm)
-		if err = e.loadInLoop(vm, e.program); err != nil {
+		if err = e.loadInLoop(ctx, vm, e.program); err != nil {
 			return
 		}
 		handlers, ok := e.bridge.migrationHandlers[migrationID]
@@ -693,6 +799,18 @@ func (e *entry) invokeMigration(ctx context.Context, migrationID, direction stri
 			err = fmt.Errorf("migration input is invalid")
 			return
 		}
+		ctx, finish, err = e.manager.beginExecution(ctx, ExecutionInfo{
+			DeploymentID: e.deploymentID, FunctionName: migrationID + ":" + direction,
+			Namespace: deploy.RootNamespace, Origin: "migration",
+		})
+		if err != nil {
+			return
+		}
+		if err = ctx.Err(); err != nil {
+			return
+		}
+		migrationStop := e.startTimer(ctx, vm)
+		defer migrationStop()
 		migrationCtx := vm.NewObject()
 		_ = migrationCtx.Set("migrationId", migrationID)
 		_ = migrationCtx.Set("activationTime", activationTime)
@@ -707,6 +825,9 @@ func (e *entry) invokeMigration(ctx context.Context, migrationID, direction stri
 	})
 	if stop != nil {
 		stop()
+	}
+	if deploy.IsExecutionAdmissionError(err) {
+		return nil, err
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -779,12 +900,20 @@ func (e *entry) invokeRaw(invocation *Invocation, functionName string, args any)
 		jsArgs = goja.Undefined()
 	}
 
+	if err := e.beginInvocation(invocation); err != nil {
+		return nil, err
+	}
+	// The outer loop owns the timer through asynchronous promise settlement.
+	invocation.stopExecutionTimer = e.startTimer(invocation.Ctx, e.vm)
 	ctx, err := e.buildInvocationContext(invocation, descriptor, functionName, normalizedArgs, jsArgs)
 	if err != nil {
 		return nil, err
 	}
 	val, err := fn(goja.Undefined(), ctx, jsArgs)
 	if err != nil {
+		if admissionErr := e.admissionErrorFromThrown(err); admissionErr != nil {
+			return nil, admissionErr
+		}
 		if applicationErr := e.applicationErrorFromThrown(err, invocation); applicationErr != nil {
 			return nil, applicationErr
 		}
@@ -807,6 +936,8 @@ func (e *entry) invokeHTTPRaw(invocation *Invocation, functionName string, httpE
 		invocation = &Invocation{}
 	}
 	invocation.FunctionType = deploy.FunctionTypeHTTPAction
+	invocation.FunctionName = functionName
+	invocation.Namespace = namespaceForDescriptor(invocation.Manifest, descriptor)
 	invocation.HTTPRequest = httpEnvelope
 	e.invocation = invocation
 
@@ -822,11 +953,36 @@ func (e *entry) invokeHTTPRaw(invocation *Invocation, functionName string, httpE
 		return nil, fmt.Errorf("failed to build Request object: %w", err)
 	}
 
+	if err := e.beginInvocation(invocation); err != nil {
+		return nil, err
+	}
+	invocation.stopExecutionTimer = e.startTimer(invocation.Ctx, e.vm)
 	ctx, err := e.buildInvocationContext(invocation, descriptor, functionName, nil, goja.Undefined())
 	if err != nil {
 		return nil, err
 	}
-	return fn(goja.Undefined(), ctx, request)
+	val, err := fn(goja.Undefined(), ctx, request)
+	if admissionErr := e.admissionErrorFromThrown(err); admissionErr != nil {
+		return nil, admissionErr
+	}
+	return val, err
+}
+
+func (e *entry) admissionErrorFromThrown(thrown any) error {
+	var value goja.Value
+	switch v := thrown.(type) {
+	case error:
+		var exception *goja.Exception
+		if errors.As(v, &exception) {
+			value = exception.Value()
+		}
+	case goja.Value:
+		value = v
+	}
+	if object, ok := value.(*goja.Object); ok {
+		return e.admissionErrors[object]
+	}
+	return nil
 }
 
 func (e *entry) createApplicationError(call goja.FunctionCall) goja.Value {
@@ -893,7 +1049,7 @@ func (e *entry) throwApplicationError(applicationErr *deploy.ApplicationError) {
 }
 
 func (e *entry) buildInvocationContext(invocation *Invocation, descriptor deploy.FunctionDescriptor, functionName string, normalizedArgs any, jsArgs goja.Value) (*goja.Object, error) {
-	ctx, err := newInvocationContext(e.vm, invocation.Ctx, invocation.App, invocation.Manifest, descriptor, functionName, normalizedArgs, jsArgs, e.extenders)
+	ctx, err := newInvocationContext(e.vm, invocation.Ctx, invocation.App, invocation.Manifest, descriptor, functionName, normalizedArgs, jsArgs, e.extenders, e.envResolver)
 	if err != nil {
 		return nil, err
 	}
@@ -995,6 +1151,9 @@ func (e *entry) resolveValue(val goja.Value, ctx context.Context) (goja.Value, e
 		case goja.PromiseStateFulfilled:
 			val = p.Result()
 		case goja.PromiseStateRejected:
+			if admissionErr := e.admissionErrorFromThrown(p.Result()); admissionErr != nil {
+				return nil, admissionErr
+			}
 			if applicationErr := e.applicationErrorFromThrown(p.Result(), e.invocation); applicationErr != nil {
 				return nil, applicationErr
 			}

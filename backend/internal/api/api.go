@@ -806,6 +806,9 @@ func validDevDeploymentRequest(e *core.RequestEvent, expected string) bool {
 func protocolServiceError(err error, e *core.RequestEvent) error {
 	status, code, message := http.StatusInternalServerError, deploy.ErrorCodeInternal, "Internal server error."
 	var applicationErr *deploy.ApplicationError
+	if deploy.IsExecutionAdmissionError(err) {
+		return protocolError(e, http.StatusServiceUnavailable, deploy.ErrorCodeInternal, "Execution admission unavailable or denied.", nil)
+	}
 	if errors.As(err, &applicationErr) {
 		status, code, message = applicationErrorResponse(applicationErr.Category)
 		return protocolErrorWithData(e, status, code, message, applicationErr.Data, applicationErr.HasData)

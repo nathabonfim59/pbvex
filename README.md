@@ -96,4 +96,5 @@ artifact verification.
 - [Svelte SDK](packages/svelte/README.md)
 - [Protocol v1 ADR](docs/adr/001-protocol-v1.md)
 - [Self-hosting guide](docs/self-hosting.md)
+- [Experimental local hosting policy protocol](docs/hosting-policy-protocol.md)
 - [Release and registry setup](docs/releasing.md)

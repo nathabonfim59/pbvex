@@ -20,6 +20,11 @@ import "github.com/nathabonfim59/pbvex/backend/internal/runtime"
 - [type Config](<#Config>)
   - [func DefaultConfig\(\) Config](<#DefaultConfig>)
 - [type ContextExtender](<#ContextExtender>)
+- [type EnvironmentResolver](<#EnvironmentResolver>)
+- [type ExecutionInfo](<#ExecutionInfo>)
+  - [func ExecutionFromContext\(ctx context.Context\) \(ExecutionInfo, bool\)](<#ExecutionFromContext>)
+- [type ExecutionObserver](<#ExecutionObserver>)
+- [type ExecutionResult](<#ExecutionResult>)
 - [type Invocation](<#Invocation>)
 - [type Manager](<#Manager>)
   - [func NewManager\(config Config\) \*Manager](<#NewManager>)
@@ -98,7 +103,7 @@ func AuthFromContext(ctx context.Context) (AuthContext, bool)
 AuthFromContext extracts the auth context, if any.
 
 <a name="Bridge"></a>
-## type [Bridge](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1113-L1122>)
+## type [Bridge](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1272-L1281>)
 
 Bridge is the host bridge exposed to the JS bundle.
 
@@ -109,7 +114,7 @@ type Bridge struct {
 ```
 
 <a name="Bridge.RegisterFunction"></a>
-### func \(\*Bridge\) [RegisterFunction](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1130>)
+### func \(\*Bridge\) [RegisterFunction](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1289>)
 
 ```go
 func (b *Bridge) RegisterFunction(descriptor goja.Value, handler goja.Value) error
@@ -118,7 +123,7 @@ func (b *Bridge) RegisterFunction(descriptor goja.Value, handler goja.Value) err
 RegisterFunction implements globalThis.\_\_pbvex.registerFunction\(descriptor, handler\).
 
 <a name="Bridge.RegisterMigration"></a>
-### func \(\*Bridge\) [RegisterMigration](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1197>)
+### func \(\*Bridge\) [RegisterMigration](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1356>)
 
 ```go
 func (b *Bridge) RegisterMigration(descriptor, up, down goja.Value) error
@@ -127,7 +132,7 @@ func (b *Bridge) RegisterMigration(descriptor, up, down goja.Value) error
 RegisterMigration implements \_\_pbvex.registerMigration\(descriptor, up, down\).
 
 <a name="Bridge.Verify"></a>
-### func \(\*Bridge\) [Verify](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1163>)
+### func \(\*Bridge\) [Verify](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L1322>)
 
 ```go
 func (b *Bridge) Verify(descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor) error
@@ -136,19 +141,29 @@ func (b *Bridge) Verify(descriptors []deploy.FunctionDescriptor, migrations []de
 Verify ensures every manifest function is registered and descriptors match exactly.
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L22-L25>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L30-L43>)
 
 Config controls the Goja runtime pool.
 
 ```go
 type Config struct {
-    PoolSize int
-    Timeout  time.Duration
+    PoolSize          int
+    Timeout           time.Duration
+    ExecutionObserver ExecutionObserver
+    // MaxConcurrentExecutions bounds roots across all deployment pools. Zero
+    // preserves the existing per-pool behavior; nested work shares a root slot.
+    MaxConcurrentExecutions int
+    // EnvironmentResolver optionally owns component environment lookups. Nil
+    // preserves standalone behavior: declared env bindings read the process
+    // environment directly. When set, every binding resolution goes through
+    // the resolver; failures fail the invocation before the handler runs and
+    // never surface resolver diagnostics, variable values, or names.
+    EnvironmentResolver EnvironmentResolver
 }
 ```
 
 <a name="DefaultConfig"></a>
-### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L28>)
+### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L46>)
 
 ```go
 func DefaultConfig() Config
@@ -165,13 +180,76 @@ ContextExtender extends the JS invocation context with host capabilities \(such 
 type ContextExtender func(vm *goja.Runtime, ctx context.Context, app core.App, fd deploy.FunctionDescriptor, obj *goja.Object) error
 ```
 
+<a name="EnvironmentResolver"></a>
+## type [EnvironmentResolver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L27>)
+
+EnvironmentResolver resolves a named host environment variable for a component env binding. provided reports whether the host supplied the variable, and err reports a host\-side denial or lookup failure. The runtime consults the resolver on every binding resolution and never caches results, so hosted policy can gate each operation dynamically.
+
+```go
+type EnvironmentResolver func(ctx context.Context, name string) (value string, provided bool, err error)
+```
+
+<a name="ExecutionInfo"></a>
+## type [ExecutionInfo](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/execution.go#L18-L24>)
+
+ExecutionInfo contains metadata only, never arguments, results or identity. bundle\_load and migration use an empty FunctionType \(they are not functions\). StartedAt is the admission\-boundary timestamp. A denied Begin is an attempted admission, not proof that code ran. Root bundle loads are independent roots; nested bundle loads and handlers are children of the calling handler.
+
+```go
+type ExecutionInfo struct {
+    ID, RootID, ParentID, DeploymentID, FunctionName, Namespace string
+    FunctionType                                                deploy.FunctionType
+    Origin                                                      string
+    Depth                                                       int
+    StartedAt                                                   time.Time
+}
+```
+
+<a name="ExecutionFromContext"></a>
+### func [ExecutionFromContext](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/execution.go#L49>)
+
+```go
+func ExecutionFromContext(ctx context.Context) (ExecutionInfo, bool)
+```
+
+ExecutionFromContext exposes the current invocation to trusted Go adapters.
+
+<a name="ExecutionObserver"></a>
+## type [ExecutionObserver](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/execution.go#L41-L44>)
+
+ExecutionObserver admits each Go\-to\-user\-JS execution and observes its result. Begin must return a context derived from its input. End is synchronous and called exactly once iff Begin succeeded. Implementations must bound reporting and use cancellation\-independent reporting contexts themselves when needed. Begin errors are preserved through ExecutionAdmissionError; End must not panic.
+
+```go
+type ExecutionObserver interface {
+    Begin(context.Context, ExecutionInfo) (context.Context, error)
+    End(context.Context, ExecutionInfo, ExecutionResult)
+}
+```
+
+<a name="ExecutionResult"></a>
+## type [ExecutionResult](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/execution.go#L26-L34>)
+
+
+
+```go
+type ExecutionResult struct {
+    // Duration is wall time from the admission boundary through result
+    // validation, including Begin latency but excluding End reporting. Handler
+    // results are reported before the caller's surrounding transaction commits.
+    Duration time.Duration
+    // Err is available for trusted classification. It may contain application
+    // data and must not be serialized verbatim into telemetry.
+    Err error
+}
+```
+
 <a name="Invocation"></a>
-## type [Invocation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/invocation.go#L26-L72>)
+## type [Invocation](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/invocation.go#L26-L74>)
 
 Invocation carries request\-scoped context for a single function invocation. It is immutable except for the context/deadline information and the nested call bookkeeping.
 
 ```go
 type Invocation struct {
+
     // Ctx is the caller context for cancellation and deadlines.
     Ctx context.Context
 
@@ -217,11 +295,12 @@ type Invocation struct {
     // NestedInvoke dispatches nested calls through a fresh runtime entry while
     // preserving this invocation tree's request-scoped state.
     NestedInvoke func(parent *Invocation, functionName string, targetType deploy.FunctionType, args any, depth int) (any, error)
+    // contains filtered or unexported fields
 }
 ```
 
 <a name="Manager"></a>
-## type [Manager](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L58-L64>)
+## type [Manager](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L76-L83>)
 
 Manager is a registry of bounded Goja runtime pools keyed by deployment id.
 
@@ -233,7 +312,7 @@ type Manager struct {
 ```
 
 <a name="NewManager"></a>
-### func [NewManager](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L67>)
+### func [NewManager](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L86>)
 
 ```go
 func NewManager(config Config) *Manager
@@ -251,7 +330,7 @@ func (m *Manager) AddContextExtender(ext ContextExtender)
 AddContextExtender appends a host capability hook. Hooks run in registration order after the runtime has installed its base database capability and before the scheduler capability is attached. Existing pools are dropped so a hook registered after compilation cannot be silently omitted.
 
 <a name="Manager.Compile"></a>
-### func \(\*Manager\) [Compile](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L81>)
+### func \(\*Manager\) [Compile](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L104>)
 
 ```go
 func (m *Manager) Compile(deploymentID, bundle string, descriptors []deploy.FunctionDescriptor, configs ...deploy.DeploymentConfig) error
@@ -260,7 +339,7 @@ func (m *Manager) Compile(deploymentID, bundle string, descriptors []deploy.Func
 Compile compiles and stores the bundle program for a deployment.
 
 <a name="Manager.CompileDeployment"></a>
-### func \(\*Manager\) [CompileDeployment](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L86>)
+### func \(\*Manager\) [CompileDeployment](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L109>)
 
 ```go
 func (m *Manager) CompileDeployment(deploymentID, bundle string, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor, configs ...deploy.DeploymentConfig) error
@@ -269,7 +348,7 @@ func (m *Manager) CompileDeployment(deploymentID, bundle string, descriptors []d
 CompileDeployment stores both function and migration registration contracts.
 
 <a name="Manager.Drop"></a>
-### func \(\*Manager\) [Drop](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L111>)
+### func \(\*Manager\) [Drop](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L135>)
 
 ```go
 func (m *Manager) Drop(deploymentID string)
@@ -278,7 +357,7 @@ func (m *Manager) Drop(deploymentID string)
 Drop removes an invalidated deployment runtime \(trim, deletion, rollback transitions\). It is safe for in\-flight callers: they hold the old pool.
 
 <a name="Manager.Invoke"></a>
-### func \(\*Manager\) [Invoke](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L189>)
+### func \(\*Manager\) [Invoke](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L225>)
 
 ```go
 func (m *Manager) Invoke(ctx context.Context, deploymentID, functionName string, args any, authArgs ...any) (any, error)
@@ -287,7 +366,7 @@ func (m *Manager) Invoke(ctx context.Context, deploymentID, functionName string,
 Invoke runs the named function in a fresh bounded runtime.
 
 <a name="Manager.InvokeHTTP"></a>
-### func \(\*Manager\) [InvokeHTTP](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L319>)
+### func \(\*Manager\) [InvokeHTTP](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L367>)
 
 ```go
 func (m *Manager) InvokeHTTP(ctx context.Context, deploymentID, functionName string, httpEnvelope *deploy.HTTPRequestEnvelope, identity *auth.UserIdentity, requestID string) (*deploy.HTTPResponseEnvelope, error)
@@ -296,7 +375,7 @@ func (m *Manager) InvokeHTTP(ctx context.Context, deploymentID, functionName str
 InvokeHTTP runs the named httpAction and returns an HTTP response envelope.
 
 <a name="Manager.InvokeHTTPWithDatabase"></a>
-### func \(\*Manager\) [InvokeHTTPWithDatabase](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L325>)
+### func \(\*Manager\) [InvokeHTTPWithDatabase](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L373>)
 
 ```go
 func (m *Manager) InvokeHTTPWithDatabase(ctx context.Context, deploymentID, functionName string, httpEnvelope *deploy.HTTPRequestEnvelope, identity *auth.UserIdentity, requestID string, app core.App, manifest deploy.DeploymentManifest) (*deploy.HTTPResponseEnvelope, error)
@@ -305,7 +384,7 @@ func (m *Manager) InvokeHTTPWithDatabase(ctx context.Context, deploymentID, func
 InvokeHTTPWithDatabase preserves the app and manifest snapshot for nested calls issued by an HTTP action.
 
 <a name="Manager.InvokeMigration"></a>
-### func \(\*Manager\) [InvokeMigration](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L171>)
+### func \(\*Manager\) [InvokeMigration](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L202>)
 
 ```go
 func (m *Manager) InvokeMigration(ctx context.Context, deploymentID, migrationID, direction string, document any, activationTime int64) (any, error)
@@ -314,7 +393,7 @@ func (m *Manager) InvokeMigration(ctx context.Context, deploymentID, migrationID
 InvokeMigration executes a pure synchronous up/down handler. The caller owns the surrounding database transaction; this method never starts one.
 
 <a name="Manager.InvokeWithDatabase"></a>
-### func \(\*Manager\) [InvokeWithDatabase](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L220>)
+### func \(\*Manager\) [InvokeWithDatabase](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L261>)
 
 ```go
 func (m *Manager) InvokeWithDatabase(ctx context.Context, deploymentID, functionName string, args any, extra ...any) (any, error)
@@ -323,7 +402,7 @@ func (m *Manager) InvokeWithDatabase(ctx context.Context, deploymentID, function
 InvokeWithDatabase is used by deploy.Service for real requests that need database access. Mutations are wrapped in a PocketBase transaction so that invalid returns, timeouts, and cancellations roll back all writes.
 
 <a name="Manager.Verify"></a>
-### func \(\*Manager\) [Verify](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L147>)
+### func \(\*Manager\) [Verify](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L171>)
 
 ```go
 func (m *Manager) Verify(ctx context.Context, deploymentID, bundle string, descriptors []deploy.FunctionDescriptor) error
@@ -332,7 +411,7 @@ func (m *Manager) Verify(ctx context.Context, deploymentID, bundle string, descr
 Verify loads the bundle in a fresh runtime and confirms that every declared function is registered with an exact descriptor match.
 
 <a name="Manager.VerifyDeployment"></a>
-### func \(\*Manager\) [VerifyDeployment](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L152>)
+### func \(\*Manager\) [VerifyDeployment](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L176>)
 
 ```go
 func (m *Manager) VerifyDeployment(ctx context.Context, deploymentID, bundle string, descriptors []deploy.FunctionDescriptor, migrations []deploy.MigrationDescriptor) error
@@ -341,7 +420,7 @@ func (m *Manager) VerifyDeployment(ctx context.Context, deploymentID, bundle str
 VerifyDeployment requires exact function and migration registration parity.
 
 <a name="MigrationError"></a>
-## type [MigrationError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L46>)
+## type [MigrationError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L64>)
 
 MigrationError is the bounded, document\-free failure produced by ctx.fail.
 
@@ -350,7 +429,7 @@ type MigrationError struct{ Message string }
 ```
 
 <a name="MigrationError.Error"></a>
-### func \(\*MigrationError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L48>)
+### func \(\*MigrationError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L66>)
 
 ```go
 func (e *MigrationError) Error() string
@@ -359,7 +438,7 @@ func (e *MigrationError) Error() string
 
 
 <a name="Pool"></a>
-## type [Pool](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L364-L375>)
+## type [Pool](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L412-L425>)
 
 Pool is a bounded concurrency gate for Goja runtimes for a single deployment.
 
@@ -370,7 +449,7 @@ type Pool struct {
 ```
 
 <a name="RuntimeInvoker"></a>
-## type [RuntimeInvoker](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L36-L41>)
+## type [RuntimeInvoker](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L54-L59>)
 
 RuntimeInvoker is the interface used by the deploy service.
 
@@ -405,7 +484,7 @@ func ScheduleNamespacesFromContext(ctx context.Context) (ScheduleNamespaces, boo
 
 
 <a name="Scheduler"></a>
-## type [Scheduler](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L51-L55>)
+## type [Scheduler](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/runtime/runtime.go#L69-L73>)
 
 Scheduler is the capability exposed to mutations and actions.
 
