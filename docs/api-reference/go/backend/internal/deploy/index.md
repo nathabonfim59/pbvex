@@ -17,8 +17,10 @@ import "github.com/nathabonfim59/pbvex/backend/internal/deploy"
 - [func ComponentNamespaceID\(path string\) \(string, error\)](<#ComponentNamespaceID>)
 - [func ComponentNamespaces\(graph \*ComponentGraph\) \(map\[string\]ComponentNamespace, error\)](<#ComponentNamespaces>)
 - [func ComputeComponentID\(def ComponentDefinition, bundleSha string\) string](<#ComputeComponentID>)
+- [func ExecutionOrigin\(ctx context.Context\) string](<#ExecutionOrigin>)
 - [func HashSha256Bytes\(b \[\]byte\) string](<#HashSha256Bytes>)
 - [func IsApplicationErrorCategory\(category ApplicationErrorCategory\) bool](<#IsApplicationErrorCategory>)
+- [func IsExecutionAdmissionError\(err error\) bool](<#IsExecutionAdmissionError>)
 - [func IsExpectedApplicationError\(err error\) bool](<#IsExpectedApplicationError>)
 - [func IsIdentifier\(s string\) bool](<#IsIdentifier>)
 - [func IsSha256Hex\(value any\) bool](<#IsSha256Hex>)
@@ -28,6 +30,7 @@ import "github.com/nathabonfim59/pbvex/backend/internal/deploy"
 - [func ValidateHTTPHeaderValue\(value string\) error](<#ValidateHTTPHeaderValue>)
 - [func ValidateHTTPHeaders\(headers map\[string\]\[\]string\) error](<#ValidateHTTPHeaders>)
 - [func VerifyModuleSources\(modules \[\]ModuleSource, manifest DeploymentManifest\) error](<#VerifyModuleSources>)
+- [func WithExecutionOrigin\(ctx context.Context, origin string\) context.Context](<#WithExecutionOrigin>)
 - [func WrapFunctionFailure\(err error, name string, functionType FunctionType, phase FailurePhase\) error](<#WrapFunctionFailure>)
 - [type ActivationObserver](<#ActivationObserver>)
 - [type ApplicationError](<#ApplicationError>)
@@ -68,6 +71,9 @@ import "github.com/nathabonfim59/pbvex/backend/internal/deploy"
 - [type EmailTemplateManifest](<#EmailTemplateManifest>)
 - [type EnvArgDescriptor](<#EnvArgDescriptor>)
 - [type ErrorCode](<#ErrorCode>)
+- [type ExecutionAdmissionError](<#ExecutionAdmissionError>)
+  - [func \(e \*ExecutionAdmissionError\) Error\(\) string](<#ExecutionAdmissionError.Error>)
+  - [func \(e \*ExecutionAdmissionError\) Unwrap\(\) error](<#ExecutionAdmissionError.Unwrap>)
 - [type FailurePhase](<#FailurePhase>)
   - [func FailurePhaseFor\(err error\) FailurePhase](<#FailurePhaseFor>)
 - [type FunctionDescriptor](<#FunctionDescriptor>)
@@ -239,6 +245,12 @@ var DefaultDeploymentConfig = DeploymentConfig{
 }
 ```
 
+<a name="ErrExecutionBusy"></a>ErrExecutionBusy indicates the instance\-wide root execution cap is full.
+
+```go
+var ErrExecutionBusy = errors.New("execution concurrency limit reached")
+```
+
 <a name="AuthenticateComponentIDs"></a>
 ## func [AuthenticateComponentIDs](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/components.go#L783>)
 
@@ -302,6 +314,15 @@ func ComputeComponentID(def ComponentDefinition, bundleSha string) string
 
 ComputeComponentID returns the canonical content\-addressed componentId for a component definition. bundleSha is the verified SHA\-256 hex of the executable bundle; including it in the hash input binds the componentId to the exact bytes the runtime will execute, not just the declared module sources. It mirrors the TS bundler's buildComponentGraph hash so Go\-generated and TS\-generated ids are byte\-identical.
 
+<a name="ExecutionOrigin"></a>
+## func [ExecutionOrigin](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/execution.go#L17>)
+
+```go
+func ExecutionOrigin(ctx context.Context) string
+```
+
+ExecutionOrigin returns the entry path, defaulting to an ordinary call.
+
 <a name="HashSha256Bytes"></a>
 ## func [HashSha256Bytes](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/manifest.go#L1135>)
 
@@ -319,6 +340,15 @@ func IsApplicationErrorCategory(category ApplicationErrorCategory) bool
 ```
 
 IsApplicationErrorCategory reports whether category has a defined HTTP mapping.
+
+<a name="IsExecutionAdmissionError"></a>
+## func [IsExecutionAdmissionError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/execution.go#L38>)
+
+```go
+func IsExecutionAdmissionError(err error) bool
+```
+
+
 
 <a name="IsExpectedApplicationError"></a>
 ## func [IsExpectedApplicationError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L171>)
@@ -400,6 +430,15 @@ func VerifyModuleSources(modules []ModuleSource, manifest DeploymentManifest) er
 ```
 
 VerifyModuleSources recomputes the canonical SHA\-256 of each uploaded module from its actual bytes and rejects missing/extra/mismatched module paths for the component graph. This ties the manifest's declared moduleHashes \(and therefore the content\-addressed componentId\) to the actual uploaded executable module bytes, not client\-declared hashes.
+
+<a name="WithExecutionOrigin"></a>
+## func [WithExecutionOrigin](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/execution.go#L12>)
+
+```go
+func WithExecutionOrigin(ctx context.Context, origin string) context.Context
+```
+
+WithExecutionOrigin marks the server\-owned entry path. Nested invocations inherit it; it does not replace authentication or request identity.
 
 <a name="WrapFunctionFailure"></a>
 ## func [WrapFunctionFailure](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L40>)
@@ -907,6 +946,39 @@ const (
     ErrorCodeStorageFull        ErrorCode = "storage_full"
 )
 ```
+
+<a name="ExecutionAdmissionError"></a>
+## type [ExecutionAdmissionError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/execution.go#L27-L33>)
+
+ExecutionAdmissionError identifies work rejected before entering user code. Its public text deliberately excludes provider diagnostics and secrets. Err remains available through errors.Is/As for trusted Go integrations.
+
+```go
+type ExecutionAdmissionError struct {
+    Err error
+    // Started is true when an admitted parent propagated a nested denial.
+    // Such work may have side effects and must not be automatically refunded
+    // and replayed as though admission prevented the entire root attempt.
+    Started bool
+}
+```
+
+<a name="ExecutionAdmissionError.Error"></a>
+### func \(\*ExecutionAdmissionError\) [Error](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/execution.go#L35>)
+
+```go
+func (e *ExecutionAdmissionError) Error() string
+```
+
+
+
+<a name="ExecutionAdmissionError.Unwrap"></a>
+### func \(\*ExecutionAdmissionError\) [Unwrap](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/execution.go#L36>)
+
+```go
+func (e *ExecutionAdmissionError) Unwrap() error
+```
+
+
 
 <a name="FailurePhase"></a>
 ## type [FailurePhase](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/deploy/observability.go#L16>)

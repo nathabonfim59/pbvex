@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/osutils"
 	"github.com/pocketbase/pocketbase/ui"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var bundledAdminUI = ui.DistDirFS
@@ -24,6 +25,18 @@ func main() {
 	})
 
 	cfg := pbvex.DefaultConfig()
+	if value := os.Getenv("PBVEX_HOSTING_ENABLED"); value != "" {
+		var err error
+		cfg.Hosting.Enabled, err = strconv.ParseBool(value)
+		if err != nil {
+			log.Fatal("invalid PBVEX_HOSTING_ENABLED")
+		}
+	}
+	cfg.Hosting.SocketPath = os.Getenv("PBVEX_HOSTING_SOCKET")
+	cfg.Hosting.Timeout = envDuration("PBVEX_HOSTING_TIMEOUT", 2*time.Second)
+	app.RootCmd.PersistentFlags().BoolVar(&cfg.Hosting.Enabled, "hostingEnabled", cfg.Hosting.Enabled, "enable local policy integration")
+	app.RootCmd.PersistentFlags().StringVar(&cfg.Hosting.SocketPath, "hostingSocket", cfg.Hosting.SocketPath, "absolute local policy Unix socket path")
+	app.RootCmd.PersistentFlags().DurationVar(&cfg.Hosting.Timeout, "hostingTimeout", cfg.Hosting.Timeout, "policy request deadline (maximum 30s)")
 	cfg.DevDeployToken = envString("PBVEX_DEV_DEPLOY_TOKEN", "")
 
 	// Mail settings. Environment-only (no flags): the variables carry SMTP
@@ -169,7 +182,13 @@ func main() {
 		"object-key prefix used by the filesystem backend",
 	)
 
-	app.RootCmd.ParseFlags(os.Args[1:])
+	// Serve/plugin flags are registered below. Parse bootstrap flags strictly
+	// while allowing those not-yet-registered flags during this first pass.
+	app.RootCmd.FParseErrWhitelist.UnknownFlags = true
+	if err := app.RootCmd.ParseFlags(os.Args[1:]); err != nil && err != pflag.ErrHelp {
+		log.Fatal(err)
+	}
+	app.RootCmd.FParseErrWhitelist.UnknownFlags = false
 
 	cfg.Storage.AllowedContentTypes = parseAllowedContentTypes(storageAllowedTypes)
 
