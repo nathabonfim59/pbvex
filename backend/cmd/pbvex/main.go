@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/nathabonfim59/pbvex/backend/internal/pbvex"
 	"github.com/pocketbase/pocketbase"
 	pbcmd "github.com/pocketbase/pocketbase/cmd"
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/osutils"
 	"github.com/pocketbase/pocketbase/ui"
 	"github.com/spf13/cobra"
@@ -38,6 +40,16 @@ func main() {
 	app.RootCmd.PersistentFlags().StringVar(&cfg.Hosting.SocketPath, "hostingSocket", cfg.Hosting.SocketPath, "absolute local policy Unix socket path")
 	app.RootCmd.PersistentFlags().DurationVar(&cfg.Hosting.Timeout, "hostingTimeout", cfg.Hosting.Timeout, "policy request deadline (maximum 30s)")
 	cfg.DevDeployToken = envString("PBVEX_DEV_DEPLOY_TOKEN", "")
+
+	// Host-managed storage. Environment-only (no flags): the variables carry
+	// an S3 secret key that must not appear in argv or shell history.
+	// Enabling any part requires the hosting integration; a partially set
+	// configuration fails startup instead of being silently ignored.
+	managedS3, err := managedS3FromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg.HostManagedStorageS3 = managedS3
 
 	// Mail settings. Environment-only (no flags): the variables carry SMTP
 	// credentials that must not appear in argv or shell history. Invalid
@@ -241,6 +253,68 @@ func envString(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// managedS3FromEnv builds the host-managed S3 configuration from the
+// PBVEX_HOST_STORAGE_S3_* process environment. The configuration is only
+// meaningful together with the hosting integration; RegisterCore enforces
+// that pairing. ENABLED=false with credentials present is rejected so a
+// stale deployment cannot appear to use managed storage.
+func managedS3FromEnv() (core.S3Config, error) {
+	const prefix = "PBVEX_HOST_STORAGE_S3_"
+
+	credentialSuffixes := []string{"BUCKET", "REGION", "ENDPOINT", "ACCESS_KEY", "SECRET", "FORCE_PATH_STYLE"}
+	credentialsSet := func() string {
+		for _, suffix := range credentialSuffixes {
+			if v, ok := os.LookupEnv(prefix + suffix); ok && v != "" {
+				return suffix
+			}
+		}
+		return ""
+	}
+
+	enabledRaw, enabledSet := os.LookupEnv(prefix + "ENABLED")
+	if !enabledSet || enabledRaw == "" {
+		if suffix := credentialsSet(); suffix != "" {
+			return core.S3Config{}, fmt.Errorf("%sENABLED must be set to true when %s%s is configured", prefix, prefix, suffix)
+		}
+		return core.S3Config{}, nil
+	}
+
+	enabled, err := strconv.ParseBool(enabledRaw)
+	if err != nil {
+		return core.S3Config{}, fmt.Errorf("invalid boolean for %sENABLED=%q", prefix, enabledRaw)
+	}
+	if !enabled {
+		// An explicit false disables managed storage; leftover credentials
+		// still indicate a stale deployment and fail startup.
+		if suffix := credentialsSet(); suffix != "" {
+			return core.S3Config{}, fmt.Errorf("%sENABLED=false conflicts with %s%s", prefix, prefix, suffix)
+		}
+		return core.S3Config{}, nil
+	}
+
+	forcePathStyle := false
+	if raw, ok := os.LookupEnv(prefix + "FORCE_PATH_STYLE"); ok && raw != "" {
+		forcePathStyle, err = strconv.ParseBool(raw)
+		if err != nil {
+			return core.S3Config{}, fmt.Errorf("invalid boolean for %sFORCE_PATH_STYLE=%q", prefix, raw)
+		}
+	}
+
+	cfg := core.S3Config{
+		Enabled:        enabled,
+		Bucket:         os.Getenv(prefix + "BUCKET"),
+		Region:         os.Getenv(prefix + "REGION"),
+		Endpoint:       os.Getenv(prefix + "ENDPOINT"),
+		AccessKey:      os.Getenv(prefix + "ACCESS_KEY"),
+		Secret:         os.Getenv(prefix + "SECRET"),
+		ForcePathStyle: forcePathStyle,
+	}
+	if err := cfg.Validate(); err != nil {
+		return core.S3Config{}, fmt.Errorf("invalid %s* configuration: %w", prefix, err)
+	}
+	return cfg, nil
 }
 
 func envInt64(key string, def int64) int64 {

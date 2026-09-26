@@ -24,3 +24,4 @@ This section documents the Go backend surface. The executable is the `cmd/pbvex`
 
 - [policy\-service](/api-reference/go/backend/examples/policy-service/) `backend/examples/policy-service`
 - [hosting](/api-reference/go/backend/hosting/) `backend/hosting`
+- [storagequota](/api-reference/go/backend/hosting/storagequota/) `backend/hosting/storagequota`

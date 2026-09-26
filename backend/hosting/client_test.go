@@ -309,3 +309,61 @@ func TestPersistentTransportAcrossRejections(t *testing.T) {
 		t.Fatalf("connections = %d; expected persistent transport across rejections", connections.Load())
 	}
 }
+
+func TestCallEndpointPathConstraints(t *testing.T) {
+	// The exported Call seam must only reach this client's own /v1 socket
+	// tree. A path that could name any other destination (traversal,
+	// authority, query, fragment, empty or oversized) is a protocol error
+	// rejected before any bytes are dialed.
+	rejecting, connections := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request for path %q", r.URL.Path)
+	}))
+	ctx := context.Background()
+	unsafe := []string{
+		"",
+		"/hello",
+		"hello/",
+		"/hello/",
+		"//example.com/hello",
+		"..",
+		"../hello",
+		"hello/../check",
+		"hello/..",
+		"hello?x=1",
+		"hello#frag",
+		"hello bar",
+		"hello%2Fbar",
+		"hello\tbar",
+		strings.Repeat("a", 129),
+		strings.Repeat("ab/", 400),
+	}
+	for _, path := range unsafe {
+		if err := rejecting.Call(ctx, path, struct{}{}, new(Hello)); !errors.Is(err, ErrProtocol) {
+			t.Fatalf("Call(%q) err = %v, want ErrProtocol", path, err)
+		}
+	}
+	if connections.Load() != 0 {
+		t.Fatalf("unsafe paths dialed %d connections; want 0", connections.Load())
+	}
+
+	// Positive control: a safe relative endpoint reaches the policy socket
+	// under the /v1 root and decodes with the shared strictness.
+	c, _ := testClient(t, NewReferenceService(5))
+	hello, err := c.Handshake(ctx)
+	if err != nil {
+		t.Fatalf("handshake: %v", err)
+	}
+	if hello.Version != Version {
+		t.Fatalf("unexpected hello version %q", hello.Version)
+	}
+	if err := c.Call(ctx, "hello", struct{}{}, new(Hello)); err != nil {
+		t.Fatalf("Call(hello) err = %v", err)
+	}
+	var decision Decision
+	if err := c.Call(ctx, "check", CheckRequest{Capability: "settings.storage.write"}, &decision); err != nil {
+		t.Fatalf("Call(check) err = %v", err)
+	}
+	if decision.Allowed {
+		t.Fatal("unexpected allow from the default reference policy")
+	}
+}

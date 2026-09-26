@@ -6,7 +6,7 @@
 import "github.com/nathabonfim59/pbvex/backend/examples/policy-service"
 ```
 
-A local demonstration only: reservations/events disappear on restart.
+A local demonstration only: reservations, admissions and events are kept in memory and disappear on restart. One socket serves both the policy protocol \(/v1/check, /v1/admit, /v1/events\) and the storage byte quota protocol \(/v1/storage/...\), so an enabled PBVex deployment can enforce storage quotas against this single endpoint.
 
 ## Index
 

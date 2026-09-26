@@ -109,7 +109,7 @@ func observerTestObserver(t *testing.T, wrapper func(http.Handler) http.Handler,
 	go server.Serve(l)
 	t.Cleanup(func() { server.Close() })
 	cfg.Enabled = true
-	client, err := newHostingClient(cfg)
+	client, _, err := newHostingClient(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
