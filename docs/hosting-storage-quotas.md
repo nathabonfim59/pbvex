@@ -314,3 +314,60 @@ the real router, fail-closed denial before writes, wholesale native
 thumbnail denial including cached selectors with originals still served,
 unchanged standalone behavior,
 and terminate closing the shared transport).
+## Provider initialization and recovery
+
+The following guidance applies to compatible durable providers. It does not
+add wire fields or implement durability in the in-memory reference service.
+
+### Establish usage before admitting writes
+
+Registering a tenant or configuring its byte limit is not proof that its storage
+is empty. Before the first allowed reservation, establish usage from a complete,
+authoritative inventory. A successfully completed empty inventory can establish
+zero usage; a failed or partial scan cannot. Preserve both usage and initialization
+state across provider restarts. Changing a limit must not reset either state.
+
+### Admission retries need a live reservation
+
+An identical reserve retry can replay an allowed decision while the original
+hold is still active and admission is permitted. A settled, released, or
+reconciled-away reservation must not return an allow that could authorize another
+write without reserved capacity. Retain its identity and reject stale retries
+as conflicts. During maintenance, deny admission without discarding existing
+holds. Retrying a settlement or release is distinct from authorizing another
+write; preserve deterministic acknowledgements for already applied operations.
+
+If a response is lost, the provider may already have committed the operation.
+Persist state and idempotency records atomically before acknowledgement. Never
+expire uncertain reservations into free capacity based only on elapsed time.
+
+### Credit claims and authoritative reconciliation
+
+The protocol's credit message reports a client's claim of confirmed deletion;
+it is not independent proof that object bytes have disappeared. Providers must
+define their trust boundary explicitly. A conservative provider can acknowledge
+durable receipt of the claim while retaining charged usage until authoritative
+inventory confirms the adjustment. In that mode, acknowledgement does not mean
+allowance is immediately available again. Document this behavior for operators
+and usage displays. Do not treat arbitrary new event IDs as proof of distinct
+deletions or subtract the same bytes repeatedly.
+
+For inventory that replaces charged usage, serialize maintenance for the tenant
+and establish quiescence of all writers. Pausing reservation requests alone does
+not stop writes already admitted. Hold the exclusive maintenance lease throughout
+the scan and accounting update; if another run could have resumed admission while
+waiting for that lease, reaffirm the pause after acquiring it. Apply only a full
+successful inventory, retain identities of superseded reservations, and prevent
+delayed pre-inventory messages from subtracting the newly inventoried usage.
+
+### Provider verification checklist
+
+- Configured-but-never-inventoried storage denies new reservations, including
+  after restart; a completed inventory initializes it.
+- Concurrent reservations cannot exceed available capacity.
+- A lost acknowledgement followed by a retry preserves the original operation.
+- Reopening the ledger preserves holds, usage, denials and conflict detection.
+- Stale reserve retries cannot authorize writes after settlement or inventory.
+- Failed scans preserve accounting; concurrent maintenance cannot scan while
+  another run resumes writers.
+- Tenant identity comes from the trusted endpoint, not request fields.
