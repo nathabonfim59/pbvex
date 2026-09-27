@@ -310,6 +310,9 @@ func (s *Service) applyMigrationPlans(ctx context.Context, app core.App, deploym
 				document["_creationTime"] = float64(row.GetDateTime("created").Time().UnixMilli())
 				output, err := invoker.InvokeMigration(ctx, deploymentID, step.ID, direction, document, activationTime.Time().UnixMilli())
 				if err != nil {
+					if IsExecutionAdmissionError(err) {
+						return err
+					}
 					return fmt.Errorf("migration %q failed", step.ID)
 				}
 				object, ok := output.(map[string]any)

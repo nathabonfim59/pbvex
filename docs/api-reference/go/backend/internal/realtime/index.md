@@ -136,7 +136,7 @@ func DefaultConfig() Config
 DefaultConfig returns the default realtime configuration.
 
 <a name="Subscription"></a>
-## type [Subscription](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/subscription.go#L14-L36>)
+## type [Subscription](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/subscription.go#L14-L37>)
 
 Subscription is a single realtime SSE subscription.
 

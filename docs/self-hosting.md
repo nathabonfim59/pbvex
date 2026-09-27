@@ -202,7 +202,10 @@ an alternative for environment-provisioned deployments: the server process
 reads them at startup and applies them to the persisted mail settings on every
 bootstrap. Only provided variables are applied, so dashboard-managed values
 for absent variables survive restarts, while a provided variable always wins
-on boot:
+on boot. With hosting integration enabled these variables become host-owned
+instead: they are applied to the running process only, never persisted, and
+the mail settings are locked against API edits — see
+[hosted secret and configuration isolation](./hosting-secret-isolation.md):
 
 | Variable | Purpose |
 | --- | --- |
