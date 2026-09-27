@@ -51,9 +51,14 @@ func TestRealtimeUnexpectedFailureIsLoggedOnceAndMasked(t *testing.T) {
 	if !ok {
 		t.Fatalf("logger handler is %T", app.Logger().Handler())
 	}
-	if err := handler.WriteAll(context.Background()); err != nil {
-		t.Fatal(err)
+	// pocketbase >= 0.40.4 writes queued logs asynchronously unless the
+	// context carries logger.BlockKey, which would race the AuxDB queries below.
+	writeAll := func() {
+		if err := handler.WriteAll(context.WithValue(context.Background(), logger.BlockKey, true)); err != nil {
+			t.Fatal(err)
+		}
 	}
+	writeAll()
 	var logs []*core.Log
 	if err := app.AuxDB().Select("*").From(core.LogsTableName).
 		Where(dbx.HashExp{"message": "PBVex handler failed"}).All(&logs); err != nil {
@@ -69,9 +74,7 @@ func TestRealtimeUnexpectedFailureIsLoggedOnceAndMasked(t *testing.T) {
 	}
 
 	subscription.executionErrorPayload(&deploy.ApplicationError{Category: deploy.ApplicationErrorConflict})
-	if err := handler.WriteAll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	writeAll()
 	logs = nil
 	if err := app.AuxDB().Select("*").From(core.LogsTableName).
 		Where(dbx.HashExp{"message": "PBVex handler failed"}).All(&logs); err != nil {
