@@ -4,6 +4,11 @@ import { formatOpaqueId } from '@pbvex/protocol';
 import { v, ValidationError } from '../src/runtime/values.js';
 import { defineSchema, defineTable, index, isSchemaDefinition, isTableDefinition } from '../src/schema/schema.js';
 
+// The index-typing scenario compiles generated sources with a real tsc
+// subprocess; the explicit timeout keeps the integration test safe on loaded
+// CI runners without raising vitest's default for the unit tests above.
+const TSC_COMPILE_TIMEOUT_MS = 30_000;
+
 describe('schema authoring', () => {
   it('defines a schema and serializes to protocol SchemaDescriptor shape', () => {
     const schema = defineSchema({
@@ -445,5 +450,5 @@ users.index('bad_union', ['mixed.label']);
     );
     expect(() => execSync(`node ${TSC} --noEmit -p ${path.join(tempDir, 'tsconfig.json')}`, { stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, TSC_COMPILE_TIMEOUT_MS);
 });

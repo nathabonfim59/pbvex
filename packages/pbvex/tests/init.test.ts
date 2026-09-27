@@ -8,6 +8,12 @@ import { fileURLToPath } from 'node:url';
 
 const cliPath = path.resolve(fileURLToPath(import.meta.url), '../../dist/cli/index.js');
 
+// Every scenario spawns node CLI subprocesses (init/codegen/build/version),
+// each paying full process startup; init also bundles a fresh project build.
+// Explicit timeout keeps these integration tests safe on loaded CI runners
+// without raising vitest's default for unit tests.
+const CLI_INTEGRATION_TIMEOUT_MS = 30_000;
+
 function runCli(cwd: string, ...args: string[]): string {
   return execFileSync(process.execPath, [cliPath, ...args], {
     cwd,
@@ -51,7 +57,7 @@ describe('pbvex init', () => {
       'pbvex:typecheck': 'pbvex typecheck',
     });
     expect(runCli(projectDir, '--version').trim()).toBe(pbvexManifest.version);
-  });
+  }, CLI_INTEGRATION_TIMEOUT_MS);
 
   it('initializes an installed-package project without replacing project configuration', async () => {
     projectDir = await mkdtemp(path.join(tmpdir(), 'pbvex-init-installed-'));
@@ -89,7 +95,7 @@ describe('pbvex init', () => {
       'dist\nnode_modules\n.pbvex/credentials.json\n.pbvex/dist\n.pbvex/dev\n',
     );
     expect(existsSync(path.join(projectDir, 'pbvex', 'messages.ts'))).toBe(true);
-  });
+  }, CLI_INTEGRATION_TIMEOUT_MS);
 
   it('allows package scripts to be declined explicitly', async () => {
     projectDir = await mkdtemp(path.join(tmpdir(), 'pbvex-init-no-scripts-'));
@@ -97,7 +103,7 @@ describe('pbvex init', () => {
     const manifest = JSON.parse(await readFile(path.join(projectDir, 'package.json'), 'utf8'));
     expect(manifest.scripts).toEqual({});
     expect(manifest.devDependencies.pbvex).toBeDefined();
-  });
+  }, CLI_INTEGRATION_TIMEOUT_MS);
 
   it('preflights conflicts and leaves no partial scaffold', async () => {
     projectDir = await mkdtemp(path.join(tmpdir(), 'pbvex-init-conflict-'));
@@ -114,7 +120,7 @@ describe('pbvex init', () => {
     for (const file of ['pbvex.config.ts', 'schema.ts', 'messages.ts']) {
       expect(existsSync(path.join(pbvexDir, file))).toBe(false);
     }
-  });
+  }, CLI_INTEGRATION_TIMEOUT_MS);
 
   it('rejects malformed package metadata before writing any scaffold files', async () => {
     projectDir = await mkdtemp(path.join(tmpdir(), 'pbvex-init-invalid-package-'));
@@ -124,7 +130,7 @@ describe('pbvex init', () => {
     expect(existsSync(path.join(projectDir, 'pbvex'))).toBe(false);
     expect(existsSync(path.join(projectDir, 'tsconfig.json'))).toBe(false);
     expect(existsSync(path.join(projectDir, '.gitignore'))).toBe(false);
-  });
+  }, CLI_INTEGRATION_TIMEOUT_MS);
 
   it('requires --force before replacing managed files', async () => {
     projectDir = await mkdtemp(path.join(tmpdir(), 'pbvex-init-force-'));
@@ -137,5 +143,5 @@ describe('pbvex init', () => {
 
     runCli(projectDir, 'init', '--force');
     expect(await readFile(messagesPath, 'utf8')).toContain("ctx.db.insert('messages'");
-  });
+  }, CLI_INTEGRATION_TIMEOUT_MS);
 });

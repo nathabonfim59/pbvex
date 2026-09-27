@@ -277,15 +277,23 @@ func (b *Broadcaster) Handle(e *core.RequestEvent) error {
 		return nil
 	}
 
-	// Send the subscribe envelope immediately so the client connection reaches
-	// "connected" before the potentially slow query runs.
-	sub.sendSubscribe()
-
-	// Register with generation fence: if activation changed during admission,
-	// reject the subscription so the client reconnects against the new deployment.
+	// Register with generation fence BEFORE announcing the subscription: if
+	// activation changed during admission, reject the subscription so the
+	// client reconnects against the new deployment. Registering before the
+	// subscribe envelope is flushed also ensures any InvalidateAll a client
+	// can trigger after observing the subscribe event finds the subscription
+	// in b.subs, so the re-run notification cannot be lost in the
+	// admission→registration gap.
 	if !b.subscribeWithFence(sub, admissionGen) {
 		return nil
 	}
+
+	// Send the subscribe envelope so the client connection reaches "connected"
+	// before the potentially slow query runs. This must stay after
+	// subscribeWithFence and before go sub.run(): the subscribe event is the
+	// client-visible signal that invalidations are now honored, and it must
+	// remain the first event on the stream.
+	sub.sendSubscribe()
 
 	go sub.run()
 
