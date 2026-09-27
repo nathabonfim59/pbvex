@@ -19,3 +19,9 @@ This section documents the Go backend surface. The executable is the `cmd/pbvex`
 - [scheduler](/api-reference/go/backend/internal/scheduler/) `backend/internal/scheduler`
 - [schema](/api-reference/go/backend/internal/schema/) `backend/internal/schema`
 - [storage](/api-reference/go/backend/internal/storage/) `backend/internal/storage`
+
+## Other packages
+
+- [policy\-service](/api-reference/go/backend/examples/policy-service/) `backend/examples/policy-service`
+- [hosting](/api-reference/go/backend/hosting/) `backend/hosting`
+- [storagequota](/api-reference/go/backend/hosting/storagequota/) `backend/hosting/storagequota`
