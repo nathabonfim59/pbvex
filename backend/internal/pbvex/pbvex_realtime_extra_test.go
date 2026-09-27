@@ -621,6 +621,62 @@ func TestRealtimeEndpointCoalescesUnderSlowQuery(t *testing.T) {
 	}
 }
 
+// TestRealtimeEndpointInvalidationAfterSubscribeNotLost is a regression test
+// for lost invalidations during the admission→registration gap: an
+// InvalidateAll fired immediately after the client observes the subscribe
+// event must always produce a re-run message. The subscription must already
+// be registered when the subscribe envelope becomes observable, otherwise a
+// mutation racing the handshake would leave the client serving stale data
+// until the next invalidation. Run with -race.
+func TestRealtimeEndpointInvalidationAfterSubscribeNotLost(t *testing.T) {
+	app, service, invalidator := newTestAppWithBroadcaster(t, realtime.Config{PingInterval: 1 * time.Hour})
+
+	bundle := `__pbvex.registerFunction({name:"random",type:"query",visibility:"public",modulePath:"random",exportName:"default"}, function(ctx,args) { return Math.random(); });`
+	resp, err := service.Upload(uploadRequest("realtime", bundle, functionDescriptor("random", "query", "public"), nil))
+	if err != nil {
+		t.Fatalf("upload failed: %v", err)
+	}
+	if _, err := service.Activate(resp.DeploymentID, true); err != nil {
+		t.Fatalf("activate failed: %v", err)
+	}
+
+	server := startRealtimeServer(t, app, service)
+	defer server.Close()
+
+	// Each iteration opens a fresh connection and fires a single invalidation
+	// the instant the subscribe event arrives, before the initial query result
+	// is read. A lost invalidation surfaces as the second message (the re-run)
+	// never arriving before the client timeout.
+	const iterations = 50
+	for i := 0; i < iterations; i++ {
+		req := realtimePost(t, server.URL, "random", `{}`)
+		req.Header.Set("Accept", "text/event-stream")
+		client := &http.Client{Timeout: 10 * time.Second}
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("iteration %d: realtime request failed: %v", i, err)
+		}
+		reader := bufio.NewReader(res.Body)
+		subLine := expectSSEMessage(t, reader)
+		if !strings.Contains(subLine, `"op":"subscribe"`) {
+			res.Body.Close()
+			t.Fatalf("iteration %d: expected subscribe as first event, got %s", i, subLine)
+		}
+		// Invalidate immediately: this is the racing mutation.
+		invalidator.InvalidateAll()
+		line1 := expectSSEMessage(t, reader) // initial run
+		if !strings.Contains(line1, `"op":"message"`) {
+			res.Body.Close()
+			t.Fatalf("iteration %d: expected initial message, got %s", i, line1)
+		}
+		line2 := expectSSEMessage(t, reader) // re-run must follow
+		res.Body.Close()
+		if !strings.Contains(line2, `"op":"message"`) {
+			t.Fatalf("iteration %d: expected re-run message, got %s", i, line2)
+		}
+	}
+}
+
 func TestRealtimeEndpointDisconnectCancelsSlowQuery(t *testing.T) {
 	app, service := newTestApp(t)
 

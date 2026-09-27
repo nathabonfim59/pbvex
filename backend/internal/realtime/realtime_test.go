@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nathabonfim59/pbvex/backend/internal/deploy"
+	"github.com/nathabonfim59/pbvex/backend/internal/runtime"
 )
 
 func TestParseCanonicalArgsValidAndMalformed(t *testing.T) {
@@ -268,5 +272,69 @@ func TestGenerationFenceConcurrentActivation(t *testing.T) {
 			t.Fatalf("iteration %d: fence accepted stale gen %d after ReconnectAll", i, gen)
 		}
 		cancel()
+	}
+}
+
+// TestSubscribeOrderedBeforeDataDespiteEarlyInvalidation pins the handshake
+// ordering guaranteed by Handle: the subscription is registered via the
+// generation fence before the subscribe envelope is written, and the run
+// goroutine is only spawned after the subscribe event has been flushed. An
+// InvalidateAll landing between registration and the subscribe envelope must
+// therefore be neither lost nor able to emit a data event ahead of the
+// subscribe event: the stream is exactly subscribe, initial message, re-run
+// message — complete frames, in that order.
+func TestSubscribeOrderedBeforeDataDespiteEarlyInvalidation(t *testing.T) {
+	manager := runtime.NewManager(runtime.Config{})
+	service := deploy.NewService(nil, nil, manager, deploy.DefaultConfig())
+	descriptor := deploy.FunctionDescriptor{Name: "random", Type: deploy.FunctionTypeQuery, Visibility: deploy.FunctionVisibilityPublic, ModulePath: "x", ExportName: "random"}
+	snapshot := &deploy.CallSnapshot{
+		DeploymentID: "dep", Descriptor: &descriptor, Functions: []deploy.FunctionDescriptor{descriptor}, Config: deploy.DefaultDeploymentConfig,
+		BundleJS: `__pbvex.registerFunction({name:"random",type:"query",visibility:"public",modulePath:"x",exportName:"random"},function(){return Math.random();});`,
+	}
+	b := NewBroadcaster(service, DefaultConfig())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := httptest.NewRecorder()
+	s := &Subscription{
+		id: "subscription", path: "random", requestID: "request", snap: snapshot, ctx: ctx, cancel: cancel,
+		service: service, broadcaster: b, w: w, flusher: http.NewResponseController(w), maxEventSize: 1 << 20,
+		notify: make(chan struct{}, 1), pingInterval: time.Hour,
+	}
+
+	// Mirror Handle's ordering exactly: fence-register, invalidation lands in
+	// the handshake gap, subscribe envelope, then the run loop starts.
+	admissionGen := b.admissionGeneration()
+	if !b.subscribeWithFence(s, admissionGen) {
+		t.Fatal("subscribeWithFence rejected current generation")
+	}
+	b.InvalidateAll() // fires between registration and the subscribe envelope
+	s.sendSubscribe()
+
+	// Step the run loop's first two cycles synchronously, exactly as run()
+	// would after being spawned post-sendSubscribe.
+	s.runOnce() // initial evaluation
+	select {
+	case <-s.notify:
+	default:
+		t.Fatal("invalidation fired after registration was lost")
+	}
+	s.runOnce() // coalesced re-run
+
+	body := w.Body.String()
+	frames := strings.Split(strings.TrimSuffix(body, "\n\n"), "\n\n")
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 complete SSE frames, got %d: %s", len(frames), body)
+	}
+	for i, frame := range frames {
+		if !strings.HasPrefix(frame, "data: {") {
+			t.Fatalf("frame %d is not a data frame: %q", i, frame)
+		}
+	}
+	if !strings.Contains(frames[0], `"op":"subscribe"`) {
+		t.Fatalf("subscribe must be the first event, got: %s", frames[0])
+	}
+	if !strings.Contains(frames[1], `"op":"message"`) || !strings.Contains(frames[2], `"op":"message"`) {
+		t.Fatalf("expected initial + re-run messages after subscribe, got: %s", body)
 	}
 }

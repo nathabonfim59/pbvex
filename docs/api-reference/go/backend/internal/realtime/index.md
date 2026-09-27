@@ -37,7 +37,7 @@ var (
 ```
 
 <a name="DeriveSubscriptionID"></a>
-## func [DeriveSubscriptionID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L654>)
+## func [DeriveSubscriptionID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L662>)
 
 ```go
 func DeriveSubscriptionID(version, path string, args any) string
@@ -46,7 +46,7 @@ func DeriveSubscriptionID(version, path string, args any) string
 DeriveSubscriptionID is a test/export helper that canonicalizes args before deriving the subscription ID.
 
 <a name="ProtocolError"></a>
-## func [ProtocolError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L905>)
+## func [ProtocolError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L913>)
 
 ```go
 func ProtocolError(e *core.RequestEvent, status int, code deploy.ErrorCode, message string, cause error) error
@@ -55,7 +55,7 @@ func ProtocolError(e *core.RequestEvent, status int, code deploy.ErrorCode, mess
 ProtocolError writes a structured PBVex error response.
 
 <a name="RequestID"></a>
-## func [RequestID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L883>)
+## func [RequestID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L891>)
 
 ```go
 func RequestID(e *core.RequestEvent) string
