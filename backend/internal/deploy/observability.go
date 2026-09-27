@@ -115,7 +115,7 @@ func (s *Service) LogUnexpectedHandlerFailure(err error, fields HandlerFailureCo
 }
 
 func logUnexpectedHandlerFailure(logger *slog.Logger, err error, fields HandlerFailureContext) bool {
-	if err == nil || logger == nil || IsExpectedApplicationError(err) || errors.Is(err, context.Canceled) ||
+	if err == nil || logger == nil || IsExpectedApplicationError(err) || IsExecutionAdmissionError(err) || errors.Is(err, context.Canceled) ||
 		errors.Is(err, ErrFunctionNotFound) || errors.Is(err, ErrDeploymentNotFound) ||
 		errors.Is(err, ErrActiveNotFound) || errors.Is(err, ErrForbidden) {
 		return false
