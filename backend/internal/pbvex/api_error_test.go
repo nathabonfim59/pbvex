@@ -292,7 +292,9 @@ __pbvex.registerFunction({name:"web",type:"httpAction",visibility:"public",modul
 	if !ok {
 		t.Fatalf("logger handler is %T", app.Logger().Handler())
 	}
-	if err := handler.WriteAll(context.Background()); err != nil {
+	// pocketbase >= 0.40.4 writes queued logs asynchronously unless the
+	// context carries logger.BlockKey, which would race the AuxDB query below.
+	if err := handler.WriteAll(context.WithValue(context.Background(), logger.BlockKey, true)); err != nil {
 		t.Fatal(err)
 	}
 	var logs []*core.Log
