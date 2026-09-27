@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -173,6 +174,7 @@ func requestedThumb(record *core.Record, request *http.Request) (string, *ImageM
 
 func (s *Service) ensureThumb(ctx context.Context, fs *filesystem.System, storageID, originalKey, thumb string) (string, error) {
 	thumbKey := strings.TrimSuffix(originalKey, "/blob") + "/thumbs/" + thumb + "/blob"
+	var quotaRes QuotaReservation
 	_, err, _ := s.thumbPending.Do(thumbKey, func() (any, error) {
 		if _, err := s.repo.GetFile(schema.WithInternalContext(ctx), s.app, storageID); err != nil {
 			return nil, err
@@ -180,19 +182,124 @@ func (s *Service) ensureThumb(ctx context.Context, fs *filesystem.System, storag
 		if exists, err := fs.Exists(thumbKey); err != nil || exists {
 			return nil, err
 		}
+		// Generate the variant through the upstream generation path into a
+		// bounded local temporary filesystem. Nothing is persisted yet.
+		encoded, err := s.stageThumbToTemp(originalKey, thumbKey, thumb)
+		if err != nil {
+			return nil, err
+		}
+		defer encoded.cleanup()
+		// Reserve the EXACT encoded byte count before the persistent write.
+		// The stored object therefore can never exceed the reservation: a
+		// denial aborts before any persistent bytes exist.
+		res, reserveErr := s.reserveQuotaForVariant(ctx, storageID, thumbKey, encoded.size)
+		if reserveErr != nil {
+			return nil, reserveErr
+		}
+		quotaRes = res
 		if err := s.thumbSem.Acquire(ctx, 1); err != nil {
+			s.quotaRelease(quotaRes)
 			return nil, err
 		}
 		defer s.thumbSem.Release(1)
-		if err := fs.CreateThumb(originalKey, thumbKey, thumb); err != nil {
+		if err := s.persistStagedThumb(fs, encoded, thumbKey); err != nil {
+			// Release only when the variant is confirmed absent; a possibly
+			// partial write keeps the reservation for reconciliation.
+			s.releaseReservationIfGone(s.app, thumbKey, quotaRes)
 			return nil, err
 		}
 		if _, err := s.repo.GetFile(schema.WithInternalContext(ctx), s.app, storageID); err != nil {
 			_ = fs.Delete(thumbKey)
+			s.releaseReservationIfGone(s.app, thumbKey, quotaRes)
 			return nil, err
 		}
+		// The persisted object is exactly the staged encode; settle the
+		// reservation to that size.
+		s.quotaSettle(quotaRes, encoded.size)
 		return nil, nil
 	})
 	s.thumbPending.Forget(thumbKey)
 	return thumbKey, err
+}
+
+// stagedThumb is a fully encoded variant held in a private local
+// temporary directory. It is the exact byte sequence the persistent write
+// will store, so a quota reservation taken from its size is exact.
+type stagedThumb struct {
+	dir  string // temporary root; removed by cleanup
+	path string // local path of the encoded variant
+	size int64
+}
+
+// cleanup removes the temporary directory tree.
+func (t *stagedThumb) cleanup() {
+	if t != nil && t.dir != "" {
+		_ = os.RemoveAll(t.dir)
+	}
+}
+
+// stageThumbToTemp runs the upstream thumb generation unchanged against a
+// private local temporary filesystem: the original is streamed into the
+// temporary root and filesystem.CreateThumb writes the encoded variant
+// beside it. No persistent object is touched, the encode is disk-backed
+// like the existing upload staging, and the result carries the exact
+// encoded size for an exact reservation.
+func (s *Service) stageThumbToTemp(originalKey, thumbKey, thumb string) (*stagedThumb, error) {
+	primary, err := s.app.NewFilesystem()
+	if err != nil {
+		return nil, err
+	}
+	defer primary.Close()
+
+	tempDir, err := os.MkdirTemp("", "pbvex-thumb-*")
+	if err != nil {
+		return nil, &UploadError{Code: ErrorCodeInternal, Message: "failed to stage thumb", Err: err}
+	}
+	staged := &stagedThumb{dir: tempDir}
+
+	tempFS, err := filesystem.NewLocal(tempDir)
+	if err != nil {
+		staged.cleanup()
+		return nil, &UploadError{Code: ErrorCodeInternal, Message: "failed to stage thumb", Err: err}
+	}
+	defer tempFS.Close()
+
+	// Stream the original into the temporary filesystem so the unchanged
+	// upstream generation can read it from the same key layout.
+	original, err := primary.GetReuploadableFile(originalKey, false)
+	if err != nil {
+		staged.cleanup()
+		return nil, err
+	}
+	if err := tempFS.UploadFile(original, originalKey); err != nil {
+		staged.cleanup()
+		return nil, &UploadError{Code: ErrorCodeInternal, Message: "failed to stage thumb", Err: err}
+	}
+
+	if err := tempFS.CreateThumb(originalKey, thumbKey, thumb); err != nil {
+		staged.cleanup()
+		return nil, err
+	}
+	attrs, err := tempFS.Attributes(thumbKey)
+	if err != nil || attrs == nil || attrs.Size <= 0 {
+		staged.cleanup()
+		return nil, &UploadError{Code: ErrorCodeInternal, Message: "staged thumb is empty"}
+	}
+	staged.path = filepath.Join(tempDir, filepath.FromSlash(thumbKey))
+	staged.size = attrs.Size
+	return staged, nil
+}
+
+// persistStagedThumb uploads the staged encode to the storage backend at
+// thumbKey. It mirrors persistStagedBlob: the bytes come from a closed
+// local file whose size is the reserved exact amount.
+func (s *Service) persistStagedThumb(fs *filesystem.System, staged *stagedThumb, thumbKey string) error {
+	file, err := filesystem.NewFileFromPath(staged.path)
+	if err != nil {
+		return &UploadError{Code: ErrorCodeInternal, Message: "failed to persist thumb", Err: err}
+	}
+	if err := fs.UploadFile(file, thumbKey); err != nil {
+		return &UploadError{Code: ErrorCodeInternal, Message: "failed to persist thumb", Err: err}
+	}
+	return nil
 }

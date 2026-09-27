@@ -130,6 +130,12 @@ func (e *entry) runNested(nameValue goja.Value, argsValue goja.Value, targetType
 	}
 	result, err := inv.NestedInvoke(inv, name, targetType, encoded, depth)
 	if err != nil {
+		if deploy.IsExecutionAdmissionError(err) {
+			// Do not expose provider error values to application JavaScript.
+			object := e.vm.NewGoError(errors.New("execution admission unavailable or denied"))
+			e.admissionErrors[object] = err
+			panic(object)
+		}
 		var applicationErr *deploy.ApplicationError
 		if errors.As(err, &applicationErr) {
 			e.throwApplicationError(applicationErr)
