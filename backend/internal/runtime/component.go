@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -133,7 +134,14 @@ func resolveComponentDefaults(descriptor, value any) any {
 	return value
 }
 
-func resolveComponentEnv(namespace deploy.ComponentNamespace) (map[string]string, error) {
+// resolveComponentEnv resolves the declared component env bindings. Literal
+// "value" bindings never consult the host. With a nil resolver the declared
+// "envVar" bindings read the process environment directly (standalone
+// behavior). With a resolver, every binding is resolved per invocation —
+// results are never cached — and resolver denials or failures stop the
+// invocation before the handler runs with an error that carries no variable
+// name, value, or provider diagnostics.
+func resolveComponentEnv(ctx context.Context, namespace deploy.ComponentNamespace, resolver EnvironmentResolver) (map[string]string, error) {
 	names := make([]string, 0, len(namespace.Definition.Env))
 	for name := range namespace.Definition.Env {
 		names = append(names, name)
@@ -146,9 +154,23 @@ func resolveComponentEnv(namespace deploy.ComponentNamespace) (map[string]string
 		case "value":
 			out[name] = binding.Value
 		case "envVar":
-			value, ok := os.LookupEnv(binding.Name)
-			if !ok {
-				return nil, fmt.Errorf("component %q env %q requires unset variable %q", namespace.Path, name, binding.Name)
+			if resolver == nil {
+				value, ok := os.LookupEnv(binding.Name)
+				if !ok {
+					return nil, fmt.Errorf("component %q env %q requires unset variable %q", namespace.Path, name, binding.Name)
+				}
+				out[name] = value
+				continue
+			}
+			value, provided, err := resolveHostEnvVar(ctx, binding.Name, resolver)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, fmt.Errorf("component %q env %q is unavailable", namespace.Path, name)
+			}
+			if !provided {
+				return nil, fmt.Errorf("component %q env %q is not provided", namespace.Path, name)
 			}
 			out[name] = value
 		default:
@@ -156,4 +178,21 @@ func resolveComponentEnv(namespace deploy.ComponentNamespace) (map[string]string
 		}
 	}
 	return out, nil
+}
+
+// resolveHostEnvVar consults the host resolver once per binding. Context
+// cancellation is honored before and after the resolver runs so a canceled
+// invocation never reports a host policy failure.
+func resolveHostEnvVar(ctx context.Context, name string, resolver EnvironmentResolver) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	value, provided, err := resolver(ctx, name)
+	if err != nil {
+		return "", false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	return value, provided, nil
 }
