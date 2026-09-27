@@ -431,7 +431,7 @@ func TestStandaloneStorageWiringUnchanged(t *testing.T) {
 	if _, _, err := RegisterCore(app, cfg); err != nil {
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.Bootstrap(); err != nil {

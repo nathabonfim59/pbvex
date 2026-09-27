@@ -150,7 +150,7 @@ func newHostedTestApp(t *testing.T, mutate func(*Config), withQuota bool) (*test
 		app.Cleanup()
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		server.Close()
 		app.Cleanup()
 		t.Fatalf("failed to reset state: %v", err)
@@ -447,7 +447,7 @@ func TestHostManagedBaselineRewritesPersistedValues(t *testing.T) {
 	if _, _, err := RegisterCore(app, cfg); err != nil {
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.Bootstrap(); err != nil {

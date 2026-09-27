@@ -111,7 +111,7 @@ func setupCORSTestAppWithConfig(t *testing.T, corsCfg api.CORSConfig) (*deploy.S
 		app.Cleanup()
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		app.Cleanup()
 		t.Fatalf("failed to reset state: %v", err)
 	}
@@ -359,7 +359,7 @@ func setupCORSTestAppWithAppURL(t *testing.T, appURL string) (*deploy.Service, h
 		app.Cleanup()
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		app.Cleanup()
 		t.Fatalf("failed to reset state: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestExplicitAppURLOverridesSettings(t *testing.T) {
 		app.Cleanup()
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		app.Cleanup()
 		t.Fatalf("failed to reset state: %v", err)
 	}
@@ -516,7 +516,7 @@ func setupAndTriggerServe(t *testing.T, corsCfg api.CORSConfig, settingsAppURL s
 		app.Cleanup()
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		app.Cleanup()
 		t.Fatalf("failed to reset state: %v", err)
 	}

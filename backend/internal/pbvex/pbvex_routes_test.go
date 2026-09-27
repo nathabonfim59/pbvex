@@ -21,7 +21,7 @@ func TestFullRegisterMuxKeepsHTTPActionsAndStaticFallbackDistinct(t *testing.T) 
 	}
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
-	t.Cleanup(func() { _ = app.ResetBootstrapState() })
+	t.Cleanup(func() { _ = app.ClearBootstrap() })
 	cfg := DefaultConfig()
 	cfg.PublicDir = publicDir
 	cfg.HooksWatch = false
@@ -99,7 +99,7 @@ func TestFullRegisterMuxKeepsHTTPActionsAndStaticFallbackDistinct(t *testing.T) 
 
 func TestDevelopmentDeployTokenIsLoopbackAndDeploymentOnly(t *testing.T) {
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
-	t.Cleanup(func() { _ = app.ResetBootstrapState() })
+	t.Cleanup(func() { _ = app.ClearBootstrap() })
 	cfg := DefaultConfig()
 	cfg.PublicDir = ""
 	cfg.HooksWatch = false

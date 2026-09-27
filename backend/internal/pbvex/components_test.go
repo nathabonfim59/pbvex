@@ -836,7 +836,7 @@ __pbvex.registerFunction({name:"count",type:"query",visibility:"public",modulePa
 	}
 
 	// Data must persist across a restart using the stable root namespace.
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	if err := app.Bootstrap(); err != nil {
