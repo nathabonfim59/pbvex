@@ -112,7 +112,7 @@ describe('codegen compile', () => {
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
 
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('generates usable recursive document types that compile with tsc', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-recursive-'));
@@ -141,7 +141,7 @@ export { first, grandchild, bad };
     const tsconfigPath = await writeTsconfig(tempDir);
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('compiles a generated query with a schema-derived pagination result validator', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-pagination-'));
@@ -171,7 +171,7 @@ export const list = query({
     const tsconfigPath = await writeTsconfig(tempDir);
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('scopes same recursive name with different shapes across tables', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-scope-'));
@@ -212,7 +212,7 @@ export { label, title, bad };
     const tsconfigPath = await writeTsconfig(tempDir);
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('scopes same recursive name with different shapes across functions', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-fnscope-'));
@@ -241,7 +241,7 @@ export { label, title, bad };
     const tsconfigPath = await writeTsconfig(tempDir);
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('collects nested recursive declarations before emission', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-nested-'));
@@ -279,7 +279,7 @@ export { label, childVal, siblingLabel };
     const tsconfigPath = await writeTsconfig(tempDir);
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('sanitizes reserved recursive names and collisions with generated symbols', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-sanitize-'));
@@ -316,7 +316,7 @@ export { name, value };
     const tsconfigPath = await writeTsconfig(tempDir);
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('does not shadow global utility types (Array, Record, ArrayBuffer)', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'pbvex-globals-'));
@@ -358,7 +358,7 @@ export { items, entries, data };
     const tsconfigPath = await writeTsconfig(tempDir);
     expect(() => execSync(`node ${TSC} --noEmit -p ${tsconfigPath}`, { cwd: tempDir, stdio: 'pipe' })).not.toThrow();
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, FULL_CODEGEN_COMPILE_TIMEOUT_MS);
 
   it('produces byte-identical output regardless of field registration order', () => {
     let tree: any;

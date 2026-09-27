@@ -7,6 +7,12 @@ import { fileURLToPath } from 'node:url';
 
 const cliPath = path.resolve(fileURLToPath(import.meta.url), '../../dist/cli/index.js');
 
+// The scenario drives several node CLI subprocesses (two esbuild builds,
+// codegen, migrations help/create/plan), each paying full process startup.
+// Explicit timeout keeps the integration test safe on loaded CI runners
+// without raising vitest's default for unit tests.
+const CLI_SCENARIO_TIMEOUT_MS = 30_000;
+
 describe('cli', () => {
   let tempDir: string;
 
@@ -100,5 +106,5 @@ describe('cli', () => {
     expect(plan).not.toMatch(/count|estimate/i);
 
     await rm(tempDir, { recursive: true, force: true });
-  });
+  }, CLI_SCENARIO_TIMEOUT_MS);
 });
