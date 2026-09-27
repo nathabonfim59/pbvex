@@ -563,7 +563,7 @@ func TestRestartPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.Bootstrap(); err != nil {
@@ -1423,7 +1423,7 @@ func TestRestartSignedURL(t *testing.T) {
 	// Force a keyring reload on next use to simulate a process restart.
 	svc.kr.loaded = false
 
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.Bootstrap(); err != nil {

@@ -146,7 +146,7 @@ func newTestApp(t *testing.T) (*tests.TestApp, *deploy.Service) {
 		app.Cleanup()
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		app.Cleanup()
 		t.Fatalf("failed to reset state: %v", err)
 	}
@@ -183,7 +183,7 @@ func newTestAppWithBroadcaster(t *testing.T, rtCfg realtime.Config) (*tests.Test
 		app.Cleanup()
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		app.Cleanup()
 		t.Fatalf("failed to reset state: %v", err)
 	}
@@ -747,7 +747,7 @@ func TestSchemaBootstrapIncompatibleCollection(t *testing.T) {
 	if _, _, err := RegisterCore(app, DefaultConfig()); err != nil {
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatalf("failed to reset state: %v", err)
 	}
 	if err := app.Bootstrap(); err == nil {
@@ -934,7 +934,7 @@ func TestRestartPersistence(t *testing.T) {
 		t.Fatalf("failed to activate: %v", err)
 	}
 
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatalf("failed to reset state: %v", err)
 	}
 	if err := app.Bootstrap(); err != nil {
@@ -1625,7 +1625,7 @@ func TestDriftValidation(t *testing.T) {
 	if _, _, err := RegisterCore(app, DefaultConfig()); err != nil {
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatalf("failed to reset state: %v", err)
 	}
 	if err := app.Bootstrap(); err == nil {
@@ -2061,7 +2061,7 @@ func TestStorageE2ENonDefaultBasePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to register core: %v", err)
 	}
-	if err := app.ResetBootstrapState(); err != nil {
+	if err := app.ClearBootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.Bootstrap(); err != nil {
