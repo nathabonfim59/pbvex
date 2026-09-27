@@ -4,7 +4,7 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
-## Unreleased
+## 0.6.0 - 2026-09-27
 
 ### Added
 
@@ -46,6 +46,23 @@ entries are intentionally not duplicated in this changelog.
   provided variable wins on boot. The variables have no command-line flags,
   and invalid values or combinations fail startup instead of being ignored.
   See `docs/self-hosting.md` for the variable list and semantics.
+
+### Changed
+
+- The backend now builds on PocketBase v0.40.4. Upstream request logs are
+  written asynchronously in batches, fixing a potential log-batching
+  deadlock.
+- The `pbvex` CLI bundles deployments with esbuild 0.28. Class fields are now
+  lowered with standard define semantics for the `es2020` target, so the
+  first deploy of an unchanged application after upgrading produces a new
+  bundle hash and deployment ID. Application behavior is otherwise unchanged.
+
+### Fixed
+
+- Realtime subscriptions are registered before the `subscribe` event is sent.
+  A mutation made immediately after a client observed `subscribe` could
+  previously be missed, leaving the subscription on stale data until the next
+  change. The `subscribe` event remains the first event on every stream.
 
 ## 0.5.1 - 2026-09-01
 
