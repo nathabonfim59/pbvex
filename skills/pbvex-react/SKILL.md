@@ -28,7 +28,7 @@ Server rendering receives the initial loading snapshot and does not open a subsc
 Use Vitest, `renderHook`, a `PBVexProvider` wrapper, and a mock `RealtimeTransport` injected into `Client`. Assert loading/data/error, argument changes, stable mutation callable identity, and cleanup (including React StrictMode double subscriptions). Prefer generated references in app tests; synthetic typed refs are appropriate only for isolated SDK-hook tests.
 
 ```bash
-pnpm --filter @pbvex/react test
+pnpm exec turbo run test --filter=@pbvex/react
 sed -n '1,240p' docs/guides/react/testing.md
 rg -n "useQuery|PBVexProvider" packages/react/src
 ```

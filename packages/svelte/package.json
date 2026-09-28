@@ -26,9 +26,9 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "pnpm --filter @pbvex/client build && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
-    "test": "pnpm run build && tsc --noEmit && vitest run",
+    "test": "tsc --noEmit && vitest run",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

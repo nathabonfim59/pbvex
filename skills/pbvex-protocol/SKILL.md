@@ -14,9 +14,9 @@ Update shared valid/invalid fixtures and golden vectors rather than writing isol
 Use focused tests while iterating, then run the complete protocol and backend parity gates:
 
 ```bash
-pnpm --filter @pbvex/protocol test
-pnpm --filter pbvex test
-pnpm --filter @pbvex/client test
+pnpm exec turbo run test --filter=@pbvex/protocol
+pnpm exec turbo run test --filter=pbvex
+pnpm exec turbo run test --filter=@pbvex/client
 (cd backend && go test -count=1 ./internal/schema ./internal/deploy ./internal/runtime ./internal/pbvex)
 pnpm docs:api && pnpm docs:verify
 ```
