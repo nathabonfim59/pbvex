@@ -20,7 +20,7 @@ Call only public `query`, `mutation`, and `action` functions. Prefer generated r
 ```bash
 sed -n '1,220p' packages/client/src/index.ts
 rg -n "class Client|watch\(|authStore|authWith|setAuth|generateUpload|PBVexError" packages/client/src docs/guides
-pnpm --filter @pbvex/client test
+pnpm exec turbo run test --filter=@pbvex/client
 ```
 
 ## Auth and calls

@@ -27,9 +27,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm --filter @pbvex/protocol build && tsc",
+    "build": "tsc",
     "dev": "tsc --watch",
-    "test": "pnpm --filter @pbvex/protocol build && pnpm --filter pbvex build && tsc --noEmit -p tsconfig.test.json && vitest run",
+    "test": "tsc --noEmit -p tsconfig.test.json && vitest run",
     "lint": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {

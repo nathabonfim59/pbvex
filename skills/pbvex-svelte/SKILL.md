@@ -13,7 +13,7 @@ The current package is Svelte 5 runes-first and intentionally breaks from the le
 sed -n '1,240p' packages/svelte/src/index.ts
 sed -n '1,240p' packages/svelte/package.json
 rg -n "export |useQuery|setClient|skip|QueryState" packages/svelte/src packages/svelte/dist
-pnpm --filter @pbvex/svelte test
+pnpm exec turbo run test --filter=@pbvex/svelte
 ```
 
 ## Runes-first patterns
