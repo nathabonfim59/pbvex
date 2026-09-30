@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -298,7 +297,7 @@ func TestSubscribeOrderedBeforeDataDespiteEarlyInvalidation(t *testing.T) {
 	w := httptest.NewRecorder()
 	s := &Subscription{
 		id: "subscription", path: "random", requestID: "request", snap: snapshot, ctx: ctx, cancel: cancel,
-		service: service, broadcaster: b, w: w, flusher: http.NewResponseController(w), maxEventSize: 1 << 20,
+		service: service, broadcaster: b, stream: newEventStream(w, cancel), maxEventSize: 1 << 20,
 		notify: make(chan struct{}, 1), pingInterval: time.Hour,
 	}
 

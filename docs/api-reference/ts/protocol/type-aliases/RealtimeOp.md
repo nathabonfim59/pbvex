@@ -2,4 +2,4 @@
 
 # Type Alias: RealtimeOp
 
-> **RealtimeOp** = `"message"` \| `"subscribe"` \| `"unsubscribe"` \| `"ping"` \| `"pong"`
+> **RealtimeOp** = `"message"` \| `"subscribe"` \| `"unsubscribe"` \| `"ping"` \| `"pong"` \| `"session"`

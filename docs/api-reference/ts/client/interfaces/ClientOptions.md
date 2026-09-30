@@ -50,6 +50,17 @@
 
 ***
 
+### realtimeMultiplex?
+
+> `optional` **realtimeMultiplex?**: `boolean`
+
+Carry all live queries over one realtime connection (default `true`).
+Set `false` only for servers that predate realtime sessions: each query
+then holds its own connection, and browsers allow ~6 per origin over
+HTTP/1.1.
+
+***
+
 ### realtimePath?
 
 > `optional` **realtimePath?**: `string`

@@ -292,7 +292,14 @@ export function isHttpResponse(value: unknown): value is HttpResponse {
 }
 
 export function isRealtimeOp(value: unknown): value is RealtimeOp {
-  return value === 'message' || value === 'subscribe' || value === 'unsubscribe' || value === 'ping' || value === 'pong';
+  return (
+    value === 'message' ||
+    value === 'subscribe' ||
+    value === 'unsubscribe' ||
+    value === 'ping' ||
+    value === 'pong' ||
+    value === 'session'
+  );
 }
 
 export function isRealtimeEnvelope(value: unknown): value is RealtimeEnvelope {

@@ -115,7 +115,13 @@ Top-level and array-element `undefined` values are not valid in the codec. Plain
 - `POST /api/pbvex/deployments/:id/rollback` — rollback to the previous active deployment.
   - Response: `DeploymentRollbackResponse` with `deploymentId`, `rolledBackAt`, and optional `restoredDeploymentId`.
 - `POST /api/pbvex/call` - HTTP envelope for public query/mutation/action calls.
-- `POST /api/pbvex/realtime` - primary SSE transport for one public query subscription per request.
+- `POST /api/pbvex/realtime/session` - primary SSE transport. It carries all of a client's subscriptions over one stream, so browsers stay within the ~6 HTTP/1.1 connections they allow per origin.
+  - Clients must request `Accept: text/event-stream`. The first event is `{ id: <sessionId>, op: "session" }`, and the session pings with that id.
+  - The session is bound to the auth record of the opening request, and its queries run as that identity.
+  - `POST /api/pbvex/realtime/session/subscriptions` changes the set with JSON `{ session, subscribe?: [{ id, path, args }], unsubscribe?: [id] }` (at most 256 entries) and returns `204`. Unsubscribes apply first. It returns `404` for an unknown or closed session and `403` when the request's auth record differs from the session's.
+  - Each added subscription emits `subscribe` and then `message` events tagged with its `id`, exactly as on a single-subscription stream. A subscription that fails validation (unknown function, invalid args) gets one `message` whose payload is a structured error and is not kept.
+  - Deployment activation closes sessions. Clients open a new session and subscribe again.
+- `POST /api/pbvex/realtime` - single-subscription SSE transport, kept for older clients. It holds one connection per subscription.
   - Request JSON is `{ id, path, args }`, where `id` is derived from the protocol version, function path, and canonical encoded arguments.
   - `GET /api/pbvex/realtime?id=...&path=...&args=...` is a strictly bounded compatibility fallback.
   - Clients must request `Accept: text/event-stream`; POST also requires `Content-Type: application/json`.

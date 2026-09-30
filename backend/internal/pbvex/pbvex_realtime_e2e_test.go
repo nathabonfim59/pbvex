@@ -102,15 +102,31 @@ if (!baseUrl) {
 const client = new Client(baseUrl);
 let received = false;
 
+// More live queries than a browser's six HTTP/1.1 connections per origin;
+// they share one session stream.
+const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+const pending = new Set(names);
+for (const name of names) {
+  client.watch('hello', { name }, {
+    onUpdate: (result) => {
+      if (!result.isLoading && result.data === 'Hello, ' + name + '!') pending.delete(name);
+    },
+  });
+}
+
 const unsub = client.watch('hello', { name: 'world' }, {
   onUpdate: (result) => {
     if (result.isLoading) return;
     if (received) return;
     received = true;
-    console.log('RESULT ' + JSON.stringify(result));
-    unsub();
-    client.close();
-    process.exit(0);
+    const waitAll = setInterval(() => {
+      if (pending.size > 0) return;
+      clearInterval(waitAll);
+      console.log('RESULT ' + JSON.stringify(result));
+      unsub();
+      client.close();
+      process.exit(0);
+    }, 10);
   },
   onError: (error) => {
     console.log('ERROR ' + error.message);
