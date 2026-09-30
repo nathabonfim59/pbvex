@@ -32,6 +32,9 @@ type Config struct {
 	MaxConcurrentQueries int
 	MaxBodyBytes         int64
 	MaxGETArgsBytes      int64
+	// MaxSubscriptionsPerSession bounds the queries one multiplexed session
+	// may hold open at once.
+	MaxSubscriptionsPerSession int
 }
 
 // safeAdd returns a+b, capping at math.MaxInt64 to avoid overflow.
@@ -53,8 +56,9 @@ func DefaultConfig() Config {
 		// overhead so a maximally-configured deployment (maxFunctionArgsBytes
 		// == MaxFunctionArgsLimit) plus the SSE envelope fits in one read.
 		// The deployment-specific limit is enforced after manifest resolution.
-		MaxBodyBytes:    safeAdd(deploy.MaxFunctionArgsLimit, deploy.MaxEventEnvelopeOverhead),
-		MaxGETArgsBytes: deploy.MaxFunctionArgsLimit,
+		MaxBodyBytes:               safeAdd(deploy.MaxFunctionArgsLimit, deploy.MaxEventEnvelopeOverhead),
+		MaxGETArgsBytes:            deploy.MaxFunctionArgsLimit,
+		MaxSubscriptionsPerSession: 1000,
 	}
 }
 
@@ -64,8 +68,9 @@ type Broadcaster struct {
 	service *deploy.Service
 	config  Config
 
-	mu   sync.RWMutex
-	subs map[*Subscription]struct{}
+	mu       sync.RWMutex
+	subs     map[*Subscription]struct{}
+	sessions map[string]*session
 
 	connsSem   chan struct{}
 	queriesSem chan struct{}
@@ -98,11 +103,15 @@ func NewBroadcaster(service *deploy.Service, config Config) *Broadcaster {
 	if config.MaxGETArgsBytes <= 0 {
 		config.MaxGETArgsBytes = DefaultConfig().MaxGETArgsBytes
 	}
+	if config.MaxSubscriptionsPerSession <= 0 {
+		config.MaxSubscriptionsPerSession = DefaultConfig().MaxSubscriptionsPerSession
+	}
 
 	return &Broadcaster{
 		service:    service,
 		config:     config,
 		subs:       make(map[*Subscription]struct{}),
+		sessions:   make(map[string]*session),
 		connsSem:   make(chan struct{}, config.MaxConnections),
 		queriesSem: make(chan struct{}, config.MaxConcurrentQueries),
 		perIPConns: make(map[string]int),
@@ -142,10 +151,19 @@ func (b *Broadcaster) ReconnectAll() {
 	for s := range b.subs {
 		subs = append(subs, s)
 	}
+	sessions := make([]*session, 0, len(b.sessions))
+	for _, sess := range b.sessions {
+		sessions = append(sessions, sess)
+	}
 	b.mu.Unlock()
 
 	for _, s := range subs {
 		s.cancel()
+	}
+	// A session must close as a whole so the client resubscribes every query
+	// against the new deployment.
+	for _, sess := range sessions {
+		sess.cancel()
 	}
 }
 
@@ -219,22 +237,11 @@ func (b *Broadcaster) releaseConnPerIP(ip string) {
 // Handle is the POST /api/pbvex/realtime handler (GET is retained as a
 // strictly bounded compatibility fallback).
 func (b *Broadcaster) Handle(e *core.RequestEvent) error {
-	if !acceptsEventStream(e.Request.Header.Get("Accept")) {
-		return ProtocolError(e, http.StatusNotAcceptable, deploy.ErrorCodeBadRequest, "Accept: text/event-stream is required.", nil)
+	release, err := b.admitStream(e)
+	if err != nil {
+		return err
 	}
-
-	select {
-	case b.connsSem <- struct{}{}:
-	default:
-		return ProtocolError(e, http.StatusServiceUnavailable, deploy.ErrorCodeBadRequest, "Realtime connection limit reached.", nil)
-	}
-	defer func() { <-b.connsSem }()
-
-	ip, ok := b.acquireConnPerIP(e)
-	if !ok {
-		return ProtocolError(e, http.StatusServiceUnavailable, deploy.ErrorCodeBadRequest, "Realtime per-IP connection limit reached.", nil)
-	}
-	defer b.releaseConnPerIP(ip)
+	defer release()
 
 	// Record the activation generation before admission so we can detect
 	// an activation during the admission→registration gap.
@@ -249,11 +256,8 @@ func (b *Broadcaster) Handle(e *core.RequestEvent) error {
 	defer cancel()
 
 	// SSE response headers must be written before the first event.
-	e.Response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	e.Response.Header().Set("Cache-Control", "no-cache, no-transform")
-	e.Response.Header().Set("Connection", "keep-alive")
-	e.Response.Header().Set("X-Accel-Buffering", "no")
-	e.Response.WriteHeader(http.StatusOK)
+	writeStreamHeaders(e)
+	stream := newEventStream(e.Response, cancel)
 
 	sub := &Subscription{
 		id:           req.id,
@@ -263,8 +267,7 @@ func (b *Broadcaster) Handle(e *core.RequestEvent) error {
 		requestID:    RequestID(e),
 		service:      b.service,
 		broadcaster:  b,
-		w:            e.Response,
-		flusher:      http.NewResponseController(e.Response),
+		stream:       stream,
 		ctx:          ctx,
 		cancel:       cancel,
 		notify:       make(chan struct{}, 1),
@@ -273,7 +276,7 @@ func (b *Broadcaster) Handle(e *core.RequestEvent) error {
 		maxEventSize: safeAdd(req.snap.Config.MaxReturnValueBytes, deploy.MaxEventEnvelopeOverhead),
 	}
 
-	if err := sub.flusher.Flush(); err != nil {
+	if err := stream.flush(); err != nil {
 		return nil
 	}
 
@@ -307,6 +310,40 @@ func (b *Broadcaster) Handle(e *core.RequestEvent) error {
 
 	b.unsubscribe(sub)
 	return nil
+}
+
+// admitStream enforces the Accept header and the global and per-IP stream
+// limits shared by legacy connections and sessions.
+func (b *Broadcaster) admitStream(e *core.RequestEvent) (release func(), err error) {
+	if !acceptsEventStream(e.Request.Header.Get("Accept")) {
+		return nil, ProtocolError(e, http.StatusNotAcceptable, deploy.ErrorCodeBadRequest, "Accept: text/event-stream is required.", nil)
+	}
+
+	select {
+	case b.connsSem <- struct{}{}:
+	default:
+		return nil, ProtocolError(e, http.StatusServiceUnavailable, deploy.ErrorCodeBadRequest, "Realtime connection limit reached.", nil)
+	}
+
+	ip, ok := b.acquireConnPerIP(e)
+	if !ok {
+		<-b.connsSem
+		return nil, ProtocolError(e, http.StatusServiceUnavailable, deploy.ErrorCodeBadRequest, "Realtime per-IP connection limit reached.", nil)
+	}
+	return func() {
+		b.releaseConnPerIP(ip)
+		<-b.connsSem
+	}, nil
+}
+
+// writeStreamHeaders writes the SSE response headers; they must precede the
+// first event.
+func writeStreamHeaders(e *core.RequestEvent) {
+	e.Response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	e.Response.Header().Set("Cache-Control", "no-cache, no-transform")
+	e.Response.Header().Set("Connection", "keep-alive")
+	e.Response.Header().Set("X-Accel-Buffering", "no")
+	e.Response.WriteHeader(http.StatusOK)
 }
 
 // realtimeRequest holds validated request parameters.
@@ -353,56 +390,76 @@ func (b *Broadcaster) newRealtimeRequestPost(e *core.RequestEvent) (*realtimeReq
 		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid request body.", err)
 	}
 
+	req, reqErr := b.resolveSubscription(e.Request.Context(), obj, len(body))
+	if reqErr != nil {
+		return nil, reqErr.write(e)
+	}
+	return req, nil
+}
+
+// requestError is a validation failure that is either written as the HTTP
+// response or, inside a session, sent as the subscription's error message.
+type requestError struct {
+	status  int
+	code    deploy.ErrorCode
+	message string
+	cause   error
+}
+
+func badRequest(message string, cause error) *requestError {
+	return &requestError{status: http.StatusBadRequest, code: deploy.ErrorCodeBadRequest, message: message, cause: cause}
+}
+
+func (r *requestError) write(e *core.RequestEvent) error {
+	return ProtocolError(e, r.status, r.code, r.message, r.cause)
+}
+
+// resolveSubscription validates one {id, path, args} subscription object of
+// size bytes and resolves its query against the active deployment.
+func (b *Broadcaster) resolveSubscription(ctx context.Context, obj map[string]json.RawMessage, size int) (*realtimeRequest, *requestError) {
 	if len(obj) == 0 {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Missing id, path, or args.", nil)
+		return nil, badRequest("Missing id, path, or args.", nil)
 	}
 
 	id, err := stringField(obj, "id")
-	if err != nil {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid subscription id.", nil)
-	}
-	if !isValidSubscriptionID(id) {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid subscription id.", nil)
+	if err != nil || !isValidSubscriptionID(id) {
+		return nil, badRequest("Invalid subscription id.", nil)
 	}
 
 	path, err := stringField(obj, "path")
-	if err != nil {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid function path.", nil)
-	}
-	if !deploy.IsIdentifier(path) {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid function path.", nil)
+	if err != nil || !deploy.IsIdentifier(path) {
+		return nil, badRequest("Invalid function path.", nil)
 	}
 
 	rawArgs, ok := obj["args"]
 	if !ok {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Missing args.", nil)
+		return nil, badRequest("Missing args.", nil)
 	}
 
-	snap, err := b.service.ResolvePublicQuery(e.Request.Context(), path)
+	snap, err := b.service.ResolvePublicQuery(ctx, path)
 	if err != nil {
-		return nil, ProtocolError(e, http.StatusNotFound, deploy.ErrorCodeNotFound, "Function not found.", nil)
+		return nil, &requestError{status: http.StatusNotFound, code: deploy.ErrorCodeNotFound, message: "Function not found."}
 	}
 
 	// Enforce the deployment-specific body limit after manifest resolution so
 	// a deployment with maxFunctionArgsBytes below the protocol ceiling still
 	// rejects oversized bodies at the correct bound.
-	deployBodyLimit := safeAdd(snap.Config.MaxFunctionArgsBytes, deploy.MaxEventEnvelopeOverhead)
-	if int64(len(body)) > deployBodyLimit {
-		return nil, ProtocolError(e, http.StatusRequestEntityTooLarge, deploy.ErrorCodeBadRequest, "Request body too large.", nil)
+	if int64(size) > safeAdd(snap.Config.MaxFunctionArgsBytes, deploy.MaxEventEnvelopeOverhead) {
+		return nil, &requestError{status: http.StatusRequestEntityTooLarge, code: deploy.ErrorCodeBadRequest, message: "Request body too large."}
 	}
 
 	args, err := parseCanonicalArgs(string(rawArgs), snap.Config.MaxFunctionArgsBytes)
 	if err != nil {
-		return nil, argsValidationError(e, err)
+		return nil, argsError(err)
 	}
 
 	canonicalArgs, err := deploy.CanonicalJSON(args)
 	if err != nil {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid function arguments.", nil)
+		return nil, badRequest("Invalid function arguments.", nil)
 	}
 
 	if expected := deriveSubscriptionID(deploy.SupportedProtocolVersion, path, canonicalArgs); expected != id {
-		return nil, ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Subscription id does not match path and args.", nil)
+		return nil, badRequest("Subscription id does not match path and args.", nil)
 	}
 
 	return &realtimeRequest{id: id, path: path, args: args, snap: snap}, nil
@@ -639,14 +696,18 @@ func parseJSONObjectStrict(body []byte) (map[string]json.RawMessage, error) {
 }
 
 func argsValidationError(e *core.RequestEvent, err error) error {
+	return argsError(err).write(e)
+}
+
+func argsError(err error) *requestError {
 	var sizeErr *deploy.ValueSizeError
 	if errors.As(err, &sizeErr) {
-		return ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid function arguments.", nil)
+		return badRequest("Invalid function arguments.", nil)
 	}
 	if errors.Is(err, ErrArgsNotJSON) || errors.Is(err, ErrArgsNotCanonical) || errors.Is(err, ErrArgsInvalid) {
-		return ProtocolError(e, http.StatusBadRequest, deploy.ErrorCodeBadRequest, "Invalid request body.", nil)
+		return badRequest("Invalid request body.", nil)
 	}
-	return ProtocolError(e, http.StatusInternalServerError, deploy.ErrorCodeInternal, "Internal server error.", err)
+	return &requestError{status: http.StatusInternalServerError, code: deploy.ErrorCodeInternal, message: "Internal server error.", cause: err}
 }
 
 // deriveSubscriptionID returns a bounded deterministic subscription ID from

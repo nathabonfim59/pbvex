@@ -17,6 +17,8 @@ Package realtime implements the PBVex SSE realtime endpoint.
 - [type Broadcaster](<#Broadcaster>)
   - [func NewBroadcaster\(service \*deploy.Service, config Config\) \*Broadcaster](<#NewBroadcaster>)
   - [func \(b \*Broadcaster\) Handle\(e \*core.RequestEvent\) error](<#Broadcaster.Handle>)
+  - [func \(b \*Broadcaster\) HandleSession\(e \*core.RequestEvent\) error](<#Broadcaster.HandleSession>)
+  - [func \(b \*Broadcaster\) HandleSessionControl\(e \*core.RequestEvent\) error](<#Broadcaster.HandleSessionControl>)
   - [func \(b \*Broadcaster\) InvalidateAll\(\)](<#Broadcaster.InvalidateAll>)
   - [func \(b \*Broadcaster\) ReconnectAll\(\)](<#Broadcaster.ReconnectAll>)
 - [type Config](<#Config>)
@@ -37,7 +39,7 @@ var (
 ```
 
 <a name="DeriveSubscriptionID"></a>
-## func [DeriveSubscriptionID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L662>)
+## func [DeriveSubscriptionID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L723>)
 
 ```go
 func DeriveSubscriptionID(version, path string, args any) string
@@ -46,7 +48,7 @@ func DeriveSubscriptionID(version, path string, args any) string
 DeriveSubscriptionID is a test/export helper that canonicalizes args before deriving the subscription ID.
 
 <a name="ProtocolError"></a>
-## func [ProtocolError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L913>)
+## func [ProtocolError](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L974>)
 
 ```go
 func ProtocolError(e *core.RequestEvent, status int, code deploy.ErrorCode, message string, cause error) error
@@ -55,7 +57,7 @@ func ProtocolError(e *core.RequestEvent, status int, code deploy.ErrorCode, mess
 ProtocolError writes a structured PBVex error response.
 
 <a name="RequestID"></a>
-## func [RequestID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L891>)
+## func [RequestID](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L952>)
 
 ```go
 func RequestID(e *core.RequestEvent) string
@@ -64,7 +66,7 @@ func RequestID(e *core.RequestEvent) string
 RequestID returns a bounded request ID, preferring the X\-Request\-Id header and falling back to a generated UUID. It strips or rejects unsafe values.
 
 <a name="Broadcaster"></a>
-## type [Broadcaster](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L63-L79>)
+## type [Broadcaster](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L67-L84>)
 
 Broadcaster manages active realtime subscriptions and broadcasts invalidation events to them using a bounded, coalescing design.
 
@@ -75,7 +77,7 @@ type Broadcaster struct {
 ```
 
 <a name="NewBroadcaster"></a>
-### func [NewBroadcaster](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L82>)
+### func [NewBroadcaster](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L87>)
 
 ```go
 func NewBroadcaster(service *deploy.Service, config Config) *Broadcaster
@@ -84,7 +86,7 @@ func NewBroadcaster(service *deploy.Service, config Config) *Broadcaster
 NewBroadcaster creates a new realtime broadcaster.
 
 <a name="Broadcaster.Handle"></a>
-### func \(\*Broadcaster\) [Handle](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L221>)
+### func \(\*Broadcaster\) [Handle](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L239>)
 
 ```go
 func (b *Broadcaster) Handle(e *core.RequestEvent) error
@@ -92,8 +94,26 @@ func (b *Broadcaster) Handle(e *core.RequestEvent) error
 
 Handle is the POST /api/pbvex/realtime handler \(GET is retained as a strictly bounded compatibility fallback\).
 
+<a name="Broadcaster.HandleSession"></a>
+### func \(\*Broadcaster\) [HandleSession](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/session.go#L59>)
+
+```go
+func (b *Broadcaster) HandleSession(e *core.RequestEvent) error
+```
+
+HandleSession is the POST /api/pbvex/realtime/session handler. It opens a multiplexed SSE stream whose first event is \{op: "session", id\}.
+
+<a name="Broadcaster.HandleSessionControl"></a>
+### func \(\*Broadcaster\) [HandleSessionControl](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/session.go#L160>)
+
+```go
+func (b *Broadcaster) HandleSessionControl(e *core.RequestEvent) error
+```
+
+HandleSessionControl is the POST /api/pbvex/realtime/session/subscriptions handler. The JSON body is \{session, subscribe?: \[\{id, path, args\}\], unsubscribe?: \[id\]\}. Unsubscribes apply first. A subscription that fails validation gets an error message on the session stream rather than failing the whole request.
+
 <a name="Broadcaster.InvalidateAll"></a>
-### func \(\*Broadcaster\) [InvalidateAll](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L115>)
+### func \(\*Broadcaster\) [InvalidateAll](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L124>)
 
 ```go
 func (b *Broadcaster) InvalidateAll()
@@ -102,7 +122,7 @@ func (b *Broadcaster) InvalidateAll()
 InvalidateAll notifies every active subscription to re\-run its query. It is non\-blocking and coalesces: slow subscriptions receive a single pending notification that will be processed after the current run.
 
 <a name="Broadcaster.ReconnectAll"></a>
-### func \(\*Broadcaster\) [ReconnectAll](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L138>)
+### func \(\*Broadcaster\) [ReconnectAll](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L147>)
 
 ```go
 func (b *Broadcaster) ReconnectAll()
@@ -111,7 +131,7 @@ func (b *Broadcaster) ReconnectAll()
 ReconnectAll closes all active subscription connections so that clients reconnect and re\-negotiate event\-size limits with the newly active deployment. Called on activation/rollback where the pinned deployment snapshot \(and its maxReturnValueBytes\) may differ from the new one. The generation is incremented under the write lock so that subscriptions admitted before this call but not yet registered are rejected by subscribeWithFence.
 
 <a name="Config"></a>
-## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L28-L35>)
+## type [Config](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L28-L38>)
 
 Config controls realtime behavior.
 
@@ -123,11 +143,14 @@ type Config struct {
     MaxConcurrentQueries int
     MaxBodyBytes         int64
     MaxGETArgsBytes      int64
+    // MaxSubscriptionsPerSession bounds the queries one multiplexed session
+    // may hold open at once.
+    MaxSubscriptionsPerSession int
 }
 ```
 
 <a name="DefaultConfig"></a>
-### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L46>)
+### func [DefaultConfig](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/realtime.go#L49>)
 
 ```go
 func DefaultConfig() Config
@@ -136,7 +159,7 @@ func DefaultConfig() Config
 DefaultConfig returns the default realtime configuration.
 
 <a name="Subscription"></a>
-## type [Subscription](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/subscription.go#L14-L37>)
+## type [Subscription](<https://github.com/nathabonfim59/pbvex/blob/master/backend/internal/realtime/subscription.go#L57-L80>)
 
 Subscription is a single realtime SSE subscription.
 

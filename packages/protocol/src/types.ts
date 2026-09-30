@@ -288,7 +288,7 @@ export type HttpResponse = Readonly<{
   body: JSONValue | null;
 }>;
 
-export type RealtimeOp = 'message' | 'subscribe' | 'unsubscribe' | 'ping' | 'pong';
+export type RealtimeOp = 'message' | 'subscribe' | 'unsubscribe' | 'ping' | 'pong' | 'session';
 
 export type RealtimeEnvelope = Readonly<{
   id: string;

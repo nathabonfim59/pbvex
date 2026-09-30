@@ -25,6 +25,7 @@ The schema-activation byte budget includes source values, explicit migration out
 | Area | Default / enforced limit | Can change? |
 | --- | --- | --- |
 | SSE connections | 1,000 total; 100 per IP | Go embedding configuration only. |
+| Subscriptions per realtime session | 1,000; at most 256 changes per subscription request | Per-session count: Go embedding configuration only. |
 | Concurrent realtime query evaluations | 100 | Go embedding configuration only. |
 | Realtime ping | Every 30 seconds | Go embedding configuration only. |
 | SSE event payload | Active deployment return-value limit plus 4 KiB envelope allowance | Return-value manifest setting changes this. |
@@ -34,7 +35,7 @@ The schema-activation byte budget includes source values, explicit migration out
 | Outbound HTTP response body | 4 MiB, buffered | No application configuration. |
 | Outbound HTTP timeout | 10 seconds default; 30 seconds maximum | Each call may lower it with `timeoutMs`. |
 
-Realtime uses one SSE subscription query per request. Every successful record create, update, or delete invalidates all active subscriptions; bursts are coalesced, queries rerun, and unchanged canonical results are not sent. Deployment activation/rollback closes connections for reconnection against the new deployment. These limits do not turn PBVex into a distributed pub/sub system.
+A client carries all of its live queries over one SSE session connection. Browsers allow only about six concurrent HTTP/1.1 connections per origin, shared across tabs, so this leaves room for calls, auth, and storage requests. Clients created with `realtimeMultiplex: false`, and clients older than sessions, open one connection per distinct query and argument set. Past about six queries, every request to that origin stalls in the browser and fails with `Request timeout after 30000ms`. HTTP/2 raises the ceiling for those clients. Every successful record create, update, or delete invalidates all active subscriptions; bursts are coalesced, queries rerun, and unchanged canonical results are not sent. Deployment activation/rollback closes connections for reconnection against the new deployment. These limits do not turn PBVex into a distributed pub/sub system.
 
 ## Scheduler and storage
 

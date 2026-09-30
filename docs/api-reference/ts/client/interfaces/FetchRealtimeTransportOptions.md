@@ -66,6 +66,18 @@
 
 ***
 
+### multiplex?
+
+> `optional` **multiplex?**: `boolean`
+
+Carry all subscriptions over one session stream (default `true`). With
+`false` each distinct query holds its own connection, which browsers cap
+at ~6 per origin on HTTP/1.1; use it only against servers older than the
+session endpoint. Per-watch reconnect options apply only when `false`;
+the session uses the transport's.
+
+***
+
 ### realtimePath?
 
 > `optional` **realtimePath?**: `string`

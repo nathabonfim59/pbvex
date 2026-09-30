@@ -99,6 +99,7 @@ describe('FetchRealtimeTransport', () => {
       baseUrl: 'http://localhost:8090',
       fetch: fetch as unknown as typeof globalThis.fetch,
       getAuthToken: auth,
+      multiplex: false,
       ...opts,
     });
     transports.push(transport);
@@ -1171,6 +1172,7 @@ describe('FetchRealtimeTransport', () => {
         const hungFetch = vi.fn(() => new Promise<Response>(() => {}));
         const transport = new FetchRealtimeTransport({
           baseUrl: 'http://localhost:8090',
+          multiplex: false,
           fetch: hungFetch as unknown as typeof globalThis.fetch,
           getAuthToken: hungAuth,
           timeoutMs: 1000,
@@ -1199,6 +1201,7 @@ describe('FetchRealtimeTransport', () => {
         const hungFetch = vi.fn(() => new Promise<Response>(() => {}));
         const transport = new FetchRealtimeTransport({
           baseUrl: 'http://localhost:8090',
+          multiplex: false,
           fetch: hungFetch as unknown as typeof globalThis.fetch,
           getAuthToken: hungAuth,
           timeoutMs: 1000,
@@ -1220,6 +1223,7 @@ describe('FetchRealtimeTransport', () => {
         const hungFetch = vi.fn(() => new Promise<Response>(() => {}));
         const transport = new FetchRealtimeTransport({
           baseUrl: 'http://localhost:8090',
+          multiplex: false,
           fetch: hungFetch as unknown as typeof globalThis.fetch,
           timeoutMs: 1000,
           maxReconnects: 5,
@@ -1258,6 +1262,7 @@ describe('FetchRealtimeTransport', () => {
         });
         const transport = new FetchRealtimeTransport({
           baseUrl: 'http://localhost:8090',
+          multiplex: false,
           fetch: controllableFetch as unknown as typeof globalThis.fetch,
           timeoutMs: 1000,
           maxReconnects: 5,

@@ -248,6 +248,14 @@ export interface FetchRealtimeTransportOptions {
   maxReconnectDelayMs?: number;
   limits?: ClientLimits;
   timeoutMs?: number;
+  /**
+   * Carry all subscriptions over one session stream (default `true`). With
+   * `false` each distinct query holds its own connection, which browsers cap
+   * at ~6 per origin on HTTP/1.1; use it only against servers older than the
+   * session endpoint. Per-watch reconnect options apply only when `false`;
+   * the session uses the transport's.
+   */
+  multiplex?: boolean;
 }
 
 interface Watcher {
@@ -321,54 +329,19 @@ function safeIterate<T>(items: T[], fn: (item: T) => void): void {
   }
 }
 
-class Subscription {
+/** Watchers of one (path, args) query and the latest result they share. */
+abstract class WatchedQuery {
   private static nextWatcherId = 1;
 
-  private readonly transport: FetchRealtimeTransport;
-  readonly subscriptionKey: string;
-  readonly path: string;
-  readonly args: unknown;
-  private readonly encodedArgs: JSONValue;
-  private readonly canonicalArgs: string;
-  private options: WatchOptions<unknown>;
-  private watchers: Watcher[] = [];
-  private state: ConnectionState = 'connecting';
-  private abortController: AbortController | undefined;
-  private reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-  private reconnectAttempt = 0;
-  private parser: SseParser;
-  private isDisposed = false;
+  protected watchers: Watcher[] = [];
+  protected state: ConnectionState = 'connecting';
+  protected isDisposed = false;
   private latestResult: QueryResult<unknown> = { data: undefined, error: null, isLoading: true };
-  private connectionId = 0;
-  id = '';
 
-  constructor(
-    transport: FetchRealtimeTransport,
-    subscriptionKey: string,
-    path: string,
-    args: unknown,
-    encodedArgs: JSONValue,
-    canonicalArgs: string,
-    options: WatchOptions<unknown>,
-  ) {
-    validateWatchOptions(options);
-    this.transport = transport;
-    this.subscriptionKey = subscriptionKey;
-    this.path = path;
-    this.args = args;
-    this.encodedArgs = encodedArgs;
-    this.canonicalArgs = canonicalArgs;
-    this.options = options;
-    this.parser = new SseParser(transport.maxSseLineLength, transport.maxSseEventDataLength);
-    this.start();
-  }
+  abstract dispose(): void;
 
   addWatcher<T>(options: WatchOptions<T>): Unsubscribe {
-    // Reconnect options are owned by the first watcher that creates the subscription.
-    // Subsequent watchers on the same subscription share the connection and are not
-    // allowed to override the connection-level policy.
-    const watcher: Watcher = { id: Subscription.nextWatcherId++, options: options as WatchOptions<unknown> };
+    const watcher: Watcher = { id: WatchedQuery.nextWatcherId++, options: options as WatchOptions<unknown> };
     this.watchers.push(watcher);
     this.notifyConnectionStateChange(watcher);
     this.notifyUpdate(watcher, this.latestResult);
@@ -406,17 +379,95 @@ class Subscription {
     }
   }
 
-  private notifyStateChange(): void {
-    safeIterate(this.watchers, (watcher) => this.notifyConnectionStateChange(watcher));
-  }
-
-  private updateAll(result: QueryResult<unknown>): void {
+  protected updateAll(result: QueryResult<unknown>): void {
     this.latestResult = result;
     safeIterate(this.watchers, (watcher) => this.notifyUpdate(watcher, result));
   }
 
-  private reportError(error: Error): void {
+  reportError(error: Error): void {
     safeIterate(this.watchers, (watcher) => this.notifyError(watcher, error));
+  }
+
+  setState(newState: ConnectionState): void {
+    if (this.state === newState) return;
+    this.state = newState;
+    safeIterate(this.watchers, (watcher) => this.notifyConnectionStateChange(watcher));
+  }
+
+  getState(): ConnectionState {
+    return this.state;
+  }
+
+  /**
+   * Applies a message payload. Returns true once the payload decoded, which
+   * callers treat as proof the connection is healthy.
+   */
+  handleMessage(payload: JSONValue | undefined): boolean {
+    if (payload === undefined) {
+      this.reportError(new Error('Message envelope missing payload'));
+      return false;
+    }
+
+    let decoded: unknown;
+    try {
+      decoded = decodeValue(payload);
+    } catch (error) {
+      this.reportError(toError(error));
+      return false;
+    }
+
+    if (isStructuredError(decoded)) {
+      const error = new PBVexError(decoded);
+      this.updateAll({ data: undefined, error, isLoading: false });
+      this.reportError(error);
+      return true;
+    }
+
+    this.updateAll({ data: decoded, error: null, isLoading: false });
+    return true;
+  }
+}
+
+/** A query with its own SSE connection (legacy, `multiplex: false`). */
+class Subscription extends WatchedQuery {
+  private readonly transport: FetchRealtimeTransport;
+  readonly subscriptionKey: string;
+  readonly path: string;
+  readonly args: unknown;
+  private readonly encodedArgs: JSONValue;
+  private readonly canonicalArgs: string;
+  // Reconnect options are owned by the first watcher that creates the subscription.
+  // Subsequent watchers on the same subscription share the connection and are not
+  // allowed to override the connection-level policy.
+  private options: WatchOptions<unknown>;
+  private abortController: AbortController | undefined;
+  private reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnectAttempt = 0;
+  private parser: SseParser;
+  private connectionId = 0;
+  id = '';
+
+  constructor(
+    transport: FetchRealtimeTransport,
+    subscriptionKey: string,
+    path: string,
+    args: unknown,
+    encodedArgs: JSONValue,
+    canonicalArgs: string,
+    options: WatchOptions<unknown>,
+  ) {
+    super();
+    validateWatchOptions(options);
+    this.transport = transport;
+    this.subscriptionKey = subscriptionKey;
+    this.path = path;
+    this.args = args;
+    this.encodedArgs = encodedArgs;
+    this.canonicalArgs = canonicalArgs;
+    this.options = options;
+    this.parser = new SseParser(transport.maxSseLineLength, transport.maxSseEventDataLength);
+    this.start();
   }
 
   private get maxReconnects(): number {
@@ -435,16 +486,6 @@ class Subscription {
     return this.options.maxReconnectDelayMs !== undefined
       ? this.options.maxReconnectDelayMs
       : this.transport.maxReconnectDelayMs;
-  }
-
-  private setState(newState: ConnectionState): void {
-    if (this.state === newState) return;
-    this.state = newState;
-    this.notifyStateChange();
-  }
-
-  getState(): ConnectionState {
-    return this.state;
   }
 
   private start(): void {
@@ -682,33 +723,11 @@ class Subscription {
       return;
     }
 
-    if (realtime.op === 'message') {
-      if (realtime.payload === undefined) {
-        this.reportError(new Error('Message envelope missing payload'));
-        return;
-      }
-
-      let decoded: unknown;
-      try {
-        decoded = decodeValue(realtime.payload);
-      } catch (error) {
-        this.reportError(toError(error));
-        return;
-      }
-
-      // Only reset the reconnect counter after the payload has been decoded
-      // and validated; an undecodable message must not signal a healthy
-      // connection or prevent exhaustion of maxReconnects.
+    // Only reset the reconnect counter after the payload has been decoded
+    // and validated; an undecodable message must not signal a healthy
+    // connection or prevent exhaustion of maxReconnects.
+    if (realtime.op === 'message' && this.handleMessage(realtime.payload)) {
       this.reconnectAttempt = 0;
-
-      if (isStructuredError(decoded)) {
-        const error = new PBVexError(decoded);
-        this.updateAll({ data: undefined, error, isLoading: false });
-        this.reportError(error);
-        return;
-      }
-
-      this.updateAll({ data: decoded, error: null, isLoading: false });
     }
   }
 
@@ -750,6 +769,373 @@ class Subscription {
   }
 }
 
+/** Matches the server's per-request bound on subscription changes. */
+const MAX_CONTROL_ENTRIES = 256;
+
+/** A query carried by the transport's shared session stream. */
+class SessionSubscription extends WatchedQuery {
+  id = '';
+
+  constructor(
+    private readonly session: RealtimeSession,
+    readonly subscriptionKey: string,
+    readonly path: string,
+    readonly encodedArgs: JSONValue,
+    canonicalArgs: string,
+    options: WatchOptions<unknown>,
+  ) {
+    super();
+    validateWatchOptions(options);
+    const sessionState = session.getState();
+    this.state = sessionState === 'disconnected' ? 'connecting' : sessionState;
+    session.transport.computeSubscriptionId(path, canonicalArgs).then(
+      (id) => {
+        if (this.isDisposed) return;
+        this.id = id;
+        session.add(this);
+      },
+      (error) => this.reportError(toError(error)),
+    );
+  }
+
+  dispose(): void {
+    if (this.isDisposed) return;
+    this.isDisposed = true;
+    this.session.remove(this);
+    this.setState('disconnected');
+    this.session.transport.removeSubscription(this.subscriptionKey);
+  }
+}
+
+/**
+ * One SSE stream that carries every subscription of a transport. Browsers
+ * allow only ~6 concurrent HTTP/1.1 connections per origin, so a stream per
+ * subscription stalls every other request once a page watches a few queries.
+ * Subscriptions are added and removed with short control requests.
+ */
+class RealtimeSession {
+  /** Subscriptions by id: the set the server should be running. */
+  private readonly subscriptions = new Map<string, SessionSubscription>();
+  /** Ids the current server session has been asked to run. */
+  private serverIds = new Set<string>();
+  private sessionId: string | undefined;
+  private state: ConnectionState = 'disconnected';
+  private abortController: AbortController | undefined;
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnectAttempt = 0;
+  private connectionId = 0;
+  private readonly parser: SseParser;
+  private syncScheduled = false;
+  private syncing = false;
+
+  constructor(readonly transport: FetchRealtimeTransport) {
+    this.parser = new SseParser(transport.maxSseLineLength, transport.maxSseEventDataLength);
+  }
+
+  getState(): ConnectionState {
+    return this.state;
+  }
+
+  add(subscription: SessionSubscription): void {
+    this.subscriptions.set(subscription.id, subscription);
+    if (this.state === 'disconnected') {
+      this.connect();
+    } else {
+      subscription.setState(this.state);
+      this.scheduleSync();
+    }
+  }
+
+  remove(subscription: SessionSubscription): void {
+    if (this.subscriptions.get(subscription.id) !== subscription) return;
+    this.subscriptions.delete(subscription.id);
+    this.scheduleSync();
+  }
+
+  refreshAuth(): void {
+    if (this.subscriptions.size === 0) return;
+    this.reconnectAttempt = 0;
+    this.connect();
+  }
+
+  close(): void {
+    this.disconnect();
+    this.subscriptions.clear();
+  }
+
+  private setState(state: ConnectionState): void {
+    this.state = state;
+    for (const subscription of [...this.subscriptions.values()]) {
+      subscription.setState(state);
+    }
+  }
+
+  /** Invalidates the current stream and any request made for it. */
+  private reset(): void {
+    this.connectionId += 1;
+    this.clearReconnectTimer();
+    this.abortController?.abort();
+    this.abortController = undefined;
+    this.sessionId = undefined;
+    this.serverIds = new Set();
+  }
+
+  private disconnect(): void {
+    this.reset();
+    this.setState('disconnected');
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+  }
+
+  private async authHeaders(signal: AbortSignal): Promise<Record<string, string>> {
+    let abortHandler: (() => void) | undefined;
+    try {
+      const authPromise = Promise.resolve(this.transport.getAuthToken ? this.transport.getAuthToken() : undefined);
+      const abortPromise = new Promise<never>((_, reject) => {
+        abortHandler = () => reject(abortError(signal.reason));
+        signal.addEventListener('abort', abortHandler, { once: true });
+      });
+      abortPromise.catch(() => {});
+      const token = await Promise.race([authPromise, abortPromise]);
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    } finally {
+      if (abortHandler) signal.removeEventListener('abort', abortHandler);
+    }
+  }
+
+  private async readError(response: Response, signal: AbortSignal, fallback: string): Promise<Error> {
+    const raw = await readBoundedText(response, this.transport.maxResponseBodyBytes, signal);
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      json = undefined;
+    }
+    return isStructuredError(json) ? new PBVexError(json) : new Error(fallback);
+  }
+
+  private async connect(): Promise<void> {
+    this.reset();
+    const connectionId = this.connectionId;
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.parser.reset();
+    this.setState('connecting');
+    const isCurrent = (): boolean => this.connectionId === connectionId;
+
+    // One deadline covers auth, response headers, and reader acquisition; an
+    // established stream is never aborted by it.
+    let timedOut = false;
+    const establishTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.transport.timeoutMs);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+    try {
+      const headers = await this.authHeaders(controller.signal);
+      if (!isCurrent()) return;
+
+      const response = await this.transport.fetchFn(new URL(`${this.transport.realtimePath}/session`, this.transport.baseUrl).toString(), {
+        method: 'POST',
+        headers: { ...headers, Accept: 'text/event-stream', 'Cache-Control': 'no-cache' },
+        signal: controller.signal,
+      });
+      if (!isCurrent()) return;
+
+      if (!response.ok) {
+        throw await this.readError(
+          response,
+          controller.signal,
+          response.status === 404
+            ? 'Realtime connection failed: HTTP 404. The server does not support multiplexed realtime sessions; upgrade it or set realtimeMultiplex: false.'
+            : `Realtime connection failed: HTTP ${response.status}`,
+        );
+      }
+      const contentType = response.headers.get('content-type') ?? '';
+      if (parseContentType(contentType)?.mediaType !== 'text/event-stream') {
+        throw new Error(`Realtime connection failed: unexpected content-type ${contentType}`);
+      }
+      if (!isValidResponseBody(response.body)) {
+        throw new Error('Realtime response does not have a readable body');
+      }
+      reader = response.body.getReader();
+      clearTimeout(establishTimer);
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (!isCurrent()) return;
+        this.parser.feed(value, done, {
+          onData: (data) => {
+            if (isCurrent()) this.handleEvent(data);
+          },
+          onError: (error) => this.reportError(error),
+        });
+        if (done) break;
+      }
+      throw new Error('Realtime stream closed');
+    } catch (error) {
+      reader?.cancel().catch(() => {});
+      controller.abort();
+      if (!isCurrent()) return;
+      this.fail(timedOut ? new Error(`Request timeout after ${this.transport.timeoutMs}ms`) : toError(error));
+    } finally {
+      clearTimeout(establishTimer);
+    }
+  }
+
+  private handleEvent(data: string): void {
+    let envelope: unknown;
+    try {
+      envelope = JSON.parse(data);
+    } catch {
+      this.reportError(new Error('Malformed SSE event data'));
+      return;
+    }
+    if (!isSseEnvelope(envelope)) {
+      this.reportError(new Error('Invalid SSE envelope'));
+      return;
+    }
+
+    const realtime = envelope.data;
+    if (realtime.op === 'session') {
+      if (this.sessionId !== undefined) return;
+      this.sessionId = realtime.id;
+      this.setState('connected');
+      this.scheduleSync();
+      return;
+    }
+
+    const subscription = this.subscriptions.get(realtime.id);
+    if (!subscription) return;
+    if (realtime.op === 'subscribe') {
+      if (realtime.maxEventSize !== undefined) {
+        this.parser.negotiateMaxEventDataLength(realtime.maxEventSize);
+      }
+      return;
+    }
+    if (realtime.op === 'message' && subscription.handleMessage(realtime.payload)) {
+      this.reconnectAttempt = 0;
+    }
+  }
+
+  private reportError(error: Error): void {
+    for (const subscription of [...this.subscriptions.values()]) {
+      subscription.reportError(error);
+    }
+  }
+
+  /** Drops the stream after a failure and retries with backoff. */
+  private fail(error: Error): void {
+    this.reportError(error);
+    this.reset();
+    if (this.subscriptions.size === 0) {
+      this.setState('disconnected');
+      return;
+    }
+
+    if (this.reconnectAttempt >= this.transport.maxReconnects) {
+      this.reconnectAttempt = 0;
+      this.reportError(new Error('Realtime reconnect limit reached'));
+      for (const subscription of [...this.subscriptions.values()]) {
+        subscription.dispose();
+      }
+      return;
+    }
+
+    this.setState('reconnecting');
+    const delay = Math.min(
+      this.transport.initialReconnectDelayMs * 2 ** this.reconnectAttempt,
+      this.transport.maxReconnectDelayMs,
+    );
+    const connectionId = this.connectionId;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      if (this.connectionId !== connectionId) return;
+      this.reconnectAttempt += 1;
+      this.connect();
+    }, delay);
+  }
+
+  /** Coalesces subscription changes made in the same task into one request. */
+  private scheduleSync(): void {
+    if (this.syncScheduled) return;
+    this.syncScheduled = true;
+    setTimeout(() => {
+      this.syncScheduled = false;
+      this.sync();
+    }, 0);
+  }
+
+  /**
+   * Sends the difference between the wanted and the server's subscriptions.
+   * One request is in flight at a time so changes apply in order.
+   */
+  private async sync(): Promise<void> {
+    if (this.syncing || this.sessionId === undefined) return;
+
+    if (this.subscriptions.size === 0) {
+      // Nothing to watch: release the connection.
+      this.disconnect();
+      return;
+    }
+
+    const unsubscribe = [...this.serverIds].filter((id) => !this.subscriptions.has(id)).slice(0, MAX_CONTROL_ENTRIES);
+    const subscribe: JSONValue[] = [];
+    let bytes = 0;
+    for (const subscription of this.subscriptions.values()) {
+      if (this.serverIds.has(subscription.id)) continue;
+      if (unsubscribe.length + subscribe.length >= MAX_CONTROL_ENTRIES) break;
+      const entry: JSONValue = { id: subscription.id, path: subscription.path, args: subscription.encodedArgs };
+      const size = byteLength(canonicalJson(entry));
+      if (subscribe.length > 0 && bytes + size > this.transport.maxRealtimeBodyBytes) break;
+      subscribe.push(entry);
+      bytes += size;
+    }
+    if (subscribe.length === 0 && unsubscribe.length === 0) return;
+
+    for (const id of unsubscribe) this.serverIds.delete(id);
+    for (const entry of subscribe) this.serverIds.add((entry as { id: string }).id);
+
+    const sessionId = this.sessionId;
+    const connectionId = this.connectionId;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.transport.timeoutMs);
+    this.syncing = true;
+    try {
+      const headers = await this.authHeaders(controller.signal);
+      const response = await this.transport.fetchFn(
+        new URL(`${this.transport.realtimePath}/session/subscriptions`, this.transport.baseUrl).toString(),
+        {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: canonicalJson({ session: sessionId, subscribe, unsubscribe }),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) {
+        throw await this.readError(response, controller.signal, `Realtime subscription update failed: HTTP ${response.status}`);
+      }
+      response.body?.cancel().catch(() => {});
+    } catch (error) {
+      if (this.connectionId === connectionId) {
+        this.fail(controller.signal.aborted ? new Error(`Request timeout after ${this.transport.timeoutMs}ms`) : toError(error));
+      }
+    } finally {
+      clearTimeout(timer);
+      this.syncing = false;
+      // Send changes made meanwhile, including a resync for a session opened
+      // while this request was in flight.
+      this.scheduleSync();
+    }
+  }
+}
+
 export class FetchRealtimeTransport implements RealtimeTransport {
   readonly baseUrl: string;
   readonly fetchFn: typeof globalThis.fetch;
@@ -766,7 +1152,8 @@ export class FetchRealtimeTransport implements RealtimeTransport {
   readonly maxSseLineLength: number;
   readonly timeoutMs: number;
 
-  private readonly subscriptions = new Map<string, Subscription>();
+  private readonly subscriptions = new Map<string, Subscription | SessionSubscription>();
+  private readonly session: RealtimeSession | undefined;
   private closed = false;
 
   constructor(options: FetchRealtimeTransportOptions) {
@@ -792,6 +1179,7 @@ export class FetchRealtimeTransport implements RealtimeTransport {
     this.maxSseEventDataLength = this.maxReturnValueBytes + 4096;
     this.maxSseLineLength = this.maxSseEventDataLength + 6;
     this.timeoutMs = validateTimeoutMs(options.timeoutMs, DEFAULT_CONFIG.defaultRequestTimeoutMs);
+    this.session = options.multiplex === false ? undefined : new RealtimeSession(this);
   }
 
   async computeSubscriptionId(path: string, canonicalArgs: string): Promise<string> {
@@ -838,7 +1226,9 @@ export class FetchRealtimeTransport implements RealtimeTransport {
 
     let subscription = this.subscriptions.get(subscriptionKey);
     if (!subscription) {
-      subscription = new Subscription(this, subscriptionKey, path, args, encodedArgs, canonicalArgs, options as WatchOptions<unknown>);
+      subscription = this.session
+        ? new SessionSubscription(this.session, subscriptionKey, path, encodedArgs, canonicalArgs, options as WatchOptions<unknown>)
+        : new Subscription(this, subscriptionKey, path, args, encodedArgs, canonicalArgs, options as WatchOptions<unknown>);
       this.subscriptions.set(subscriptionKey, subscription);
     }
 
@@ -851,16 +1241,21 @@ export class FetchRealtimeTransport implements RealtimeTransport {
 
   refreshAuth(): void {
     if (this.closed) return;
+    if (this.session) {
+      this.session.refreshAuth();
+      return;
+    }
     for (const subscription of this.subscriptions.values()) {
-      subscription.refreshAuth();
+      (subscription as Subscription).refreshAuth();
     }
   }
 
   close(): void {
     this.closed = true;
-    for (const subscription of this.subscriptions.values()) {
+    for (const subscription of [...this.subscriptions.values()]) {
       subscription.dispose();
     }
     this.subscriptions.clear();
+    this.session?.close();
   }
 }

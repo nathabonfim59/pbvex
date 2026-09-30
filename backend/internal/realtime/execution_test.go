@@ -3,7 +3,6 @@ package realtime
 import (
 	"context"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -47,7 +46,7 @@ func TestRealtimeExecutionOriginAndAdmissionPause(t *testing.T) {
 	w := httptest.NewRecorder()
 	s := &Subscription{
 		id: "subscription", path: "hello", requestID: "request", snap: snapshot, ctx: ctx, cancel: cancel,
-		service: service, broadcaster: NewBroadcaster(service, DefaultConfig()), w: w, flusher: http.NewResponseController(w), maxEventSize: 1 << 20,
+		service: service, broadcaster: NewBroadcaster(service, DefaultConfig()), stream: newEventStream(w, cancel), maxEventSize: 1 << 20,
 	}
 	s.runOnce() // initial
 	s.runOnce() // invalidation rerun with unchanged result

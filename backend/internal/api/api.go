@@ -175,6 +175,12 @@ func Register(app core.App, service *deploy.Service, bcast *realtime.Broadcaster
 			e.Router.POST("/api/pbvex/realtime", withPublicEndpoint(resolved, bcast.Handle))
 			e.Router.GET("/api/pbvex/realtime", withPublicEndpoint(resolved, bcast.Handle))
 			e.Router.OPTIONS("/api/pbvex/realtime", withPublicEndpoint(resolved, handlePreflight(resolved)))
+			// Multiplexed sessions: one stream carries every subscription of a
+			// client, so browsers stay under the HTTP/1.1 per-origin limit.
+			e.Router.POST("/api/pbvex/realtime/session", withPublicEndpoint(resolved, bcast.HandleSession))
+			e.Router.OPTIONS("/api/pbvex/realtime/session", withPublicEndpoint(resolved, handlePreflight(resolved)))
+			e.Router.POST("/api/pbvex/realtime/session/subscriptions", withPublicEndpoint(resolved, bcast.HandleSessionControl))
+			e.Router.OPTIONS("/api/pbvex/realtime/session/subscriptions", withPublicEndpoint(resolved, handlePreflight(resolved)))
 
 			e.Router.POST(storageBasePath+"/upload/{token}", withPublicEndpoint(resolved, handleStorageUpload(storageService)))
 			e.Router.OPTIONS(storageBasePath+"/upload/{token}", withPublicEndpoint(resolved, handlePreflight(resolved)))

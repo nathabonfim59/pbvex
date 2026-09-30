@@ -5,10 +5,53 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/nathabonfim59/pbvex/backend/internal/deploy"
 )
+
+// eventStream serializes SSE event writes to one HTTP response. A legacy
+// connection has one subscription per stream; a session shares its stream
+// among all of its subscriptions.
+type eventStream struct {
+	mu      sync.Mutex
+	w       http.ResponseWriter
+	flusher *http.ResponseController
+	// cancel closes the whole stream when a write fails.
+	cancel context.CancelFunc
+}
+
+func newEventStream(w http.ResponseWriter, cancel context.CancelFunc) *eventStream {
+	return &eventStream{w: w, flusher: http.NewResponseController(w), cancel: cancel}
+}
+
+func (es *eventStream) flush() error {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	return es.flusher.Flush()
+}
+
+// write frames data as one SSE event unless ctx (the writer's lifetime) is done.
+func (es *eventStream) write(ctx context.Context, data []byte) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
+
+	line := []byte("data: ")
+	line = append(line, data...)
+	line = append(line, '\n', '\n')
+
+	if _, err := es.w.Write(line); err != nil {
+		es.cancel()
+		return
+	}
+	if err := es.flusher.Flush(); err != nil {
+		es.cancel()
+	}
+}
 
 // Subscription is a single realtime SSE subscription.
 type Subscription struct {
@@ -21,14 +64,14 @@ type Subscription struct {
 	service     *deploy.Service
 	broadcaster *Broadcaster
 
-	w       http.ResponseWriter
-	flusher *http.ResponseController
+	stream *eventStream
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	notify       chan struct{}
-	done         chan struct{}
+	notify chan struct{}
+	done   chan struct{}
+	// pingInterval is zero for session subscriptions: the session pings.
 	pingInterval time.Duration
 
 	lastSent        string
@@ -39,8 +82,12 @@ type Subscription struct {
 func (s *Subscription) run() {
 	defer close(s.done)
 
-	ticker := time.NewTicker(s.pingInterval)
-	defer ticker.Stop()
+	var tick <-chan time.Time
+	if s.pingInterval > 0 {
+		ticker := time.NewTicker(s.pingInterval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 
 	pending := true
 	for {
@@ -52,7 +99,7 @@ func (s *Subscription) run() {
 		select {
 		case <-s.notify:
 			pending = !s.admissionPaused
-		case <-ticker.C:
+		case <-tick:
 			s.sendPing()
 		case <-s.ctx.Done():
 			return
@@ -242,27 +289,11 @@ func structuredErrorPayload(code deploy.ErrorCode, message, requestID string) ma
 }
 
 func (s *Subscription) writeEvent(data []byte) {
-	if s.ctx.Err() != nil {
-		return
-	}
-
 	if int64(len(data)) > s.maxEventSize {
 		s.cancel()
 		return
 	}
-
-	line := []byte("data: ")
-	line = append(line, data...)
-	line = append(line, '\n', '\n')
-
-	if _, err := s.w.Write(line); err != nil {
-		s.cancel()
-		return
-	}
-
-	if err := s.flusher.Flush(); err != nil {
-		s.cancel()
-	}
+	s.stream.write(s.ctx, data)
 }
 
 func isArgumentSizeError(err error) bool {
