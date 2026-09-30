@@ -34,7 +34,7 @@ const sum = useQuery(api.math.add, { a: 1, b: 2 }, client);
 ```svelte
 <script lang="ts">
   import { useQuery } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   const sum = useQuery(api.math.add, { a: 1, b: 2 });
 </script>
@@ -57,7 +57,7 @@ References with `void`, `undefined`, or `{}` args do not need an argument object
 ```svelte
 <script lang="ts">
   import { useQuery } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   const status = useQuery(api.health.ping);
 </script>

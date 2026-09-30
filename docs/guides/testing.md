@@ -20,7 +20,7 @@ Use a temporary data directory and a test-only superuser. After deployment, exer
 
 ```ts
 import { Client } from '@pbvex/client';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client(process.env.PBVEX_TEST_URL ?? 'http://127.0.0.1:8090');
 

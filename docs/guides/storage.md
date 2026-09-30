@@ -28,7 +28,7 @@ export const attach = mutation({
 ```ts
 import { Client, type StorageUploadResponse } from '@pbvex/client';
 import type { Id } from './pbvex/_generated/dataModel';
-import { api } from './pbvex/_generated/api';
+import { api } from '#pbvex/_generated/api';
 
 async function uploadFile(client: Client, messageId: Id<'messages'>, file: File) {
   const uploadUrl = await client.mutation(api.files.createUpload);

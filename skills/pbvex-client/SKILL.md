@@ -9,11 +9,13 @@ Use `@pbvex/client` with generated public references; application code must inst
 
 ```ts
 import { Client } from '@pbvex/client';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client('http://127.0.0.1:8090');
 const rows = await client.query(api.messages.list, { channel: 'general' });
 ```
+
+Import generated code through the `#pbvex/*` subpath import that `pbvex init` adds to `package.json` (`"#pbvex/*": "./pbvex/*.ts"`); in SvelteKit use a `$pbvex` alias set in the SvelteKit `alias` option. Never import the bare `pbvex/_generated/api`: it resolves to the npm package and fails at bundle time.
 
 Call only public `query`, `mutation`, and `action` functions. Prefer generated references for typed visibility, arguments, and returns. String paths are a supported untyped fallback for dynamic or already-typed integrations; do not manufacture them when generated references are available. Never use deployment superuser tokens in a client. Read current exports/options before changing integration code:
 

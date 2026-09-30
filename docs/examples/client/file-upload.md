@@ -20,7 +20,7 @@ export const getUploadUrl = mutation({
 
 ```ts
 import { Client, type StorageId, type StorageUploadResponse } from '@pbvex/client';
-import { api } from './pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client('http://localhost:8090');
 

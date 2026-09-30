@@ -47,7 +47,7 @@ The URL expires and can be used only once. Request a new URL for each retry or f
 
 ```ts
 import type { StorageUploadResponse } from '@pbvex/client';
-import { api } from './pbvex/_generated/api';
+import { api } from '#pbvex/_generated/api';
 import type { Id } from './pbvex/_generated/dataModel';
 
 async function uploadAttachment(messageId: Id<'messages'>, file: File) {

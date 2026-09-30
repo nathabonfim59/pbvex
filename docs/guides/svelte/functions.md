@@ -9,7 +9,7 @@
 ```svelte
 <script lang="ts">
   import { useQuery } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   let { channel }: { channel: string } = $props();
   const messages = useQuery(api.messages.list, () => ({ channel }));
@@ -37,7 +37,7 @@ Both return typed async callables. `useMutation` calls `client.mutation`; `useAc
 ```svelte
 <script lang="ts">
   import { useMutation, useAction } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   const send = useMutation(api.messages.send);
   const notify = useAction(api.messages.notify);
@@ -63,7 +63,7 @@ Return `skip` from an args getter to conditionally disable a query. Its state be
 ```svelte
 <script lang="ts">
   import { skip, useQuery } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   let { userId }: { userId?: string } = $props();
   const profile = useQuery(api.users.get, () => userId ? { userId } : skip);

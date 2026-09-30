@@ -6,7 +6,7 @@
 <!-- QueryHarness.svelte -->
 <script lang="ts">
   import { useQuery } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   let { client, initialArgs } = $props();
   let args = $state(initialArgs);

@@ -4,7 +4,7 @@ A minimal browser/Node script using `@pbvex/client`.
 
 ```ts
 import { Client, PBVexClient, PBVexError } from '@pbvex/client';
-import { api } from './pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new PBVexClient('http://localhost:8090');
 

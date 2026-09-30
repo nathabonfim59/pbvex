@@ -16,7 +16,7 @@ Svelte 5 is a peer dependency.
 <script lang="ts">
   import { Client } from '@pbvex/client';
   import { setClient, useMutation, useQuery } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   setClient(new Client('/'));
   const sum = useQuery(api.math.add, { a: 1, b: 2 });

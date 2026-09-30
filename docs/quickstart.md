@@ -124,12 +124,12 @@ The CLI uploads the artifact and requests atomic activation. Compatible schema c
 
 ## Connect a client and verify it
 
-Use generated references rather than handwritten function paths:
+Use generated references rather than handwritten function paths. `pbvex init` adds a `#pbvex/*` subpath import to `package.json`, so import them as `#pbvex/_generated/api` (never the bare `pbvex/_generated/api`, which resolves to the npm package). In SvelteKit, use a `$pbvex` alias instead; see the [Svelte guides](./guides/svelte/index.md).
 
 ```ts
 // src/client.ts
 import { Client } from '@pbvex/client';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client('http://127.0.0.1:8090');
 
