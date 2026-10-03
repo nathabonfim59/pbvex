@@ -255,8 +255,11 @@ flags.
 
 ## HTTP actions and public routes
 
-Application calls use `POST /api/pbvex/call`; realtime uses
-`POST /api/pbvex/realtime` with a bounded GET compatibility fallback. Deployed
+Application calls use `POST /api/pbvex/call`; realtime uses one
+`POST /api/pbvex/realtime/session` stream per client plus control requests to
+`/api/pbvex/realtime/session/subscriptions`. `POST /api/pbvex/realtime` (with a
+bounded GET form) serves single-query streams for clients without the SDK.
+Proxies must not buffer any of these streams. Deployed
 HTTP actions are mounted below `/api/pbvex`. Reserved deployment, call,
 realtime, job, and storage routes always take precedence over application
 catch-all routes.

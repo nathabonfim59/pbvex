@@ -4,6 +4,37 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
+## Unreleased
+
+### Breaking
+
+- `@pbvex/client` carries every live query over one realtime session stream
+  (`POST /api/pbvex/realtime/session`) and no longer opens a connection per
+  query. It requires a server with realtime sessions: against a 0.6.0 or
+  older server, watches fail with `Realtime connection failed: HTTP 404`.
+  Upgrade the server before or together with the client. Servers still
+  accept older clients.
+- The `maxReconnects`, `initialReconnectDelayMs` and `maxReconnectDelayMs`
+  fields of `WatchOptions` are deprecated and ignored, because every query
+  shares the session's reconnect policy. Set them on
+  `FetchRealtimeTransport` instead.
+
+### Fixed
+
+- A page watching more than about six queries no longer stalls every other
+  request to the server. Browsers allow about six HTTP/1.1 connections per
+  origin, and each live query used to hold one. The client now multiplexes
+  them over one session stream.
+- After the realtime session exhausted its reconnect attempts, a later
+  `watch` never connected. It now opens a new session.
+
+### Changed
+
+- `POST /api/pbvex/realtime` and its GET form are documented as single-query
+  streams for clients without the SDK (curl, scripts, devices, `EventSource`
+  pages). See "Advanced: single-query streams without the SDK" in
+  `docs/guides/client/realtime.md`.
+
 ## 0.6.0 - 2026-09-27
 
 ### Added

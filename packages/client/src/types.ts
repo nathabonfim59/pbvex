@@ -65,13 +65,6 @@ export interface ClientOptions {
   authStore?: AuthStore;
   realtimeTransport?: RealtimeTransport;
   realtimePath?: string;
-  /**
-   * Carry all live queries over one realtime connection (default `true`).
-   * Set `false` only for servers that predate realtime sessions: each query
-   * then holds its own connection, and browsers allow ~6 per origin over
-   * HTTP/1.1.
-   */
-  realtimeMultiplex?: boolean;
   limits?: ClientLimits;
 }
 
@@ -90,8 +83,11 @@ export interface WatchCallbacks<T> {
 }
 
 export interface WatchOptions<T> extends WatchCallbacks<T> {
+  /** @deprecated Ignored: every query shares the transport's session stream and its reconnect policy. */
   maxReconnects?: number;
+  /** @deprecated Ignored: every query shares the transport's session stream and its reconnect policy. */
   initialReconnectDelayMs?: number;
+  /** @deprecated Ignored: every query shares the transport's session stream and its reconnect policy. */
   maxReconnectDelayMs?: number;
 }
 

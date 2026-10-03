@@ -129,7 +129,6 @@ export class Client {
   private readonly baseUrl: string;
   private readonly callUrl: string;
   private readonly realtimePath: string;
-  private readonly realtimeMultiplex: boolean | undefined;
   private readonly maxFunctionArgsBytes: number;
   private readonly maxReturnValueBytes: number;
   private timeoutMs: number;
@@ -147,7 +146,6 @@ export class Client {
     this.baseUrl = resolveBaseUrl(url, options.baseUrl);
     this.callUrl = new URL('/api/pbvex/call', this.baseUrl).toString();
     this.realtimePath = options.realtimePath ?? '/api/pbvex/realtime';
-    this.realtimeMultiplex = options.realtimeMultiplex;
     this.timeoutMs = validateTimeoutMs(options.timeoutMs, 30000);
     this.maxFunctionArgsBytes = validateLimit(options.limits?.maxFunctionArgsBytes, DEFAULT_CONFIG.maxFunctionArgsBytes, 'maxFunctionArgsBytes');
     this.maxReturnValueBytes = validateLimit(options.limits?.maxReturnValueBytes, DEFAULT_CONFIG.maxReturnValueBytes, 'maxReturnValueBytes');
@@ -509,7 +507,6 @@ export class Client {
         fetch: this.fetchFn,
         getAuthToken: () => this.resolveAuth(),
         realtimePath: this.realtimePath,
-        multiplex: this.realtimeMultiplex,
         timeoutMs: this.timeoutMs,
         limits: {
           maxFunctionArgsBytes: this.maxFunctionArgsBytes,

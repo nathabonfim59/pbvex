@@ -1,6 +1,6 @@
 # Realtime subscriptions
 
-Use `client.watch` to open a Server-Sent Events (SSE) subscription to a query. The default transport is `FetchRealtimeTransport`.
+Use `client.watch` to open a Server-Sent Events (SSE) subscription to a query. The default transport is `FetchRealtimeTransport`, which carries every live query of a client over one session stream (`POST /api/pbvex/realtime/session`) and adds or removes queries with short control requests. Browsers allow only about six HTTP/1.1 connections per origin, so a page can watch any number of queries without starving its other requests.
 
 ## Basic watch
 
@@ -79,32 +79,32 @@ If a returned contact or company changes, the subscribed query reruns and emits 
 const state = client.connectionState;
 ```
 
-Connection state is `disconnected` when no transport exists. With active subscriptions, the transport reports the aggregate state of all subscriptions: `connected` if any are connected, `connecting` if any are connecting, `reconnecting` if any are reconnecting, otherwise `disconnected`.
+Connection state is `disconnected` when no transport exists or nothing is watched. All subscriptions share the session stream, so they move through the same states together.
 
 ## Retry behavior
 
-`FetchRealtimeTransport` uses exponential backoff with these defaults:
+`FetchRealtimeTransport` reopens the session stream with exponential backoff and resubscribes every query. The defaults are:
 
 - `maxReconnects`: 5
 - `initialReconnectDelayMs`: 500
 - `maxReconnectDelayMs`: 30000
 
-Per-subscription overrides can be passed in `WatchOptions`:
+Set them on the transport, not per watch: every query shares the session, so the `maxReconnects`, `initialReconnectDelayMs`, and `maxReconnectDelayMs` fields of `WatchOptions` are deprecated and ignored.
 
 ```ts
-client.watch(
-  api.messages.list,
-  { channel: 'general' },
-  {
-    onUpdate: (result) => {},
+import { Client, FetchRealtimeTransport } from '@pbvex/client';
+
+const client = new Client('http://localhost:8090', {
+  realtimeTransport: new FetchRealtimeTransport({
+    baseUrl: 'http://localhost:8090',
     maxReconnects: 10,
     initialReconnectDelayMs: 1000,
     maxReconnectDelayMs: 60000,
-  },
-);
+  }),
+});
 ```
 
-Reconnection options are owned by the first watcher that creates a subscription. Subsequent watchers on the same subscription share the same connection.
+A decoded `message` resets the attempt counter. When the limit is reached, every watcher gets `Realtime reconnect limit reached` and its subscription is disposed; a later `watch` opens a new session.
 
 ## Max event handling
 
@@ -118,6 +118,7 @@ The SSE parser rejects oversized lines and events:
 
 The SSE stream carries control envelopes:
 
+- `session` — first event of a session stream; carries the session id used by control requests.
 - `subscribe` — subscription acknowledged; may carry `maxEventSize`.
 - `ping` / `pong` — keepalive.
 - `unsubscribe` — cleanup.
@@ -133,7 +134,7 @@ The SSE stream carries control envelopes:
 
 ## Auth refresh
 
-`setAuth` and `clearAuth` refresh auth on live subscriptions by reconnecting the SSE stream with the new token.
+`setAuth` and `clearAuth` refresh auth on live subscriptions by reopening the session stream with the new token. A session is bound to the identity that opened it, so a token change always means a new session.
 
 ```ts
 client.setAuth('new-token');
@@ -158,4 +159,70 @@ interface RealtimeTransport {
 
 ## Deduplication
 
-Multiple watchers for the same `path` and canonical args share a single SSE connection and a single `Subscription`.
+Multiple watchers for the same `path` and canonical args share one server-side subscription on the session stream.
+
+## Advanced: single-query streams without the SDK
+
+Besides sessions, the server keeps a simpler endpoint where one request watches one query: `POST /api/pbvex/realtime` (and a bounded `GET` form). There is no session id, no control request, and no resubscribe step. The response is the same SSE stream a session uses, carrying only that query's events. The SDK does not use it.
+
+It makes sense when you cannot or do not want to embed `@pbvex/client`:
+
+- **Debugging from a terminal.** `curl` a live query and watch results change as you edit data.
+- **Scripts and services in other languages.** A Python, Go, or shell process that follows one or two values needs an HTTP client and an SSE line reader, nothing more.
+- **Small devices.** Firmware that displays one value (a counter, a status) can hold one plain HTTP stream.
+- **Plain HTML pages.** The `GET` form works with the browser's built-in `EventSource`, for a public query on a page without a bundler.
+
+Prefer sessions (the SDK) when a client watches more than a handful of queries, especially in a browser over HTTP/1.1, where each single-query stream takes one of the roughly six connections the browser allows per origin. Each stream also counts against the server's global and per-IP realtime connection limits (see [Limits](../limits.md)).
+
+### Subscription id
+
+Every request carries an `id`: the hex SHA-256 of `v1:<path>:<canonical args>`. Canonical args are the wire-encoded arguments as JSON with object keys sorted and no whitespace; a function without arguments uses `{}`. The server rejects an id that does not match the path and args.
+
+```sh
+ARGS='{"channel":"general"}'
+ID=$(printf 'v1:messages:list:%s' "$ARGS" | sha256sum | cut -d' ' -f1)
+```
+
+Values without a plain JSON form (`Int64`, bytes, and so on) use the wire encoding described in [Data types and validation](../data-types-and-validation.md); for anything beyond strings, numbers, booleans, arrays, and objects, use `encodeValue` and `canonicalJson` from `@pbvex/protocol`.
+
+### POST
+
+```sh
+curl -N http://localhost:8090/api/pbvex/realtime \
+  -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "{\"id\":\"$ID\",\"path\":\"messages:list\",\"args\":$ARGS}"
+```
+
+`Authorization` is optional; without it, the query runs anonymously. The stream looks like this:
+
+```text
+data: {"data":{"id":"<id>","maxEventSize":1052672,"op":"subscribe"}}
+
+data: {"data":{"id":"<id>","op":"message","payload":[{"_id":"...","text":"hi"}]}}
+
+data: {"data":{"id":"<id>","op":"ping"}}
+```
+
+Each `message` payload is the full, wire-encoded query result; the server sends one only when the result changes. A payload with `"error": true` is a structured error the query raised while running. Problems found before the stream starts (an unknown function, invalid args, an id that does not match) return a JSON error with a 4xx status instead, such as `404` with `"code":"not_found"`.
+
+### GET and EventSource
+
+```js
+const args = JSON.stringify({ channel: 'general' });
+const id = await sha256Hex(`v1:messages:list:${args}`);
+const url = `/api/pbvex/realtime?id=${id}&path=messages:list&args=${encodeURIComponent(args)}`;
+
+const source = new EventSource(url);
+source.onmessage = (event) => {
+  const { data } = JSON.parse(event.data);
+  if (data.op === 'message') render(data.payload);
+};
+```
+
+`sha256Hex` stands for any SHA-256 helper, such as one built on `crypto.subtle.digest`. `EventSource` cannot send an `Authorization` header, so this form suits public queries. The server bounds the `args` query parameter, so keep arguments small.
+
+### Reconnecting
+
+The stream ends when a deployment is activated or rolled back, so the next stream runs against the new code and limits. A long-lived client should reconnect with backoff whenever the stream ends, and reconnect with the new token after the user's auth changes. `EventSource` reconnects on its own.
