@@ -16,6 +16,25 @@ These guides cover `@pbvex/svelte`, a Svelte 5 rune layer over `@pbvex/client`.
 - `useMutation` and `useAction` return typed async callables.
 - `skip` is the exported string literal `'skip'` for conditional queries.
 
+## Importing generated references
+
+SvelteKit derives TypeScript `paths` from `kit.alias`, so configure the alias there instead of relying on the `#pbvex/*` subpath import:
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  plugins: [
+    sveltekit({
+      alias: { $pbvex: 'pbvex' },
+    }),
+  ],
+});
+```
+
+Projects that still use a `svelte.config.js` put the same entry under `kit`: `kit: { alias: { $pbvex: 'pbvex' } }`. The path is relative to the SvelteKit project root, so point it at wherever your `pbvex/` folder lives.
+
+Then import with `import { api } from '$pbvex/_generated/api'`. Do not use the bare `pbvex/_generated/api`; it resolves to the npm package.
+
 ## Cross-links
 
 - Client semantics are documented in the [client guides](../client/index.md).

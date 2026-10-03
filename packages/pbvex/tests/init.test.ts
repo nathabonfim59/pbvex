@@ -50,6 +50,7 @@ describe('pbvex init', () => {
     const pbvexManifest = JSON.parse(await readFile(path.resolve(fileURLToPath(import.meta.url), '../../package.json'), 'utf8'));
     expect(packageManifest.devDependencies.pbvex).toBe(`^${pbvexManifest.version}`);
     expect(packageManifest.devDependencies.typescript).toBeUndefined();
+    expect(packageManifest.imports).toEqual({ '#pbvex/*': './pbvex/*.ts' });
     expect(packageManifest.scripts).toMatchObject({
       'pbvex:dev': 'pbvex dev',
       'pbvex:serve': 'pbvex serve',
@@ -89,6 +90,7 @@ describe('pbvex init', () => {
       'pbvex:serve': 'pbvex serve',
     });
     expect(updatedPackage.dependencies).toEqual({ react: '^19.0.0' });
+    expect(updatedPackage.imports).toEqual({ '#pbvex/*': './pbvex/*.ts' });
     expect(updatedPackage.devDependencies).toEqual(originalPackage.devDependencies);
     expect(await readFile(path.join(projectDir, 'tsconfig.json'), 'utf8')).toBe(tsconfig);
     expect(await readFile(path.join(projectDir, '.gitignore'), 'utf8')).toBe(

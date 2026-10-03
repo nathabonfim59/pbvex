@@ -99,7 +99,7 @@ export function Login({ onLogin }: { onLogin: (userId: string) => void }) {
 // MessageView.tsx
 import { useQuery, useMutation, useAction } from '@pbvex/react';
 import { useState } from 'react';
-import { api } from './pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 interface Message {
   id: string;

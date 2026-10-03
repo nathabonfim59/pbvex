@@ -6,7 +6,7 @@ PBVex uses PocketBase record tokens passed as `Authorization: Bearer <token>`. T
 
 ```ts
 import { Client, PBVexError } from '@pbvex/client';
-import { api } from './pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 async function getToken(): Promise<string | undefined> {
   // Replace with your auth store

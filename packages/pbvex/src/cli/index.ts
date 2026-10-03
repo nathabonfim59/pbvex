@@ -71,6 +71,13 @@ function mergedPackageJson(file: string, addScripts = true): string {
   }
   manifest.scripts = scripts;
 
+  // Subpath import so app code can write '#pbvex/_generated/api' instead of a fragile relative path
+  // or the bare 'pbvex/_generated/api', which resolves to the npm package and fails at bundle time.
+  // The explicit .ts suffix is required: extensionless targets do not resolve in tsc or bundlers.
+  const imports = isJsonObject(manifest.imports) ? { ...manifest.imports } : {};
+  imports['#pbvex/*'] ??= './pbvex/*.ts';
+  manifest.imports = imports;
+
   const devDependencies = isJsonObject(manifest.devDependencies) ? { ...manifest.devDependencies } : {};
   if (!hasPackageDependency(manifest, 'pbvex')) devDependencies.pbvex = `^${packageVersion}`;
   manifest.devDependencies = devDependencies;
@@ -224,6 +231,10 @@ export const send = mutation({
     }
 
     console.log('Initialized PBVex project in ./pbvex');
+    console.log("Import generated references with '#pbvex/_generated/api' (never the bare 'pbvex/_generated/api').");
+    if (hasPackageDependency(readProjectPackage(packageJsonPath), '@sveltejs/kit')) {
+      console.log("SvelteKit detected: add `alias: { $pbvex: 'pbvex' }` to the sveltekit() options in vite.config.ts (or `kit: { alias }` in svelte.config.js) to import '$pbvex/_generated/api'.");
+    }
   });
 
 program

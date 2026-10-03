@@ -67,7 +67,7 @@ Client applications use the generated `pbvex/_generated/api.ts` references:
 
 ```ts
 import { Client } from '@pbvex/client';
-import { api } from './pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client('http://127.0.0.1:8090');
 const messages = await client.query(api.messages.get, { channel: 'general' });

@@ -8,7 +8,7 @@ Returns the latest query value or `undefined` while loading.
 
 ```tsx
 import { useQuery } from '@pbvex/react';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 function MessageList({ channel }: { channel: string }) {
   const messages = useQuery(api.messages.list, { channel });
@@ -33,7 +33,7 @@ Returns the full `QueryResult<T>`:
 
 ```tsx
 import { useQueryResult } from '@pbvex/react';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 function MessageList({ channel }: { channel: string }) {
   const { data, error, isLoading } = useQueryResult(api.messages.list, { channel });
@@ -57,7 +57,7 @@ Returns a stable callable that invokes `client.mutation`:
 
 ```tsx
 import { useMutation } from '@pbvex/react';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 function SendForm({ channel }: { channel: string }) {
   const send = useMutation(api.messages.send);
@@ -84,7 +84,7 @@ Identical to `useMutation` but invokes `client.action`:
 
 ```tsx
 import { useAction } from '@pbvex/react';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 function NotifyButton({ messageId }: { messageId: string }) {
   const notify = useAction(api.messages.notify);

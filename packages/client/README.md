@@ -6,7 +6,7 @@ Core browser-neutral client SDK for PBVex.
 
 ```typescript
 import { Client, PBVexClient } from '@pbvex/client';
-import { api } from './pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client('http://localhost:8090');
 const password = 'correct horse battery staple';

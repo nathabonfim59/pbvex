@@ -30,12 +30,24 @@ pbvex codegen
 This writes `pbvex/_generated/api.ts`:
 
 ```ts
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 import { Client } from '@pbvex/client';
 
 const client = new Client('http://localhost:8090');
 const messages = await client.query(api.messages.list, { channel: 'general' });
 ```
+
+## Import generated references
+
+`pbvex init` adds a Node subpath import to `package.json`:
+
+```json
+{ "imports": { "#pbvex/*": "./pbvex/*.ts" } }
+```
+
+Import generated code with `#pbvex/_generated/api`. It works in app, server, and test code under Vite, Vitest, esbuild, and TypeScript with `moduleResolution: "bundler"`, `node16`, or `nodenext`. For an existing project, add the same entry by hand; keep the `.ts` suffix, because an extensionless target does not resolve.
+
+Do not import `pbvex/_generated/api`. The npm package is also named `pbvex`, so the bare specifier resolves to `node_modules/pbvex`, which does not export `./_generated/*`. Type checking can still pass while the bundler fails with `"./_generated/api" is not exported under the conditions ...`.
 
 ## Peer relationship
 

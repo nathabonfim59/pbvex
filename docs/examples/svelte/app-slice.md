@@ -60,7 +60,7 @@ A Svelte 5 app slice with context, rune-backed queries, mutations, and actions.
 <!-- MessageView.svelte -->
 <script lang="ts">
   import { useAction, useMutation, useQuery } from '@pbvex/svelte';
-  import { api } from './pbvex/_generated/api.js';
+  import { api } from '$pbvex/_generated/api';
 
   let { channel }: { channel: string } = $props();
   const messages = useQuery(api.messages.list, () => ({ channel }));

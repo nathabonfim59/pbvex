@@ -6,7 +6,7 @@ Use `client.watch` to open a Server-Sent Events (SSE) subscription to a query. T
 
 ```ts
 import { Client } from '@pbvex/client';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client('http://localhost:8090');
 

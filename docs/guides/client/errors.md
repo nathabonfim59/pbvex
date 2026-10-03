@@ -8,7 +8,7 @@ Structured errors returned by the backend are thrown as `PBVexError`:
 
 ```ts
 import { Client, PBVexError } from '@pbvex/client';
-import { api } from '../pbvex/_generated/api.js';
+import { api } from '#pbvex/_generated/api';
 
 const client = new Client('http://localhost:8090');
 
