@@ -469,6 +469,12 @@ class RealtimeSession {
   private readonly subscriptions = new Map<string, SessionSubscription>();
   /** Ids the current server session has been asked to run. */
   private serverIds = new Set<string>();
+  /**
+   * Ids the server still runs for a disposed subscription that a new one has
+   * replaced. The server ignores a subscribe for a live id, so these are
+   * unsubscribed and subscribed again to make it send the current result.
+   */
+  private staleIds = new Set<string>();
   private sessionId: string | undefined;
   private state: ConnectionState = 'disconnected';
   private abortController: AbortController | undefined;
@@ -489,6 +495,7 @@ class RealtimeSession {
 
   add(subscription: SessionSubscription): void {
     this.subscriptions.set(subscription.id, subscription);
+    if (this.serverIds.has(subscription.id)) this.staleIds.add(subscription.id);
     if (this.state === 'disconnected') {
       this.connect();
     } else {
@@ -529,6 +536,7 @@ class RealtimeSession {
     this.abortController = undefined;
     this.sessionId = undefined;
     this.serverIds = new Set();
+    this.staleIds = new Set();
   }
 
   private disconnect(): void {
@@ -738,7 +746,14 @@ class RealtimeSession {
       return;
     }
 
-    const unsubscribe = [...this.serverIds].filter((id) => !this.subscriptions.has(id)).slice(0, MAX_CONTROL_ENTRIES);
+    const unsubscribe = [...this.serverIds]
+      .filter((id) => !this.subscriptions.has(id) || this.staleIds.has(id))
+      .slice(0, MAX_CONTROL_ENTRIES);
+    for (const id of unsubscribe) {
+      this.serverIds.delete(id);
+      this.staleIds.delete(id);
+    }
+
     const subscribe: JSONValue[] = [];
     let bytes = 0;
     for (const subscription of this.subscriptions.values()) {
@@ -752,7 +767,6 @@ class RealtimeSession {
     }
     if (subscribe.length === 0 && unsubscribe.length === 0) return;
 
-    for (const id of unsubscribe) this.serverIds.delete(id);
     for (const entry of subscribe) this.serverIds.add((entry as { id: string }).id);
 
     const sessionId = this.sessionId;
