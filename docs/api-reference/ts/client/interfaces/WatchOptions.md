@@ -14,21 +14,33 @@
 
 ## Properties
 
-### initialReconnectDelayMs?
+### ~~initialReconnectDelayMs?~~
 
 > `optional` **initialReconnectDelayMs?**: `number`
 
+#### Deprecated
+
+Ignored: every query shares the transport's session stream and its reconnect policy.
+
 ***
 
-### maxReconnectDelayMs?
+### ~~maxReconnectDelayMs?~~
 
 > `optional` **maxReconnectDelayMs?**: `number`
 
+#### Deprecated
+
+Ignored: every query shares the transport's session stream and its reconnect policy.
+
 ***
 
-### maxReconnects?
+### ~~maxReconnects?~~
 
 > `optional` **maxReconnects?**: `number`
+
+#### Deprecated
+
+Ignored: every query shares the transport's session stream and its reconnect policy.
 
 ***
 

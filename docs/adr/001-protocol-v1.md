@@ -121,7 +121,7 @@ Top-level and array-element `undefined` values are not valid in the codec. Plain
   - `POST /api/pbvex/realtime/session/subscriptions` changes the set with JSON `{ session, subscribe?: [{ id, path, args }], unsubscribe?: [id] }` (at most 256 entries) and returns `204`. Unsubscribes apply first. It returns `404` for an unknown or closed session and `403` when the request's auth record differs from the session's.
   - Each added subscription emits `subscribe` and then `message` events tagged with its `id`, exactly as on a single-subscription stream. A subscription that fails validation (unknown function, invalid args) gets one `message` whose payload is a structured error and is not kept.
   - Deployment activation closes sessions. Clients open a new session and subscribe again.
-- `POST /api/pbvex/realtime` - single-subscription SSE transport, kept for older clients. It holds one connection per subscription.
+- `POST /api/pbvex/realtime` - single-subscription SSE transport. It holds one connection per subscription and needs no session or control requests, so it serves clients without the SDK (scripts, `curl`, devices, `EventSource`) and clients that predate sessions. The SDK uses sessions only.
   - Request JSON is `{ id, path, args }`, where `id` is derived from the protocol version, function path, and canonical encoded arguments.
   - `GET /api/pbvex/realtime?id=...&path=...&args=...` is a strictly bounded compatibility fallback.
   - Clients must request `Accept: text/event-stream`; POST also requires `Content-Type: application/json`.

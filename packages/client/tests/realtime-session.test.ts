@@ -239,7 +239,7 @@ describe('FetchRealtimeTransport sessions', () => {
     const errors: Error[] = [];
     transport.watch('a', {}, { onUpdate: () => {}, onError: (e) => errors.push(e) } as WatchOptions<unknown>);
     await wait(30);
-    expect(errors[0]?.message).toMatch(/realtimeMultiplex: false/);
+    expect(errors[0]?.message).toMatch(/does not support realtime sessions/);
     expect(errors.at(-1)?.message).toMatch(/reconnect limit/);
     expect(transport.connectionState).toBe('disconnected');
   });
