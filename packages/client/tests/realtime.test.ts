@@ -141,7 +141,7 @@ describe('FetchRealtimeTransport', () => {
     serveHarnesses();
     const transport = makeTransport(() => 'secret-token');
     watchUpdates(transport);
-    await wait(10);
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => url === CONTROL_URL)).toBe(true));
 
     for (const [input, init] of fetch.mock.calls as [string, RequestInit][]) {
       const url = new URL(input);
@@ -157,7 +157,7 @@ describe('FetchRealtimeTransport', () => {
     serveHarnesses();
     const transport = makeTransport();
     watchUpdates(transport);
-    await wait(10);
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => url === CONTROL_URL)).toBe(true));
 
     const control = fetch.mock.calls.find(([url]) => url === CONTROL_URL)!;
     const init = control[1] as RequestInit;
