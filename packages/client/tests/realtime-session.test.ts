@@ -157,6 +157,34 @@ describe('FetchRealtimeTransport sessions', () => {
     expect(transport.connectionState).toBe('disconnected');
   });
 
+  it('resubscribes a query re-watched in the same task so it gets the current result', async () => {
+    const server = new FakeServer();
+    const transport = makeTransport(server);
+    const keep = transport.watch('other', {}, { onUpdate: () => {} } as WatchOptions<unknown>);
+    const first = transport.watch('q', { x: 1 }, { onUpdate: () => {} } as WatchOptions<unknown>);
+    await wait();
+    server.announce();
+    await wait();
+    const id = await subscriptionId('q', { x: 1 });
+    server.message(id, 'v1');
+    await wait();
+    server.controls = [];
+
+    // A page swap: the old watcher leaves and a new one arrives in the same task.
+    first();
+    const updates: QueryResult<unknown>[] = [];
+    transport.watch('q', { x: 1 }, { onUpdate: (r) => updates.push(r) } as WatchOptions<unknown>);
+    await wait();
+
+    // The server ignores a subscribe for a live id, so it must be dropped and re-added.
+    expect(server.controls.flatMap((c) => c.unsubscribe)).toEqual([id]);
+    expect(server.subscribedIds()).toEqual([id]);
+    server.message(id, 'v1');
+    await wait();
+    expect(updates.at(-1)).toEqual({ data: 'v1', error: null, isLoading: false });
+    keep();
+  });
+
   it('routes a structured error to its own subscription only', async () => {
     const server = new FakeServer();
     const transport = makeTransport(server);

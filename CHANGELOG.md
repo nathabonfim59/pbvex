@@ -4,6 +4,16 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
+## Unreleased
+
+### Fixed
+
+- A live query that is unwatched and watched again with the same arguments
+  in the same task (for example when a client-side route change unmounts
+  one component and mounts another with the same query) no longer stays
+  loading forever. The client now asks the server to restart the
+  subscription so it sends the current result.
+
 ## 0.7.0 - 2026-10-03
 
 ### Breaking
