@@ -4,7 +4,7 @@ All notable PBVex changes are recorded here. PBVex uses Semantic Versioning.
 The PocketBase project has its own release history; inherited PocketBase
 entries are intentionally not duplicated in this changelog.
 
-## Unreleased
+## 0.7.0 - 2026-10-03
 
 ### Breaking
 
@@ -18,6 +18,15 @@ entries are intentionally not duplicated in this changelog.
   fields of `WatchOptions` are deprecated and ignored, because every query
   shares the session's reconnect policy. Set them on
   `FetchRealtimeTransport` instead.
+
+### Added
+
+- `pbvex init` adds a `"#pbvex/*": "./pbvex/*.ts"` subpath import to
+  `package.json`, so application code imports generated references as
+  `#pbvex/_generated/api` instead of a relative path. The bare
+  `pbvex/_generated/api` specifier resolves to the npm package and fails at
+  bundle time. The Svelte guides use a `$pbvex` alias configured in
+  `vite.config.ts` instead.
 
 ### Fixed
 
