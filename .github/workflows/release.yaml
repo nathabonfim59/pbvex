@@ -98,6 +98,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest release archives
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@4d7d407517fe0a9f57ab8ca277dfd2efb1188c7f # v4
         with:
           subject-checksums: dist/checksums.txt
